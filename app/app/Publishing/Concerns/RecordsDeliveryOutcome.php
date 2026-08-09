@@ -7,6 +7,7 @@ namespace App\Publishing\Concerns;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
+use App\Http\Controllers\ApprovalController;
 use App\Models\WebhookDelivery;
 use App\Publishing\ThreadsPublisher;
 use App\Publishing\WebhookPublisher;
@@ -155,6 +156,52 @@ trait RecordsDeliveryOutcome
     }
 
     /** Out of attempts, or refused for a reason retrying cannot fix. */
+    /**
+     * Refuse to send content the operator has taken back.
+     *
+     * A delivery carries a payload snapshot and sends it whatever the unit has
+     * done since. That was safe for exactly as long as `approved` had one edge
+     * and it pointed at `published`: nothing could un-approve a unit, so nothing
+     * could invalidate a queued delivery. Sending back for rework added that
+     * edge and this is the other half of it — without it an operator can pull an
+     * inaccurate article and have the version they pulled published a minute
+     * later by a job that was already in the queue.
+     *
+     * Checked inside the delivery lock, immediately before the request goes
+     * out, because that is the only place the answer cannot go stale. Cancelling
+     * the rows on the way back ({@see ApprovalController::reject()})
+     * handles the ones sitting in the queue; this handles the one already in
+     * flight.
+     */
+    protected function refuseIfWithdrawn(WebhookDelivery $delivery): ?WebhookDelivery
+    {
+        $unit = $delivery->contentItem;
+
+        if ($unit === null) {
+            return null;
+        }
+
+        // `refreshing` is on the list deliberately. It is live text being
+        // rewritten, not text somebody withdrew, and the delivery in flight is
+        // the version readers currently have — killing it would be the guard
+        // doing harm rather than preventing it. What this refuses is the states
+        // before a human ever said yes.
+        $sendable = [
+            ContentItemState::Approved,
+            ContentItemState::Published,
+            ContentItemState::Refreshing,
+        ];
+
+        if (in_array($unit->state, $sendable, true)) {
+            return null;
+        }
+
+        return $this->deadLetter(
+            $delivery,
+            'The unit was sent back for rework before this delivery went out, so it was not sent.',
+        );
+    }
+
     protected function deadLetter(
         WebhookDelivery $delivery,
         string $error,

@@ -171,14 +171,39 @@ final class SubjectLocaliser
     {
         $said = mb_strtolower(trim($said, " \t:-"));
 
+        // The exact tag always wins, and it has to be tried against every
+        // locale before any of them is matched loosely. A project writing both
+        // `pt-PT` and `pt-BR` otherwise has every answer beginning `pt` land on
+        // whichever appears first: the Brazilian line overwrites the European
+        // one and the Brazilian row is counted as untranslated, keeping the
+        // source language's title.
         foreach ($locales as $locale) {
-            $lower = mb_strtolower($locale);
-
-            if ($said === $lower || str_starts_with($said, Str::before($lower, '-'))) {
+            if ($said === mb_strtolower($locale)) {
                 return $locale;
             }
         }
 
-        return null;
+        // A tag that names a region answers for that region or for nothing.
+        // Without this the fallback below reads `pt-PT` as an answer about
+        // `pt-BR` — which is how a line for a locale nobody asked about
+        // overwrote the one that was asked for.
+        if (str_contains($said, '-')) {
+            return null;
+        }
+
+        // Then the primary language, and only when exactly one locale claims
+        // it. "pt" is an answer to a question with one Portuguese in it and an
+        // ambiguity in a question with two — and an ambiguous match is worse
+        // than none, because none is logged and retried while a wrong one is
+        // published.
+        $claimants = array_values(array_filter(
+            $locales,
+            static fn (string $locale): bool => str_starts_with(
+                $said,
+                mb_strtolower(Str::before($locale, '-')),
+            ),
+        ));
+
+        return count($claimants) === 1 ? $claimants[0] : null;
     }
 }

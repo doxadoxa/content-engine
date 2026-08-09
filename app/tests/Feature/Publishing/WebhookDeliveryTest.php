@@ -531,6 +531,32 @@ final class WebhookDeliveryTest extends TestCase
         $this->assertNull($this->unit->refresh()->public_url);
     }
 
+    #[Test]
+    public function a_unit_sent_back_for_rework_is_not_delivered(): void
+    {
+        Http::fake(['receiver.test/*' => Http::response([])]);
+
+        Queue::fake();
+
+        // The fixture is published; this is about the window before that.
+        $this->unit->forceFill(['state' => ContentItemState::Approved])->save();
+
+        $delivery = $this->publisher()->queue($this->unit, $this->channel, WebhookEvent::Published);
+
+        // The operator pulls the article between the delivery being queued and
+        // the worker picking it up. A delivery carries a payload snapshot and
+        // would send it regardless — which is safe only for as long as nothing
+        // can un-approve a unit, and sending back for rework can.
+        $this->unit->returnForRework();
+
+        $settled = $this->publisher()->attempt($delivery->refresh());
+
+        Http::assertNothingSent();
+
+        $this->assertSame(DeliveryStatus::DeadLetter, $settled->status);
+        $this->assertStringContainsString('sent back for rework', (string) $settled->error);
+    }
+
     private function publisher(): WebhookPublisher
     {
         return app(WebhookPublisher::class);

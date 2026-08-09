@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\AssetRole;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\SearchIntent;
 use App\Enums\SocialBand;
+use App\Media\HeroImage;
 use App\Models\Concerns\BelongsToProject;
 use App\Research\KeywordIdea;
 use App\Support\Content\InvalidStateTransition;
@@ -447,11 +449,54 @@ class ContentItem extends Model
     }
 
     /**
+     * The pictures this unit currently has.
+     *
+     * Filtered on the relation rather than at each call site, because "the
+     * pictures of this article" is what every reader means and the one that
+     * forgot to say so is the bug this exists to prevent: `ArticleScore` counted
+     * rows, a rewritten article had twelve inline rows for three pictures, and
+     * the data panel told the operator it had thirteen images.
+     *
+     * A rewrite replaces the body and the new body names none of the old files,
+     * so they are marked superseded rather than deleted — the file is still
+     * good, the row still says what it cost, and a rewrite that came out worse
+     * than what it replaced can still be looked at. {@see everyAsset()} is that
+     * history; this is the article.
+     *
      * @return HasMany<Asset, $this>
      */
     public function assets(): HasMany
     {
+        return $this->hasMany(Asset::class)->whereNull('superseded_at');
+    }
+
+    /**
+     * Every picture ever made for this unit, superseded ones included.
+     *
+     * Named so that a reader who wants history has to ask for it, and one who
+     * writes `assets` gets the article.
+     *
+     * @return HasMany<Asset, $this>
+     */
+    public function everyAsset(): HasMany
+    {
         return $this->hasMany(Asset::class);
+    }
+
+    /**
+     * Retire the pictures inside the body, because the body is about to change.
+     *
+     * Called when a rewrite saves a new draft. Only the inline ones: a hero is
+     * the article's picture rather than a picture in it, it is not named in the
+     * body, and it stays valid for a piece about the same subject —
+     * {@see HeroImage::for()} reuses it deliberately.
+     */
+    public function supersedeInlineAssets(): void
+    {
+        $this->everyAsset()
+            ->where('role', AssetRole::Inline)
+            ->whereNull('superseded_at')
+            ->update(['superseded_at' => now()]);
     }
 
     /**

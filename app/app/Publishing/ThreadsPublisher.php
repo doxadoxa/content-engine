@@ -368,6 +368,10 @@ class ThreadsPublisher implements ChannelPublisher
             return $delivery;
         }
 
+        if ($withdrawn = $this->refuseIfWithdrawn($delivery)) {
+            return $withdrawn;
+        }
+
         if (! $this->connection->isConfigured()) {
             return $this->deadLetter($delivery, 'This installation has no Threads app configured. Set THREADS_APP_ID and THREADS_APP_SECRET, then connect the account.');
         }

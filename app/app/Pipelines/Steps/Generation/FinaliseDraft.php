@@ -76,6 +76,17 @@ class FinaliseDraft extends AbstractStep
         // findings and the body an operator needs to fix it.
         $written = $this->writtenTitle($markdown);
 
+        // The body about to be written names none of the pictures the previous
+        // one did, so they stop being part of the article here. Marked rather
+        // than deleted — the file is still good and the row still says what it
+        // cost — and only the inline ones: a hero is the article's picture
+        // rather than a picture in it, and {@see \App\Media\HeroImage::for()}
+        // reuses it deliberately for a piece about the same subject.
+        //
+        // Before this, three rewrites left twelve inline rows for three
+        // pictures and `ArticleScore` read the table rather than the article.
+        $unit->supersedeInlineAssets();
+
         $unit->forceFill([
             ...($written === null ? [] : [
                 'title' => $written,

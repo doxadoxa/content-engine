@@ -811,6 +811,36 @@ final class PlanningPipelineTest extends TestCase
         );
     }
 
+    #[Test]
+    public function two_regional_variants_of_one_language_do_not_collide(): void
+    {
+        $project = Project::factory()->create([
+            'default_locale' => 'pt-PT',
+            'locales' => ['pt-PT', 'pt-BR'],
+            'weekly_target' => 2,
+        ]);
+        app(CurrentProject::class)->set($project);
+        $this->project = $project;
+
+        $this->models()->willAnswerRole(
+            'utility',
+            "pt-BR | Limpeza pós-obra no Rio | limpeza pós obra rio\npt-PT | Limpeza pós-obra em Lisboa | limpeza pós obra lisboa",
+        );
+
+        $this->idea('limpeza pós-obra', 'renovation');
+
+        $this->plan();
+
+        // Matched on the exact tag. Falling back to the primary language would
+        // land every line beginning `pt` on whichever locale came first: the
+        // Brazilian answer would overwrite the European row and the Brazilian
+        // one would keep the source title, counted as untranslated.
+        $brazil = ContentItem::query()->roots()->where('locale', 'pt-BR')->firstOrFail();
+
+        $this->assertSame('Limpeza pós-obra no Rio', $brazil->title);
+        $this->assertSame('limpeza pós obra rio', $brazil->target_query);
+    }
+
     private function sitePage(string $title, int $months): SitePage
     {
         return SitePage::factory()->create([

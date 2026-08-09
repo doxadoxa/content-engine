@@ -389,6 +389,33 @@ final class OperatorDayTest extends TestCase
     }
 
     #[Test]
+    public function sending_back_cancels_a_publication_that_was_already_queued(): void
+    {
+        Queue::fake();
+
+        $unit = $this->draft();
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+
+        // Approving may already have queued this unit at every channel that
+        // publishes automatically, and a delivery sends the payload it captured
+        // whatever the unit has done since.
+        $delivery = WebhookDelivery::factory()->create([
+            'content_item_id' => $unit->getKey(),
+            'status' => DeliveryStatus::Pending,
+        ]);
+
+        $this->actingAs($this->operator)
+            ->post(route('content.reject', $unit), ['reason' => RejectionReason::Inaccurate->value])
+            ->assertRedirect();
+
+        // Otherwise the operator pulls an inaccurate article and the version
+        // they pulled goes out a minute later.
+        $this->assertSame(DeliveryStatus::DeadLetter, $delivery->refresh()->status);
+        $this->assertStringContainsString('sent back for rework', (string) $delivery->error);
+    }
+
+    #[Test]
     public function a_published_article_is_not_sent_back(): void
     {
         $unit = ContentItem::factory()->published()->create();
@@ -640,7 +667,12 @@ final class OperatorDayTest extends TestCase
             ->push(['public_url' => 'https://example.test/x'], 200),
         ]);
 
+        // Approved, because that is the only way a delivery comes to exist —
+        // and since sending back for rework, the publisher refuses one whose
+        // unit never got past draft.
         $unit = $this->draft();
+        $unit->forceFill(['state' => ContentItemState::Approved])->save();
+
         $dead = app(WebhookPublisher::class)
             ->queue($unit, $this->channel, WebhookEvent::Published)
             ->refresh();

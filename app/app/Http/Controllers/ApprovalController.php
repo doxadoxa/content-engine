@@ -7,9 +7,11 @@ namespace App\Http\Controllers;
 use App\Content\PostScore;
 use App\Content\UnitScore;
 use App\Enums\ContentItemState;
+use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Http\Requests\RejectContentRequest;
 use App\Models\ContentItem;
+use App\Models\WebhookDelivery;
 use App\Pipelines\Core\PipelineRunner;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
@@ -231,6 +233,29 @@ class ApprovalController extends Controller
             // rework happens, and the note is the whole of the change.
             if ($draft->state === ContentItemState::Approved) {
                 $draft->returnForRework();
+
+                // Approving may already have queued this unit at every channel
+                // that publishes automatically, and a delivery carries a payload
+                // snapshot it will send whatever the unit has done since. Taking
+                // the approval back has to take those with it, or the operator
+                // pulls an inaccurate article and the version they pulled goes
+                // out a minute later.
+                //
+                // Dead letter rather than deleted: the row is the record that a
+                // publication was intended and stopped, and the operator's
+                // delivery screen is where they would look for it. The
+                // publishers refuse a withdrawn unit as well
+                // ({@see \App\Publishing\Concerns\RecordsDeliveryOutcome::refuseIfWithdrawn()}),
+                // which is what covers the one already in flight while this
+                // covers the ones still waiting.
+                WebhookDelivery::query()
+                    ->where('content_item_id', $draft->getKey())
+                    ->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])
+                    ->update([
+                        'status' => DeliveryStatus::DeadLetter->value,
+                        'error' => 'Cancelled: the unit was sent back for rework before this went out.',
+                        'next_attempt_at' => null,
+                    ]);
             }
 
             $draft->forceFill([

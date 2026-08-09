@@ -230,6 +230,11 @@ class HeroImage
         // article, under two different headings.
         $source = Asset::query()
             ->where('role', $role)
+            // A sibling's retired pictures are not lent: they were retired
+            // because the article they belonged to was rewritten, and a locale
+            // borrowing them would put the previous version's illustrations in
+            // the new one.
+            ->whereNull('superseded_at')
             ->whereIn('content_item_id', $siblings)
             ->selectRaw('content_item_id, count(*) as drawn')
             ->groupBy('content_item_id')
@@ -246,6 +251,7 @@ class HeroImage
         /** @var Asset|null $borrowed */
         $borrowed = Asset::query()
             ->where('role', $role)
+            ->whereNull('superseded_at')
             ->where('content_item_id', $source->getAttribute('content_item_id'))
             ->orderBy('id')
             ->skip($position)
