@@ -240,6 +240,7 @@ class ContentStudioController extends Controller
                 'audience' => $idea->audience,
                 'angle' => $idea->angle,
                 'channels' => $idea->channels,
+                'production' => $idea->plannedProduction(),
                 'drafts' => $draftsByKey->get($idea->idea_key, collect())->map(
                     static fn (ContentItem $item): array => [
                         'id' => $item->getKey(),

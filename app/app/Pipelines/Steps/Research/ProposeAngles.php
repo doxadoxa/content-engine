@@ -272,7 +272,7 @@ class ProposeAngles extends AbstractStep
 
         $candidates = [];
 
-        foreach (preg_split('/\R/', trim($answer->text)) ?: [] as $line) {
+        foreach (preg_split('/\R/u', trim($answer->text)) ?: [] as $line) {
             if (preg_match('/^QUERY:\s*(.+)$/ui', trim($line), $matches) !== 1) {
                 continue;
             }

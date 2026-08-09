@@ -106,7 +106,7 @@ class BriefOnboarding
 
         $brief = [];
 
-        foreach (preg_split('/\R/', $text) ?: [] as $line) {
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
             if (preg_match('/^([A-Z]+):\s*(.*)$/u', trim($line), $matches) !== 1) {
                 continue;
             }

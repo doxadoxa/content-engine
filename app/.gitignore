@@ -1,8 +1,13 @@
 *.log
 .DS_Store
+# Every .env but the committed template. The list used to name three exact
+# files, and a fourth — `.env.backup-before-tunnel`, written while putting the
+# app behind a Cloudflare Tunnel — matched none of them and would have gone to
+# GitHub with every vendor key and the database password in it. A pattern with
+# one exception cannot be outgrown the same way.
 .env
-.env.backup
-.env.production
+.env.*
+!.env.example
 .phpactor.json
 .phpunit.result.cache
 /.codex

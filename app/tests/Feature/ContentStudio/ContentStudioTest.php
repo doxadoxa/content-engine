@@ -159,7 +159,23 @@ final class ContentStudioTest extends TestCase
             ->assertJsonPath('plan.accepted', false)
             ->assertJsonPath('plan.strategy.site_facts.0.source', 'site analysis')
             ->assertJsonCount(4, 'plan.ideas')
-            ->assertJsonPath('plan.ideas.0.channels', ['threads', 'x', 'instagram']);
+            ->assertJsonPath('plan.ideas.0.channels', ['threads', 'x', 'instagram'])
+            ->assertJsonPath('plan.ideas.0.production.threads', [
+                'format' => 'post',
+                'visual' => 'image',
+            ])
+            ->assertJsonPath('plan.ideas.0.production.x', [
+                'format' => 'post_or_thread',
+                'visual' => 'image',
+            ])
+            ->assertJsonPath('plan.ideas.0.production.instagram', [
+                'format' => 'image_post',
+                'visual' => 'image',
+            ])
+            ->assertJsonPath('plan.ideas.1.production.instagram', [
+                'format' => 'carousel',
+                'visual' => 'slides',
+            ]);
 
         $this->assertStringContainsString('persistance.io', $fake->lastRequest()->prompt);
         $this->assertStringContainsString('no AI hype', $fake->lastRequest()->prompt);

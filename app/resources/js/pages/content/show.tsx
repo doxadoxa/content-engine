@@ -5,7 +5,11 @@ import {
     ExternalLink,
     FileText,
     Send,
+    Undo2,
 } from 'lucide-react';
+import { useState } from 'react';
+import { SendBackDialog } from '@/components/send-back-dialog';
+import type { Reason, SendBackTarget } from '@/components/send-back-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +19,7 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import {
     WorkspaceHeader,
     WorkspacePage,
@@ -84,6 +89,8 @@ type Props = {
     }[];
     deliveries: Delivery[];
     manual_channels: number;
+    reasons: Reason[];
+    rewriting: { done: number; total: number } | null;
 };
 
 /**
@@ -97,7 +104,12 @@ export default function ContentShow({
     derivatives,
     deliveries,
     manual_channels,
+    reasons,
+    rewriting,
 }: Props) {
+    // Null until the operator asks, so the dialog is not mounted around an
+    // article nobody is sending anywhere.
+    const [sendingBack, setSendingBack] = useState<SendBackTarget | null>(null);
     const missing = Object.entries(item.entity_coverage)
         .filter(([, covered]) => !covered)
         .map(([entity]) => entity);
@@ -106,6 +118,12 @@ export default function ContentShow({
     return (
         <>
             <Head title={item.title} />
+
+            <SendBackDialog
+                item={sendingBack}
+                reasons={reasons}
+                onClose={() => setSendingBack(null)}
+            />
 
             <WorkspacePage width="reading">
                 <WorkspaceHeader
@@ -135,12 +153,47 @@ export default function ContentShow({
                             <Badge className="h-9 rounded-full px-3">
                                 {item.state_label}
                             </Badge>
+                            {/*
+                              A unit being rewritten is a `draft`, exactly like
+                              one that is finished and waiting — so the state
+                              badge alone made sending an article back look like
+                              a button that had done nothing.
+                            */}
+                            {rewriting !== null && (
+                                <Badge
+                                    variant="outline"
+                                    className="h-9 gap-2 rounded-full border-violet-500/20 bg-background/70 px-3 text-violet-700 dark:text-violet-200"
+                                >
+                                    <Spinner className="size-3.5" />
+                                    Rewriting · {rewriting.done} of{' '}
+                                    {rewriting.total}
+                                </Badge>
+                            )}
                             <Badge
                                 variant="outline"
                                 className="h-9 rounded-full bg-background/70 px-3"
                             >
                                 {item.type_label}
                             </Badge>
+                            {item.state === 'approved' && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-full bg-background/70 shadow-sm"
+                                    onClick={() =>
+                                        setSendingBack({
+                                            id: item.id,
+                                            title: item.title,
+                                        })
+                                    }
+                                >
+                                    <Undo2
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                    Send back
+                                </Button>
+                            )}
                             {(item.state === 'approved' ||
                                 item.state === 'published') && (
                                 <Form

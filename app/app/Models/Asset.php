@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -27,6 +28,7 @@ use Illuminate\Support\Facades\Storage;
  * @property string $alt
  * @property int|null $width
  * @property int|null $height
+ * @property Carbon|null $superseded_at set when a rewrite retired it
  */
 class Asset extends Model
 {
@@ -46,6 +48,7 @@ class Asset extends Model
         'alt',
         'width',
         'height',
+        'superseded_at',
     ];
 
     /**
@@ -76,6 +79,7 @@ class Asset extends Model
             'role' => AssetRole::class,
             'width' => 'integer',
             'height' => 'integer',
+            'superseded_at' => 'datetime',
         ];
     }
 }

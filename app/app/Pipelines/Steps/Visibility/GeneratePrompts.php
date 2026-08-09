@@ -218,7 +218,7 @@ class GeneratePrompts extends AbstractStep
     {
         $prompts = [];
 
-        foreach (preg_split('/\R/', trim($text)) ?: [] as $line) {
+        foreach (preg_split('/\R/u', trim($text)) ?: [] as $line) {
             if (preg_match('/^PROMPT:\s*(.+)$/ui', trim($line), $matches) !== 1) {
                 continue;
             }

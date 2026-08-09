@@ -6,9 +6,11 @@ namespace App\Http\Controllers;
 
 use App\Content\ArticleScore;
 use App\Enums\AssetRole;
+use App\Enums\PipelineStepStatus;
 use App\Enums\RejectionReason;
 use App\Models\BrandBrief;
 use App\Models\ContentItem;
+use App\Models\PipelineRun;
 use App\Models\WebhookDelivery;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
@@ -61,6 +63,18 @@ class ContentItemDetailController extends Controller
                 ...$this->score->for($item),
                 'data' => $this->score->data($item),
             ],
+            // The closed set behind "send back". Passed here as well as to the
+            // approvals queue because an approved article is not in that queue
+            // — this page is the only place a human meets it after signing it
+            // off, and until now the only thing they could do about a fault was
+            // publish it anyway.
+            'reasons' => array_map(
+                static fn (RejectionReason $reason): array => [
+                    'value' => $reason->value,
+                    'label' => $reason->label(),
+                ],
+                RejectionReason::cases(),
+            ),
             // §2's promise made visible: which voice this was written from.
             'brief' => $brief === null ? null : [
                 'id' => $brief->getKey(),
@@ -99,15 +113,45 @@ class ContentItemDetailController extends Controller
                     'error' => $delivery->error,
                     'created_at' => $delivery->created_at?->toIso8601String(),
                 ])->all(),
-            'reasons' => array_map(
-                static fn (RejectionReason $reason): array => [
-                    'value' => $reason->value,
-                    'label' => $reason->label(),
-                ],
-                RejectionReason::cases(),
-            ),
+            // Whether the engine is writing this one right now. The state
+            // badge cannot say it: a unit being rewritten is a `draft`, exactly
+            // like one that is finished and waiting, so sending an article back
+            // changed the badge to something it had been before and the screen
+            // looked identical to a button that had done nothing.
+            'rewriting' => $this->rewriting($item),
             'manual_channels' => $this->channels->manualTargets($item),
         ]);
+    }
+
+    /**
+     * The run currently writing this unit, as steps done out of total.
+     *
+     * `inFlight()` rather than "not terminal", for the same reason the
+     * dashboard uses it: a status column can say `running` about a run nothing
+     * is running, and a progress bar that never finishes is worse than none.
+     *
+     * @return array{done: int, total: int}|null
+     */
+    private function rewriting(ContentItem $item): ?array
+    {
+        $run = PipelineRun::query()
+            ->where('content_item_id', $item->getKey())
+            ->inFlight()
+            ->with('steps')
+            ->latest()
+            ->first();
+
+        if ($run === null) {
+            return null;
+        }
+
+        return [
+            'done' => $run->steps->whereIn('status', [
+                PipelineStepStatus::Succeeded,
+                PipelineStepStatus::Skipped,
+            ])->count(),
+            'total' => $run->steps->count(),
+        ];
     }
 
     /**

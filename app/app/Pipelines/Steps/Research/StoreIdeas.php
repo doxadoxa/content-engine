@@ -9,6 +9,7 @@ use App\Models\ContentItem;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
+use App\Support\Content\Squish;
 use Illuminate\Support\Str;
 
 /**
@@ -121,7 +122,7 @@ class StoreIdeas extends AbstractStep
      */
     public static function normalise(string $keyword): string
     {
-        return Str::squish(mb_strtolower($keyword));
+        return Squish::text(mb_strtolower($keyword));
     }
 
     /**

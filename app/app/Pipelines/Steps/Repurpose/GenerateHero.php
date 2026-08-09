@@ -59,6 +59,10 @@ class GenerateHero extends AbstractStep
             return StepResult::skip('No image provider is configured for this project.');
         }
 
+        if ($made['provider'] !== null && $made['model'] !== null) {
+            $context->spend($made['cost'], $made['provider'], $made['model']);
+        }
+
         return StepResult::success(new HeroPayload($made['asset']->getKey(), $made['cost']));
     }
 }

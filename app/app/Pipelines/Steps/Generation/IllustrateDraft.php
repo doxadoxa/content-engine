@@ -6,6 +6,7 @@ namespace App\Pipelines\Steps\Generation;
 
 use App\Console\Commands\EngineTickCommand;
 use App\Media\HeroImage;
+use App\Models\Asset;
 use App\Models\ContentItem;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
@@ -106,7 +107,9 @@ class IllustrateDraft extends AbstractStep
             return StepResult::skip('No image provider is configured for this project.');
         }
 
-        $cost = $made['cost'] + $this->illustrateSections($unit, $made['asset']->url());
+        $this->report($context, $made);
+
+        $cost = $made['cost'] + $this->illustrateSections($context, $unit, $made['asset']->url());
 
         // An article that came out with a hero and nothing else is not a
         // slightly worse article, it is the visible symptom of a provider that
@@ -133,7 +136,7 @@ class IllustrateDraft extends AbstractStep
      * The first section is skipped: the hero already sits directly above it,
      * and two images with a paragraph between them is worse than one.
      */
-    private function illustrateSections(ContentItem $unit, string $heroUrl): int
+    private function illustrateSections(StepContext $context, ContentItem $unit, string $heroUrl): int
     {
         $wanted = (int) config('media.inline.count', 3);
 
@@ -191,6 +194,8 @@ class IllustrateDraft extends AbstractStep
                     '!['.$heading.']('.$made['asset']->url().')',
                 );
 
+                $this->report($context, $made);
+
                 $cost += $made['cost'];
                 $placed++;
             } catch (Throwable $e) {
@@ -217,6 +222,27 @@ class IllustrateDraft extends AbstractStep
         $this->wanted = $wanted;
 
         return $cost;
+    }
+
+    /**
+     * Tell the run what a picture cost.
+     *
+     * Nothing else does: an image is billed per picture rather than per token,
+     * so it never reaches the metering that `ask()` fills in on the way past.
+     * Without this the most expensive thing an article buys is recorded as
+     * free.
+     *
+     * @param  array{asset: Asset, cost: int, provider: string|null, model: string|null}  $made
+     */
+    private function report(StepContext $context, array $made): void
+    {
+        if ($made['provider'] === null || $made['model'] === null) {
+            // Borrowed from another locale, or already on the unit. No vendor
+            // was paid, so there is nothing to report.
+            return;
+        }
+
+        $context->spend($made['cost'], $made['provider'], $made['model']);
     }
 
     /**

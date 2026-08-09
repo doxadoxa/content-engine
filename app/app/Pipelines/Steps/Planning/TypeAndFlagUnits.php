@@ -10,7 +10,7 @@ use App\Models\ContentItem;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
-use Illuminate\Support\Str;
+use App\Support\Content\Squish;
 
 /**
  * Type each idea, and mark the ones generation must not invent (§4.2, §4.3).
@@ -103,7 +103,7 @@ class TypeAndFlagUnits extends AbstractStep
      */
     private function typeFromQuery(string $query): ?ContentItemType
     {
-        $haystack = ' '.Str::squish(mb_strtolower($query)).' ';
+        $haystack = ' '.Squish::text(mb_strtolower($query)).' ';
 
         // A list of pairs rather than a map: an enum case cannot be an array
         // key, and the order is load-bearing — "best cleaning service" is a
@@ -174,7 +174,7 @@ class TypeAndFlagUnits extends AbstractStep
             return true;
         }
 
-        $haystack = ' '.Str::squish(mb_strtolower($query)).' ';
+        $haystack = ' '.Squish::text(mb_strtolower($query)).' ';
 
         foreach (self::NEEDS_REAL_DATA as $marker) {
             if (str_contains($haystack, ' '.$marker.' ')) {

@@ -10,10 +10,12 @@ import {
     Globe2,
     Image as ImageIcon,
     Instagram,
+    Maximize2,
     MessageCircle,
     Send,
     Sparkles,
     WandSparkles,
+    X,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -21,6 +23,13 @@ import AlertError from '@/components/alert-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import {
     WorkspaceHeader,
@@ -65,6 +74,11 @@ type Draft = {
     }>;
 };
 
+type ProductionShape = {
+    format: string;
+    visual: string;
+};
+
 type Idea = {
     id: string;
     key: string;
@@ -77,6 +91,7 @@ type Idea = {
     audience: string;
     angle: string | null;
     channels: string[];
+    production: Record<string, ProductionShape>;
     drafts: Draft[];
 };
 
@@ -484,7 +499,7 @@ export default function Studio({
                                     onGenerate={() => void generateBatch()}
                                 />
                                 <StrategyArtifact plan={readyPlan} />
-                                <IdeasPanel ideas={readyPlan.ideas} />
+                                <IdeasPanel plan={readyPlan} />
                             </>
                         )}
                     </aside>
@@ -763,110 +778,184 @@ function StrategyArtifact({ plan }: { plan: Plan }) {
     const objectives = strategy.objectives ?? [];
     const pillars = strategy.pillars ?? [];
     const roles = strategy.channel_roles ?? {};
+    const month = new Intl.DateTimeFormat(undefined, {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+    }).format(new Date(`${plan.month}-01T00:00:00Z`));
 
     return (
-        <section className={`${workspacePanelClass} shrink-0 overflow-hidden`}>
-            <button
-                type="button"
-                className="w-full px-5 py-4 text-left"
-                aria-expanded={open}
-                onClick={() => setOpen((current) => !current)}
+        <Dialog open={open} onOpenChange={setOpen}>
+            <section
+                className={`${workspacePanelClass} shrink-0 overflow-hidden`}
             >
-                <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold">Strategy</p>
-                            <Badge variant="secondary" className="rounded-full">
-                                v{plan.version}
-                            </Badge>
+                <button
+                    type="button"
+                    className="w-full px-5 py-4 text-left transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+                    aria-haspopup="dialog"
+                    onClick={() => setOpen(true)}
+                >
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                                <p className="text-sm font-semibold">
+                                    Strategy
+                                </p>
+                                <Badge
+                                    variant="secondary"
+                                    className="rounded-full"
+                                >
+                                    v{plan.version}
+                                </Badge>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+                                {plan.summary}
+                            </p>
                         </div>
-                        <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-                            {plan.summary}
-                        </p>
+                        <Maximize2
+                            className="mt-1 size-4 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                        />
                     </div>
-                    <ChevronDown
-                        className={`mt-1 size-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
-                        aria-hidden="true"
-                    />
-                </div>
-            </button>
-            {open && (
-                <div className="grid gap-5 border-t px-5 py-5">
-                    {objectives.length > 0 && (
-                        <div>
-                            <SectionLabel>Objectives</SectionLabel>
-                            <ul className="mt-2 grid gap-2 text-sm leading-relaxed">
-                                {objectives.map((objective) => (
-                                    <li key={objective}>{objective}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
+                </button>
+            </section>
 
-                    {pillars.length > 0 && (
-                        <div>
-                            <SectionLabel>Editorial pillars</SectionLabel>
-                            <div className="mt-2 grid gap-2">
-                                {pillars.map((pillar) => (
-                                    <div
-                                        key={pillar.name}
-                                        className="rounded-xl bg-muted/30 px-3.5 py-3"
-                                    >
-                                        <p className="text-sm font-medium">
-                                            {pillar.name}
-                                        </p>
-                                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                            {pillar.purpose}
-                                        </p>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <div>
-                        <SectionLabel>Channel jobs</SectionLabel>
-                        <div className="mt-2 grid gap-3">
-                            {(['threads', 'x', 'instagram'] as const).map(
-                                (channel) => (
-                                    <div
-                                        key={channel}
-                                        className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 text-xs leading-relaxed"
-                                    >
-                                        <ChannelLabel channel={channel} />
-                                        <p className="text-muted-foreground">
-                                            {roles[channel] ||
-                                                'No distinct role proposed yet.'}
-                                        </p>
-                                    </div>
-                                ),
-                            )}
-                        </div>
+            <DialogContent className="flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+                <DialogHeader className="shrink-0 border-b px-6 py-5 pr-14 sm:px-8 sm:py-6 sm:pr-16">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <DialogTitle className="text-xl tracking-tight sm:text-2xl">
+                            Content strategy · {month}
+                        </DialogTitle>
+                        <Badge variant="secondary" className="rounded-full">
+                            Version {plan.version}
+                        </Badge>
                     </div>
+                    <DialogDescription className="max-w-4xl text-sm leading-relaxed sm:text-base">
+                        {plan.summary ||
+                            'The assistant has not written a strategy summary yet.'}
+                    </DialogDescription>
+                </DialogHeader>
 
-                    {(facts.length > 0 || assumptions.length > 0) && (
-                        <div className="grid gap-4 border-t pt-4 text-xs leading-relaxed sm:grid-cols-2">
-                            <div>
-                                <SectionLabel>Known</SectionLabel>
-                                <ul className="mt-2 grid gap-2 text-muted-foreground">
-                                    {facts.map((fact) => (
-                                        <li key={fact.claim}>{fact.claim}</li>
-                                    ))}
-                                </ul>
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                    <div className="mx-auto grid w-full max-w-6xl gap-8 px-6 py-7 sm:px-8 sm:py-9">
+                        {(objectives.length > 0 || pillars.length > 0) && (
+                            <div className="grid gap-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+                                {objectives.length > 0 && (
+                                    <section>
+                                        <SectionLabel>Objectives</SectionLabel>
+                                        <ol className="mt-4 grid gap-3">
+                                            {objectives.map(
+                                                (objective, index) => (
+                                                    <li
+                                                        key={objective}
+                                                        className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 text-sm leading-relaxed"
+                                                    >
+                                                        <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/10 text-xs font-semibold text-violet-700 dark:text-violet-300">
+                                                            {index + 1}
+                                                        </span>
+                                                        <span className="pt-1.5">
+                                                            {objective}
+                                                        </span>
+                                                    </li>
+                                                ),
+                                            )}
+                                        </ol>
+                                    </section>
+                                )}
+
+                                {pillars.length > 0 && (
+                                    <section>
+                                        <SectionLabel>
+                                            Editorial pillars
+                                        </SectionLabel>
+                                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                            {pillars.map((pillar) => (
+                                                <div
+                                                    key={pillar.name}
+                                                    className="rounded-2xl border bg-muted/20 p-4"
+                                                >
+                                                    <p className="font-medium">
+                                                        {pillar.name}
+                                                    </p>
+                                                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                                                        {pillar.purpose}
+                                                    </p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
                             </div>
-                            <div>
-                                <SectionLabel>Assumed</SectionLabel>
-                                <ul className="mt-2 grid gap-2 text-muted-foreground">
-                                    {assumptions.map((assumption) => (
-                                        <li key={assumption}>{assumption}</li>
-                                    ))}
-                                </ul>
+                        )}
+
+                        <section className="border-t pt-7">
+                            <SectionLabel>Channel jobs</SectionLabel>
+                            <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                {(['threads', 'x', 'instagram'] as const).map(
+                                    (channel) => (
+                                        <div
+                                            key={channel}
+                                            className="rounded-2xl border bg-background p-4"
+                                        >
+                                            <ChannelLabel channel={channel} />
+                                            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                                                {roles[channel] ||
+                                                    'No distinct role proposed yet.'}
+                                            </p>
+                                        </div>
+                                    ),
+                                )}
                             </div>
-                        </div>
-                    )}
+                        </section>
+
+                        {(facts.length > 0 || assumptions.length > 0) && (
+                            <div className="grid gap-8 border-t pt-7 lg:grid-cols-2">
+                                {facts.length > 0 && (
+                                    <section>
+                                        <SectionLabel>
+                                            Known from the project
+                                        </SectionLabel>
+                                        <ul className="mt-4 grid gap-3">
+                                            {facts.map((fact) => (
+                                                <li
+                                                    key={fact.claim}
+                                                    className="rounded-2xl border bg-background p-4"
+                                                >
+                                                    <p className="text-sm leading-relaxed">
+                                                        {fact.claim}
+                                                    </p>
+                                                    <p className="mt-2 text-xs text-muted-foreground">
+                                                        {fact.source}
+                                                    </p>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </section>
+                                )}
+
+                                {assumptions.length > 0 && (
+                                    <section>
+                                        <SectionLabel>
+                                            Assumptions to validate
+                                        </SectionLabel>
+                                        <ul className="mt-4 grid gap-3">
+                                            {assumptions.map((assumption) => (
+                                                <li
+                                                    key={assumption}
+                                                    className="rounded-2xl border border-dashed bg-muted/15 p-4 text-sm leading-relaxed text-muted-foreground"
+                                                >
+                                                    {assumption}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </section>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
-            )}
-        </section>
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -944,28 +1033,459 @@ function PlanActions({
     );
 }
 
-function IdeasPanel({ ideas }: { ideas: Idea[] }) {
+const STUDIO_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function IdeasPanel({ plan }: { plan: Plan }) {
+    const [open, setOpen] = useState(false);
+    const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
+    const ideas = plan.ideas;
+    const month = new Intl.DateTimeFormat(undefined, {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+    }).format(new Date(`${plan.month.slice(0, 7)}-01T00:00:00Z`));
+
+    const closeArtifact = (nextOpen: boolean) => {
+        setOpen(nextOpen);
+
+        if (!nextOpen) {
+            setSelectedIdea(null);
+        }
+    };
+
     return (
-        <section className={`${workspacePanelClass} shrink-0 overflow-hidden`}>
-            <header className="flex items-center justify-between gap-3 border-b px-5 py-4">
-                <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-300">
-                        <CalendarDays className="size-4" aria-hidden="true" />
+        <Dialog open={open} onOpenChange={closeArtifact}>
+            <section
+                className={`${workspacePanelClass} shrink-0 overflow-hidden`}
+            >
+                <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 border-b px-5 py-4 text-left transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+                    aria-haspopup="dialog"
+                    onClick={() => setOpen(true)}
+                >
+                    <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-300">
+                            <CalendarDays
+                                className="size-4"
+                                aria-hidden="true"
+                            />
+                        </span>
+                        <span className="min-w-0">
+                            <span className="block text-sm font-semibold">
+                                Content map
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                                {ideas.length} ideas · open the monthly view
+                            </span>
+                        </span>
                     </span>
-                    <div className="min-w-0">
-                        <h2 className="text-sm font-semibold">Content map</h2>
-                        <p className="text-xs text-muted-foreground">
-                            {ideas.length} ideas for the month
-                        </p>
-                    </div>
+                    <Maximize2
+                        className="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                    />
+                </button>
+                <div className="grid gap-2 p-3">
+                    {ideas.map((idea) => (
+                        <IdeaCard key={idea.id} idea={idea} />
+                    ))}
                 </div>
-            </header>
-            <div className="grid gap-2 p-3">
-                {ideas.map((idea) => (
-                    <IdeaCard key={idea.id} idea={idea} />
+            </section>
+
+            <DialogContent className="flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+                <DialogHeader className="shrink-0 border-b px-6 py-5 pr-14 sm:px-8 sm:py-6 sm:pr-16">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <DialogTitle className="text-xl tracking-tight sm:text-2xl">
+                            Content plan · {month}
+                        </DialogTitle>
+                        <Badge variant="secondary" className="rounded-full">
+                            {ideas.length} ideas
+                        </Badge>
+                    </div>
+                    <DialogDescription className="max-w-4xl text-sm leading-relaxed sm:text-base">
+                        Scan the month by date, topic and draft readiness. Open
+                        an idea to inspect its evidence and native channel
+                        versions.
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                    <ContentCalendar
+                        plan={plan}
+                        selectedIdeaId={selectedIdea?.id ?? null}
+                        onSelect={setSelectedIdea}
+                    />
+                    {selectedIdea !== null && (
+                        <IdeaInspector
+                            idea={selectedIdea}
+                            onClose={() => setSelectedIdea(null)}
+                        />
+                    )}
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function ContentCalendar({
+    plan,
+    selectedIdeaId,
+    onSelect,
+}: {
+    plan: Plan;
+    selectedIdeaId: string | null;
+    onSelect: (idea: Idea) => void;
+}) {
+    const [year, month] = plan.month
+        .slice(0, 7)
+        .split('-')
+        .map((value) => Number(value));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const startsOn =
+        (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
+    const trailing = (7 - ((startsOn + daysInMonth) % 7)) % 7;
+    const byDay = new Map<number, Idea[]>();
+
+    for (const idea of plan.ideas) {
+        const day = Number(idea.date.slice(8, 10));
+        byDay.set(day, [...(byDay.get(day) ?? []), idea]);
+    }
+
+    return (
+        <div className="size-full overflow-auto overscroll-contain">
+            <div className="hidden min-w-[68rem] p-6 sm:block lg:p-8">
+                <div className="grid grid-cols-7 overflow-hidden rounded-t-2xl border border-b-0 bg-muted/20 text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                    {STUDIO_WEEKDAYS.map((weekday) => (
+                        <div key={weekday} className="px-3 py-2.5">
+                            {weekday}
+                        </div>
+                    ))}
+                </div>
+                <div className="grid grid-cols-7 overflow-hidden rounded-b-2xl border-t border-l bg-background/35">
+                    {Array.from({ length: startsOn }).map((_, index) => (
+                        <div
+                            key={`leading-${index}`}
+                            className="min-h-36 border-r border-b bg-muted/20"
+                        />
+                    ))}
+                    {Array.from({ length: daysInMonth }).map((_, index) => {
+                        const day = index + 1;
+                        const dayIdeas = byDay.get(day) ?? [];
+
+                        return (
+                            <div
+                                key={day}
+                                className="flex min-h-36 min-w-0 flex-col gap-2 border-r border-b p-2.5"
+                            >
+                                <span className="text-xs font-medium text-muted-foreground">
+                                    {day}
+                                </span>
+                                {dayIdeas.map((idea) => (
+                                    <CalendarIdea
+                                        key={idea.id}
+                                        idea={idea}
+                                        selected={idea.id === selectedIdeaId}
+                                        onSelect={onSelect}
+                                    />
+                                ))}
+                            </div>
+                        );
+                    })}
+                    {Array.from({ length: trailing }).map((_, index) => (
+                        <div
+                            key={`trailing-${index}`}
+                            className="min-h-36 border-r border-b bg-muted/20"
+                        />
+                    ))}
+                </div>
+            </div>
+
+            <div className="grid gap-3 p-4 sm:hidden">
+                {plan.ideas.map((idea) => (
+                    <CalendarIdea
+                        key={idea.id}
+                        idea={idea}
+                        selected={idea.id === selectedIdeaId}
+                        onSelect={onSelect}
+                        agenda
+                    />
                 ))}
             </div>
+        </div>
+    );
+}
+
+function CalendarIdea({
+    idea,
+    selected,
+    onSelect,
+    agenda = false,
+}: {
+    idea: Idea;
+    selected: boolean;
+    onSelect: (idea: Idea) => void;
+    agenda?: boolean;
+}) {
+    const date = new Intl.DateTimeFormat(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC',
+    }).format(new Date(`${idea.date}T00:00:00Z`));
+
+    return (
+        <button
+            type="button"
+            className={`min-w-0 rounded-xl border p-2.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-500/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                selected
+                    ? 'border-violet-500/60 bg-violet-500/10'
+                    : 'bg-card/90'
+            } ${agenda ? 'w-full p-4' : ''}`}
+            aria-pressed={selected}
+            onClick={() => onSelect(idea)}
+        >
+            {agenda && (
+                <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                    {date}
+                </span>
+            )}
+            <span
+                className={`${agenda ? 'mt-2 text-sm' : 'text-xs'} line-clamp-3 block leading-snug font-medium`}
+            >
+                {idea.title}
+            </span>
+            <span className="mt-2 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+                <ImageIcon className="size-3 shrink-0" aria-hidden="true" />
+                <span className="truncate">{productionSummary(idea)}</span>
+            </span>
+            <span className="mt-2 flex min-w-0 items-center justify-between gap-2">
+                <span className="truncate text-[10px] text-muted-foreground">
+                    {idea.pillar}
+                </span>
+                <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+                    {idea.drafts.length}/{idea.channels.length}
+                </span>
+            </span>
+        </button>
+    );
+}
+
+function ChannelApproach({ idea }: { idea: Idea }) {
+    const { channelAngles, sharedAngle } = splitChannelAngles(idea.angle);
+
+    return (
+        <section>
+            <SectionLabel>Channel approach</SectionLabel>
+            {sharedAngle && (
+                <div className="mt-3 rounded-2xl border bg-muted/15 p-4">
+                    <p className="text-xs font-medium text-foreground">
+                        Shared direction
+                    </p>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                        {sharedAngle}
+                    </p>
+                </div>
+            )}
+            <div className="mt-3 grid gap-2.5">
+                {idea.channels.map((channel) => {
+                    const shape = idea.production?.[channel] ?? {
+                        format: 'post',
+                        visual: 'none',
+                    };
+                    const channelAngle = channelAngles[channel];
+
+                    return (
+                        <div
+                            key={channel}
+                            className="rounded-2xl border bg-background p-4"
+                        >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <ChannelLabel channel={channel} />
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    <Badge
+                                        variant="secondary"
+                                        className="rounded-full text-[10px]"
+                                    >
+                                        {productionFormatLabel(shape.format)}
+                                    </Badge>
+                                    <Badge
+                                        variant="outline"
+                                        className="rounded-full text-[10px]"
+                                    >
+                                        <ImageIcon
+                                            className="mr-1 size-3"
+                                            aria-hidden="true"
+                                        />
+                                        {productionVisualLabel(shape.visual)}
+                                    </Badge>
+                                </div>
+                            </div>
+                            {channelAngle && (
+                                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                                    {channelAngle}
+                                </p>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
         </section>
+    );
+}
+
+function splitChannelAngles(angle: string | null): {
+    channelAngles: Record<string, string>;
+    sharedAngle: string | null;
+} {
+    const value = angle?.trim() ?? '';
+
+    if (value === '') {
+        return { channelAngles: {}, sharedAngle: null };
+    }
+
+    const matches = [...value.matchAll(/(?:^|\s)(Threads|Instagram|X):\s*/g)];
+
+    if (matches.length === 0) {
+        return { channelAngles: {}, sharedAngle: value };
+    }
+
+    const channelAngles: Record<string, string> = {};
+
+    matches.forEach((match, index) => {
+        const start = (match.index ?? 0) + match[0].length;
+        const end = matches[index + 1]?.index ?? value.length;
+        const channel = match[1].toLowerCase();
+        const text = value.slice(start, end).trim();
+
+        if (text !== '') {
+            channelAngles[channel] = text;
+        }
+    });
+
+    return { channelAngles, sharedAngle: null };
+}
+
+function productionFormatLabel(format: string): string {
+    return (
+        {
+            post: 'Post',
+            post_or_thread: 'Post / thread',
+            image_post: 'Image post',
+            carousel: 'Carousel',
+        }[format] ?? format.replaceAll('_', ' ')
+    );
+}
+
+function productionVisualLabel(visual: string): string {
+    return (
+        {
+            image: 'Image',
+            slides: 'Slides',
+            none: 'Text only',
+        }[visual] ?? visual.replaceAll('_', ' ')
+    );
+}
+
+function productionSummary(idea: Idea): string {
+    const shapes = Object.values(idea.production ?? {});
+    const images = shapes.filter((shape) => shape.visual === 'image').length;
+    const carousels = shapes.filter(
+        (shape) => shape.visual === 'slides',
+    ).length;
+    const parts: string[] = [];
+
+    if (images > 0) {
+        parts.push(`${images} ${images === 1 ? 'image' : 'images'}`);
+    }
+
+    if (carousels > 0) {
+        parts.push(
+            `${carousels} ${carousels === 1 ? 'carousel' : 'carousels'}`,
+        );
+    }
+
+    return parts.length > 0 ? parts.join(' · ') : 'Text only';
+}
+
+function IdeaInspector({ idea, onClose }: { idea: Idea; onClose: () => void }) {
+    const date = new Intl.DateTimeFormat(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'UTC',
+    }).format(new Date(`${idea.date}T00:00:00Z`));
+
+    return (
+        <aside
+            className="absolute inset-y-0 right-0 z-10 w-full max-w-md overflow-y-auto border-l bg-background shadow-[-24px_0_64px_rgba(0,0,0,0.28)]"
+            aria-label={`Idea details: ${idea.title}`}
+        >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-background/95 px-5 py-4 backdrop-blur">
+                <div className="min-w-0">
+                    <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                        {date}
+                    </p>
+                    <p className="mt-1 truncate text-sm font-semibold">
+                        Idea inspector
+                    </p>
+                </div>
+                <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="shrink-0 rounded-full"
+                    aria-label="Close idea inspector"
+                    onClick={onClose}
+                >
+                    <X className="size-4" aria-hidden="true" />
+                </Button>
+            </div>
+
+            <div className="grid gap-5 p-5">
+                <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary" className="rounded-full">
+                            {idea.pillar}
+                        </Badge>
+                        <Badge variant="outline" className="rounded-full">
+                            {idea.drafts.length}/{idea.channels.length} drafts
+                        </Badge>
+                    </div>
+                    <h3 className="mt-3 text-xl leading-tight font-semibold tracking-tight">
+                        {idea.title}
+                    </h3>
+                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                        {idea.thesis}
+                    </p>
+                </div>
+
+                <ChannelApproach idea={idea} />
+
+                {idea.evidence.length > 0 && (
+                    <section className="rounded-2xl border bg-muted/15 p-4">
+                        <SectionLabel>Evidence</SectionLabel>
+                        <ul className="mt-2 grid gap-2 text-sm leading-relaxed text-muted-foreground">
+                            {idea.evidence.map((evidence) => (
+                                <li key={evidence}>{evidence}</li>
+                            ))}
+                        </ul>
+                    </section>
+                )}
+
+                {idea.drafts.length === 0 ? (
+                    <p className="rounded-2xl border border-dashed p-5 text-center text-sm text-muted-foreground">
+                        Native Threads, X and Instagram drafts will appear here
+                        when this batch is generated.
+                    </p>
+                ) : (
+                    <div className="grid gap-3">
+                        {idea.drafts.map((draft) => (
+                            <DraftPreview key={draft.id} draft={draft} />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </aside>
     );
 }
 
@@ -1006,6 +1526,13 @@ function IdeaCard({ idea }: { idea: Idea }) {
                     <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
                         {idea.thesis}
                     </p>
+                    <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <ImageIcon
+                            className="size-3.5 shrink-0"
+                            aria-hidden="true"
+                        />
+                        {productionSummary(idea)}
+                    </p>
                     <div className="mt-3 flex flex-wrap gap-1.5 sm:hidden">
                         {idea.channels.map((channel) => (
                             <ChannelBadge
@@ -1020,7 +1547,7 @@ function IdeaCard({ idea }: { idea: Idea }) {
                 </div>
                 <div className="hidden items-center gap-2 sm:flex">
                     <Badge variant="outline" className="rounded-full">
-                        {idea.drafts.length}/{idea.channels.length}
+                        {idea.drafts.length}/{idea.channels.length} drafts
                     </Badge>
                     <ChevronDown
                         className={`size-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
@@ -1031,33 +1558,24 @@ function IdeaCard({ idea }: { idea: Idea }) {
 
             {open && (
                 <div className="grid gap-4 border-t bg-muted/10 p-4">
-                    {(idea.angle || idea.evidence.length > 0) && (
-                        <div className="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
-                            {idea.angle && (
-                                <div className="rounded-xl border bg-background/70 p-3.5">
-                                    <SectionLabel>Angle</SectionLabel>
-                                    <p className="mt-2 leading-relaxed">
-                                        {idea.angle}
-                                    </p>
-                                </div>
-                            )}
-                            {idea.evidence.length > 0 && (
-                                <div className="rounded-xl border bg-background/70 p-3.5">
-                                    <SectionLabel>Evidence</SectionLabel>
-                                    <ul className="mt-2 grid gap-1.5 leading-relaxed">
-                                        {idea.evidence.map((evidence) => (
-                                            <li key={evidence}>{evidence}</li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
+                    <ChannelApproach idea={idea} />
+
+                    {idea.evidence.length > 0 && (
+                        <div className="rounded-xl border bg-background/70 p-3.5 text-xs text-muted-foreground">
+                            <SectionLabel>Evidence</SectionLabel>
+                            <ul className="mt-2 grid gap-1.5 leading-relaxed">
+                                {idea.evidence.map((evidence) => (
+                                    <li key={evidence}>{evidence}</li>
+                                ))}
+                            </ul>
                         </div>
                     )}
 
                     {idea.drafts.length === 0 ? (
                         <p className="rounded-xl border border-dashed px-4 py-5 text-center text-xs text-muted-foreground">
-                            Planned, not written yet. Weekly generation keeps
-                            later copy open to new information.
+                            Planned, not written yet. Native Threads, X and
+                            Instagram versions appear here when this batch is
+                            generated.
                         </p>
                     ) : (
                         <div className="grid gap-3">
@@ -1141,21 +1659,38 @@ function ChannelBadge({
 }
 
 function ChannelLabel({ channel }: { channel: string }) {
+    const normalizedChannel = channel.toLowerCase();
+
     const icon =
-        channel === 'instagram' ? (
-            <Instagram className="size-3.5" aria-hidden="true" />
-        ) : channel === 'threads' ? (
-            <MessageCircle className="size-3.5" aria-hidden="true" />
-        ) : (
-            <span className="text-xs font-bold" aria-hidden="true">
-                X
+        normalizedChannel === 'instagram' ? (
+            <Instagram
+                className="size-3.5 text-foreground"
+                aria-hidden="true"
+            />
+        ) : normalizedChannel === 'x' ? (
+            <span
+                className="text-sm leading-none font-semibold text-foreground"
+                aria-hidden="true"
+            >
+                𝕏
             </span>
+        ) : (
+            <MessageCircle
+                className="size-3.5 text-foreground"
+                aria-hidden="true"
+            />
         );
 
+    const label =
+        normalizedChannel === 'x'
+            ? 'X'
+            : normalizedChannel.charAt(0).toUpperCase() +
+              normalizedChannel.slice(1);
+
     return (
-        <div className="flex items-center gap-2 text-xs font-semibold capitalize">
+        <div className="flex items-center gap-2 text-xs font-semibold">
             {icon}
-            {channel}
+            <span className="text-muted-foreground">{label}</span>
         </div>
     );
 }

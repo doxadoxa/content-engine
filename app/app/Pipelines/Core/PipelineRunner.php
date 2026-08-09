@@ -46,6 +46,16 @@ use Throwable;
  */
 class PipelineRunner
 {
+    /**
+     * What `role` says for a step whose only spend was pictures.
+     *
+     * The column otherwise holds a {@see ModelCatalog} role — the job
+     * the model was doing — and an image vendor has none of those. Its own
+     * value rather than null, so §6's cost report can group by what the money
+     * was for.
+     */
+    private const string IMAGE_ROLE = 'image';
+
     public function __construct(
         private readonly PipelineRegistry $registry,
         private readonly ErrorClassifier $errors,
@@ -285,6 +295,28 @@ class PipelineRunner
             return;
         }
 
+        // Somebody else is alive and inside the handler. The queue gave up on
+        // *a* delivery of this step, not necessarily on the one doing the work:
+        // a duplicate that exceeds its attempt limit before it runs never
+        // claims anything, so both deliveries are talking about attempt 1 and
+        // the row's version guard cannot tell them apart. On 2026-08-08 that
+        // wrote off an `illustrate_draft` step ninety seconds into drawing four
+        // pictures — the step went on to succeed, and the run it belonged to
+        // was already marked failed, so a finished article sat behind a red run
+        // with every step green.
+        //
+        // Left alone rather than failed: the live attempt owns the step and
+        // will settle it, and if its process dies instead, PostgreSQL drops the
+        // lock and `pipeline:reap` picks the run up.
+        if ($this->mutex->heldElsewhere($run->getKey(), $stepKey)) {
+            Log::warning('A pipeline step job was killed while another attempt was still working on it', [
+                'run_id' => $run->getKey(),
+                'step' => $stepKey,
+            ]);
+
+            return;
+        }
+
         $graph = $this->graphOrNull($run);
 
         $step = $graph?->has($stepKey) === true ? $graph->step($stepKey) : null;
@@ -517,6 +549,15 @@ class PipelineRunner
      * top of the attempt that replaced it — reporting one worker's result as
      * another's.
      *
+     * Settled steps are refused outright, and that is a second guard rather
+     * than a restatement of the first: the callers that *read* a step, decide
+     * it is unfinished and then write are racing the attempt that finishes it
+     * in between, and they all share the one `attempt` number so the version
+     * check waves them through. `abandon()` did exactly that on 2026-08-08 —
+     * `illustrate_draft` succeeded after 90 seconds and the run was marked
+     * failed in the same second, leaving a complete, paid-for article behind a
+     * red run. A result is written once.
+     *
      * @param  array<string, mixed>  $values
      */
     private function writeClaimed(StepRecord $record, int $claimed, array $values): bool
@@ -524,6 +565,10 @@ class PipelineRunner
         $changed = StepRecord::query()
             ->whereKey($record->getKey())
             ->where('attempt', $claimed)
+            ->whereNotIn('status', [
+                PipelineStepStatus::Succeeded->value,
+                PipelineStepStatus::Skipped->value,
+            ])
             // The query builder does not apply the model's casts, so arrays
             // have to be encoded here.
             ->update(array_map(
@@ -642,16 +687,33 @@ class PipelineRunner
         return $schedule[min($attempt - 1, count($schedule) - 1)];
     }
 
+    /**
+     * Fail the run — once, and only while it is still open.
+     *
+     * Compare-and-set for the same reason {@see complete()} has one, and the
+     * mirror image of it. A run is finished by whichever branch settles last,
+     * and a failure arriving after that has nothing left to fail: it would
+     * rewrite a completed run's status, its `finished_at` and its error, and
+     * fire a second {@see PipelineRunFinished} at everything hanging off it —
+     * which for a launching project means the onboarding chain advancing twice.
+     */
     private function failRun(PipelineRun $run, StepRecord $record, Throwable $e): void
     {
-        $run->forceFill([
-            'status' => PipelineRunStatus::Failed,
-            'failed_step_key' => $record->step_key,
-            'error' => $this->errors->describe($e),
-            'finished_at' => now(),
-        ])->save();
+        $failed = PipelineRun::query()
+            ->whereKey($run->getKey())
+            ->whereIn('status', [PipelineRunStatus::Pending->value, PipelineRunStatus::Running->value])
+            ->update([
+                'status' => PipelineRunStatus::Failed->value,
+                'failed_step_key' => $record->step_key,
+                'error' => json_encode($this->errors->describe($e)),
+                'finished_at' => now(),
+            ]);
 
-        $run->rollUpTotals();
+        if ($failed !== 1) {
+            return;
+        }
+
+        $run->refresh()->rollUpTotals();
 
         PipelineRunFinished::dispatch($run);
     }
@@ -714,7 +776,14 @@ class PipelineRunner
     {
         $usage = $context->usage();
 
-        if ($usage === []) {
+        // Money that never had a token count: images, priced per picture. A
+        // step can spend it without calling a model at all — `illustrate_draft`
+        // makes no model calls and buys four pictures — so this cannot be
+        // folded in under a check for model usage, which is precisely how it
+        // came to be missing.
+        $spend = $context->spent();
+
+        if ($usage === [] && $spend === []) {
             return [];
         }
 
@@ -733,17 +802,27 @@ class PipelineRunner
             );
         }
 
-        $last = $usage[array_key_last($usage)];
+        foreach ($spend as $bought) {
+            // Not re-priced against the catalogue: the vendor billed a number
+            // per picture and reported it, where the catalogue prices tokens.
+            $cost += $bought['cost_micros'];
+        }
+
+        $last = $usage === [] ? null : $usage[array_key_last($usage)];
+        $lastBought = $spend === [] ? null : $spend[array_key_last($spend)];
 
         return [
             'input_tokens' => $input,
             'output_tokens' => $output,
             'cost_micros' => $cost,
             // The last call's model, which for a step that makes several is the
-            // one that did the work the step is named after.
-            'provider' => $last->provider,
-            'model' => $last->model,
-            'role' => $last->role,
+            // one that did the work the step is named after. A step that only
+            // bought pictures names the picture vendor instead — an empty
+            // provider on a row that cost real money is the report saying it
+            // does not know where the money went.
+            'provider' => $last->provider ?? $lastBought['provider'] ?? null,
+            'model' => $last->model ?? $lastBought['model'] ?? null,
+            'role' => $last->role ?? ($lastBought === null ? null : self::IMAGE_ROLE),
         ];
     }
 

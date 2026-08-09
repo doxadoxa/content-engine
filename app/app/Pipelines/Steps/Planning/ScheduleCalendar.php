@@ -72,7 +72,9 @@ class ScheduleCalendar extends AbstractStep
         $derivativeChannels = $this->socialChannels();
 
         $planned = 0;
-        $localeRows = 0;
+
+        /** @var list<array{id: string, locale: string, source_id: string}> $localeRows */
+        $localeRows = [];
 
         $plan = DB::transaction(function () use (
             $month, $selection, $typing, $dates, $needData,
@@ -125,8 +127,23 @@ class ScheduleCalendar extends AbstractStep
                         'planned_derivatives' => $derivativeChannels,
                         'intent' => $unit->intent,
                         'cluster' => $unit->cluster,
-                        'topic_difficulty' => $unit->topic_difficulty,
-                        'topic_volume' => $unit->topic_volume,
+                        // `topic_difficulty` and `topic_volume` are absent on
+                        // purpose, and {@see ContentItem::addLocale()} is where
+                        // the reason is written out: they are per-keyword *and*
+                        // per-market, so the parent's numbers are not this
+                        // unit's numbers — they are another market's, wearing
+                        // this one's label. This step used to copy them anyway,
+                        // three lines above a comment explaining that the
+                        // *figure* is a fact about a market and only the
+                        // *shape* travels. A Russian and a Portuguese article
+                        // shared one volume and one difficulty, and everything
+                        // that reads those columns — the planner, the score,
+                        // the calendar card an operator decides from — was
+                        // reading a number nobody had measured.
+                        //
+                        // Left null until something researches that market.
+                        // See `product/native-keywords-per-locale.md`.
+                        //
                         // The curve travels better across locales than the
                         // figure it is the shape of. How many people search a
                         // subject is a fact about a market; *when* in the year
@@ -138,7 +155,17 @@ class ScheduleCalendar extends AbstractStep
                         'monthly_volumes' => $unit->monthly_volumes,
                     ])->save();
 
-                    $localeRows++;
+                    // Carried to {@see LocaliseVariants}, which gives the row
+                    // a title and a search phrase in its own language. It is
+                    // created here holding the *source* language's — copying
+                    // the parent's title is how a Russian article came to be
+                    // outlined from "limpeza pós-obra" and written half in
+                    // Portuguese.
+                    $localeRows[] = [
+                        'id' => (string) $variant->getKey(),
+                        'locale' => $locale,
+                        'source_id' => (string) $unit->getKey(),
+                    ];
                 }
             }
 
@@ -151,7 +178,8 @@ class ScheduleCalendar extends AbstractStep
             planId: $plan->getKey(),
             month: $month->toDateString(),
             units: $planned,
-            locales: $localeRows,
+            locales: count($localeRows),
+            variants: $localeRows,
         ));
     }
 

@@ -77,7 +77,7 @@ class FactCheck extends AbstractStep
         }
 
         $lines = array_values(array_filter(
-            array_map(trim(...), preg_split('/\R/', $trimmed) ?: []),
+            array_map(trim(...), preg_split('/\R/u', $trimmed) ?: []),
             static fn (string $line): bool => $line !== '',
         ));
 

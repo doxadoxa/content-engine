@@ -11,6 +11,7 @@ use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
 use App\Pipelines\Steps\Research\DropIrrelevant;
+use App\Support\Content\Squish;
 use App\Support\Social\ProjectVocabulary;
 use App\Support\Social\SignalWeight;
 use Carbon\CarbonImmutable;
@@ -233,7 +234,7 @@ class Normalise extends AbstractStep
         $numbered = [];
 
         foreach (array_slice($posts, 0, self::MAX_CLASSIFIED) as $index => $post) {
-            $text = Str::squish((string) ($post['text'] ?? ''));
+            $text = Squish::text((string) ($post['text'] ?? ''));
 
             if ($text === '') {
                 continue;
@@ -296,7 +297,7 @@ class Normalise extends AbstractStep
     {
         $judged = [];
 
-        foreach (preg_split('/\R/', $text) ?: [] as $line) {
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
             $parts = array_map(trim(...), explode('|', $line, 3));
 
             if (count($parts) < 2) {
@@ -311,7 +312,7 @@ class Normalise extends AbstractStep
 
             $judged[$number - 1] = [
                 'question' => str_contains(mb_strtoupper($parts[1]), 'QUESTION'),
-                'subject' => Str::limit(Str::squish($parts[2] ?? ''), self::MAX_TITLE, ''),
+                'subject' => Str::limit(Squish::text($parts[2] ?? ''), self::MAX_TITLE, ''),
             ];
         }
 
@@ -327,7 +328,7 @@ class Normalise extends AbstractStep
      */
     private function fromForeignPost(array $post, ?array $judged, array $vocabulary, CarbonImmutable $now): ?CandidateSignal
     {
-        $text = Str::squish((string) ($post['text'] ?? ''));
+        $text = Squish::text((string) ($post['text'] ?? ''));
 
         if ($text === '') {
             return null;
@@ -381,7 +382,7 @@ class Normalise extends AbstractStep
      */
     private function fromOwnPost(array $post, array $vocabulary, CarbonImmutable $now): ?CandidateSignal
     {
-        $text = Str::squish((string) ($post['text'] ?? ''));
+        $text = Squish::text((string) ($post['text'] ?? ''));
 
         if ($text === '') {
             return null;
@@ -408,7 +409,7 @@ class Normalise extends AbstractStep
      */
     private function fromFeedItem(array $item, array $vocabulary, CarbonImmutable $now): ?CandidateSignal
     {
-        $title = Str::squish((string) ($item['title'] ?? ''));
+        $title = Squish::text((string) ($item['title'] ?? ''));
 
         if ($title === '') {
             return null;

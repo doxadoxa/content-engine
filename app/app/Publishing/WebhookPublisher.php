@@ -273,6 +273,10 @@ class WebhookPublisher implements ChannelPublisher
             return $delivery;
         }
 
+        if ($withdrawn = $this->refuseIfWithdrawn($delivery)) {
+            return $withdrawn;
+        }
+
         $channel = $delivery->channel;
         $endpoint = (string) ($channel->config['endpoint'] ?? '');
 

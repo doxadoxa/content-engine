@@ -162,6 +162,102 @@ final class LocaleImageReuseTest extends TestCase
         $this->assertCount(2, $this->images->prompts());
     }
 
+    #[Test]
+    public function a_section_that_already_has_a_picture_is_not_bought_a_second_one(): void
+    {
+        $hero = app(HeroImage::class);
+
+        $unit = $this->unit('pt-PT', 'Limpeza pós-obra');
+
+        $first = $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        // `illustrate_draft` runs twice more often than anybody intends: a
+        // retry, a regeneration, a step re-dispatched after a worker died. The
+        // hero has always been idempotent and the inline pictures were not, so
+        // a unit collected a fresh paid set every time — nine rows for three
+        // slots on one article, and the extras referenced by nothing.
+        $second = $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        $this->assertNotNull($first);
+        $this->assertNotNull($second);
+
+        $this->assertCount(1, $this->images->prompts());
+        $this->assertSame(0, $second['cost']);
+        $this->assertSame($first['asset']->getKey(), $second['asset']->getKey());
+
+        $this->assertSame(1, Asset::query()
+            ->where('content_item_id', $unit->getKey())
+            ->where('role', AssetRole::Inline)
+            ->count());
+    }
+
+    #[Test]
+    public function a_section_that_is_genuinely_new_still_gets_its_own_picture(): void
+    {
+        $hero = app(HeroImage::class);
+
+        $unit = $this->unit('pt-PT', 'Limpeza pós-obra');
+
+        $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        // Matched on the anchor rather than the position, so a re-run whose
+        // outline came back with different headings is not handed the old
+        // article's pictures under new titles.
+        $hero->inline($unit, 'Quanto tempo demora', 'limpeza', position: 1);
+
+        $this->assertCount(2, $this->images->prompts());
+    }
+
+    #[Test]
+    public function a_rewrite_retires_the_pictures_it_replaced_instead_of_keeping_them(): void
+    {
+        $hero = app(HeroImage::class);
+
+        $unit = $this->unit('pt-PT', 'Limpeza pós-obra');
+
+        $hero->for($unit, $unit->title, null);
+        $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        $unit->supersedeInlineAssets();
+
+        $hero->inline($unit, 'Uma nova secção', 'limpeza', position: 0);
+
+        $unit->load(['assets', 'everyAsset']);
+
+        // The article has one hero and one section picture. The one the rewrite
+        // replaced is still on the row, still points at a file that is still
+        // there, and is no longer part of the article — which is what
+        // `ArticleScore` reads. It used to read the table and tell an operator a
+        // four-picture article had thirteen images.
+        $this->assertCount(2, $unit->assets);
+        $this->assertCount(3, $unit->everyAsset);
+
+        // The hero is not swept: it is the article's picture rather than a
+        // picture in it, and it stays valid for a piece about the same subject.
+        $this->assertCount(1, $unit->assets->where('role', AssetRole::Hero));
+    }
+
+    #[Test]
+    public function a_retired_picture_is_not_lent_to_another_locale(): void
+    {
+        $hero = app(HeroImage::class);
+
+        $portuguese = $this->unit('pt-PT', 'Limpeza pós-obra');
+        $english = $this->addLocale($portuguese, 'en-GB', 'Post-renovation cleaning');
+
+        $hero->inline($portuguese, 'Produtos e métodos', 'limpeza', position: 0);
+        $portuguese->supersedeInlineAssets();
+
+        $made = $hero->inline($english, 'Products and methods', 'cleaning', position: 0);
+
+        $this->assertNotNull($made);
+
+        // Borrowing a retired picture would put the previous version's
+        // illustrations into the new article of another language.
+        $this->assertSame(FakeImageGeneration::COST_MICROS, $made['cost']);
+        $this->assertCount(2, $this->images->prompts());
+    }
+
     private function unit(string $locale, string $title): ContentItem
     {
         return ContentItem::factory()->create([

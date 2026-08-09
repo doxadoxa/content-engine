@@ -6,6 +6,7 @@ namespace Tests\Feature\Pipelines;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
+use App\Ai\ModelRequest;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\PipelineRunStatus;
@@ -313,6 +314,49 @@ final class GenerationPipelineTest extends TestCase
 
         $this->assertSame($measured, $unit->refresh()->serp_target_words);
         $this->assertSame($before, count(Http::recorded()));
+    }
+
+    #[Test]
+    public function a_rewrite_is_told_what_was_wrong_last_time(): void
+    {
+        $unit = $this->unit();
+
+        // What the approvals screen writes when somebody sends an article back.
+        $unit->forceFill([
+            'review' => ['reason' => 'too_thin', 'note' => 'Two sentences on pricing is not a section.'],
+            'reviewed_at' => now(),
+        ])->save();
+
+        $this->generate($unit);
+
+        $instructions = array_map(
+            static fn (ModelRequest $request): string => $request->instructions,
+            $this->models->sent(),
+        );
+
+        $written = implode("\n", $instructions);
+
+        // Both writing steps read the compiled brief, so the outline and the
+        // draft answer the same objection. A rewrite that cannot see the
+        // complaint is a rewrite that reproduces it.
+        $this->assertStringContainsString('sent back', $written);
+        $this->assertStringContainsString('Too thin', $written);
+        $this->assertStringContainsString('Two sentences on pricing is not a section.', $written);
+    }
+
+    #[Test]
+    public function a_first_draft_is_told_nothing_about_a_review(): void
+    {
+        $this->generate();
+
+        $written = implode("\n", array_map(
+            static fn (ModelRequest $request): string => $request->instructions,
+            $this->models->sent(),
+        ));
+
+        // Nothing was sent back, so nothing is said about it. A line that is
+        // always there is a line the model stops reading.
+        $this->assertStringNotContainsString('sent back', $written);
     }
 
     #[Test]

@@ -7,21 +7,27 @@ namespace App\Http\Controllers;
 use App\Content\PostScore;
 use App\Content\UnitScore;
 use App\Enums\ContentItemState;
+use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Http\Requests\RejectContentRequest;
 use App\Models\ContentItem;
+use App\Models\WebhookDelivery;
+use App\Pipelines\Core\PipelineRunner;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
 use App\Support\Social\ChannelPayload;
 use App\Support\Social\ChannelPayloadSegment;
+use App\Support\Tenancy\CurrentProject;
 use Illuminate\Contracts\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use InvalidArgumentException;
+use Throwable;
 
 /**
  * The approvals queue — §7 calls it the main daily screen, and the Phase 0 exit
@@ -45,6 +51,8 @@ class ApprovalController extends Controller
     public function __construct(
         private readonly PublishToChannels $channels,
         private readonly UnitScore $score,
+        private readonly PipelineRunner $runner,
+        private readonly CurrentProject $current,
     ) {}
 
     public function index(): Response
@@ -129,6 +137,13 @@ class ApprovalController extends Controller
                 ]);
             }
 
+            // The complaint has been answered — somebody accepted the work.
+            // Left standing it would be read by every future rewrite
+            // ({@see \App\Pipelines\Steps\Generation\CompileBrief}) and shown
+            // on the card as an outstanding objection to an article nobody
+            // objects to any more.
+            $draft->forceFill(['review' => [], 'reviewed_at' => null])->save();
+
             $draft->approve();
 
             return $this->channels->publishAutomatically($draft);
@@ -199,10 +214,50 @@ class ApprovalController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            abort_unless($draft->state === ContentItemState::Draft, 409, 'Only a draft can be rejected.');
+            abort_unless(
+                in_array($draft->state, [ContentItemState::Draft, ContentItemState::Approved], true),
+                409,
+                'Only a draft or an approved unit can be sent back.',
+            );
 
-            // The unit stays a draft. A rejection is a note for whoever
-            // rewrites it, not a state.
+            // Approved is the case this screen had no answer for. An article
+            // signed off with a fault in it could be published or ignored and
+            // nothing else — there was no way back to the queue, because
+            // `approved` has one edge and it points at `published`. Taking an
+            // approval back is a person's decision, so it is a named method
+            // rather than a widening of the state map: see
+            // {@see ContentItem::returnForRework()} for why that distinction is
+            // worth keeping.
+            //
+            // A draft that is sent back stays a draft. It is already where
+            // rework happens, and the note is the whole of the change.
+            if ($draft->state === ContentItemState::Approved) {
+                $draft->returnForRework();
+
+                // Approving may already have queued this unit at every channel
+                // that publishes automatically, and a delivery carries a payload
+                // snapshot it will send whatever the unit has done since. Taking
+                // the approval back has to take those with it, or the operator
+                // pulls an inaccurate article and the version they pulled goes
+                // out a minute later.
+                //
+                // Dead letter rather than deleted: the row is the record that a
+                // publication was intended and stopped, and the operator's
+                // delivery screen is where they would look for it. The
+                // publishers refuse a withdrawn unit as well
+                // ({@see \App\Publishing\Concerns\RecordsDeliveryOutcome::refuseIfWithdrawn()}),
+                // which is what covers the one already in flight while this
+                // covers the ones still waiting.
+                WebhookDelivery::query()
+                    ->where('content_item_id', $draft->getKey())
+                    ->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])
+                    ->update([
+                        'status' => DeliveryStatus::DeadLetter->value,
+                        'error' => 'Cancelled: the unit was sent back for rework before this went out.',
+                        'next_attempt_at' => null,
+                    ]);
+            }
+
             $draft->forceFill([
                 'review' => [
                     'reason' => $request->string('reason')->value(),
@@ -214,9 +269,70 @@ class ApprovalController extends Controller
             ])->save();
         });
 
-        Inertia::flash('toast', ['type' => 'info', 'message' => "{$item->title} sent back."]);
+        $rewriting = $this->rewrite($item, $request->enum('reason', RejectionReason::class));
+
+        Inertia::flash('toast', [
+            'type' => 'info',
+            // What happens next, not what just happened. "Sent back" on its own
+            // is the message this screen used to give and it left an operator
+            // watching an unchanged article wondering whether the button had
+            // worked at all.
+            'message' => $rewriting
+                ? "{$item->title} sent back — the engine is rewriting it."
+                : "{$item->title} sent back.",
+        ]);
 
         return back();
+    }
+
+    /**
+     * Hand the unit back to the engine, and say whether it was taken.
+     *
+     * Sending something back has to *cause* something. Without this the button
+     * un-approved an article and left it word for word as it was: the operator
+     * had said what was wrong, in a closed set built for counting, and the only
+     * thing that could act on it was a human rewriting by hand — which is the
+     * one thing §7's five-minute routine has no room for.
+     *
+     * Not when the reason points at the brief. {@see RejectionReason::isBriefProblem()}
+     * exists for this and says it plainly: a project whose rejections are mostly
+     * off-brand has a brief problem, and regenerating the same article from the
+     * same brief produces the same article at full price. That one waits for a
+     * human to fix the voice it is written from.
+     *
+     * Articles only. A social post is a slot with a time on it and a TTL that
+     * may have passed; rewriting one belongs to §4.3's contour, not to this
+     * button.
+     *
+     * A failure here does not fail the send-back. The unit is already back in
+     * the queue with its note, which is the part the operator asked for; a run
+     * that will not start is worth a log line and the ordinary tick, not an
+     * error on a screen where nothing went wrong.
+     */
+    private function rewrite(ContentItem $item, RejectionReason $reason): bool
+    {
+        if ($item->isSocial() || $reason->isBriefProblem()) {
+            return false;
+        }
+
+        $project = $this->current->get();
+
+        if ($project === null) {
+            return false;
+        }
+
+        try {
+            $this->runner->start('generation', $project, [], $item->getKey());
+
+            return true;
+        } catch (Throwable $e) {
+            Log::warning('A unit sent back could not be queued for a rewrite', [
+                'unit' => $item->slug,
+                'reason' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 
     /**

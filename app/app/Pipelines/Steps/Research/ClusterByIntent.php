@@ -8,7 +8,7 @@ use App\Enums\SearchIntent;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
-use Illuminate\Support\Str;
+use App\Support\Content\Squish;
 
 /**
  * Group the pool by what the searcher wants (§4.1).
@@ -85,7 +85,7 @@ class ClusterByIntent extends AbstractStep
         // matches whole words: "vs" must not match "vsauce", and "why" must not
         // match "whyte". An earlier version also tried a prefix match as a
         // fallback, which silently undid exactly that.
-        $haystack = ' '.Str::squish(mb_strtolower($keyword)).' ';
+        $haystack = ' '.Squish::text(mb_strtolower($keyword)).' ';
 
         foreach (self::MARKERS as $marker => $intent) {
             if (str_contains($haystack, ' '.$marker.' ')) {

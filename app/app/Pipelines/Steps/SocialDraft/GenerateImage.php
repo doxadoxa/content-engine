@@ -103,6 +103,14 @@ class GenerateImage extends AbstractStep
             return StepResult::skip('No image provider is configured for this project.');
         }
 
+        // Per picture rather than per token, so it reaches the run's cost
+        // columns only if the step says so — see {@see StepContext::spend()}.
+        // Null when the slot re-ran and found the unit's existing hero, which
+        // is the case this step's docblock is about: nothing was bought.
+        if ($made['provider'] !== null && $made['model'] !== null) {
+            $context->spend($made['cost'], $made['provider'], $made['model']);
+        }
+
         return StepResult::success(new PostImagePayload(
             assetId: (string) $made['asset']->getKey(),
             costMicros: $made['cost'],

@@ -87,7 +87,7 @@ class BrandBriefRequest extends FormRequest
      */
     private function lines(string $value): array
     {
-        $lines = preg_split('/\R/', $value) ?: [];
+        $lines = preg_split('/\R/u', $value) ?: [];
 
         return array_values(array_filter(
             array_map(trim(...), $lines),

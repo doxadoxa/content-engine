@@ -42,6 +42,7 @@ use App\Visibility\FakeLlmVisibility;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Log\Context\Events\ContextHydrated;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -150,6 +151,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->forceHttpsAwayFromLocalhost();
+
         // Accessing a relation that was not loaded is a bug that only shows up
         // as a slow page; failing on it in development is how it gets found.
         // Left off in production, where a missed eager-load should degrade
@@ -176,5 +179,44 @@ class AppServiceProvider extends ServiceProvider
         // finished research run started two planning runs and planned the
         // month twice.
         Event::listen(PipelineRunFinished::class, AdvanceProjectLaunch::class);
+    }
+
+    /**
+     * Build https links for every host but the one on this machine.
+     *
+     * Reached through a tunnel, the app is behind TLS it never terminates: the
+     * edge speaks https to the browser and plain http to the origin, so the
+     * request Laravel sees says http and every redirect it builds says http
+     * too. Assets survived that — they come from APP_URL — and redirects did
+     * not, which is the worst shape for a bug to have: the page loads, the form
+     * submits, and the browser silently refuses to follow a redirect from https
+     * to http as mixed content. The login button spun forever and nothing was
+     * logged anywhere.
+     *
+     * A rule about the host rather than trust in a header. `X-Forwarded-Proto`
+     * is the tidier answer and it is one hop away from being right, but it puts
+     * the scheme in the hands of whatever last touched the request; this cannot
+     * be got wrong by a proxy that forgets to set it.
+     *
+     * Localhost is the exception because that is the one place the app is
+     * genuinely served over http — `docker compose up` and every test that
+     * follows. Forcing https there would break the local stack to fix the
+     * remote one.
+     */
+    private function forceHttpsAwayFromLocalhost(): void
+    {
+        // Console has no request to read a host from, and nothing to force: a
+        // command builds links from APP_URL, which already carries its scheme.
+        if ($this->app->runningInConsole()) {
+            return;
+        }
+
+        $host = $this->app->make('request')->getHost();
+
+        if (in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+            return;
+        }
+
+        URL::forceScheme('https');
     }
 }
