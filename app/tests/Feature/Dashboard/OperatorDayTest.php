@@ -312,6 +312,83 @@ final class OperatorDayTest extends TestCase
     }
 
     #[Test]
+    public function sending_an_article_back_starts_a_rewrite_that_can_see_the_complaint(): void
+    {
+        Queue::fake();
+
+        $unit = $this->draft();
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+
+        $this->actingAs($this->operator)
+            ->post(route('content.reject', $unit), [
+                'reason' => RejectionReason::TooThin->value,
+                'note' => 'Two sentences on pricing is not a section.',
+            ])
+            ->assertRedirect();
+
+        // Sending back has to *cause* something. Without this the button
+        // un-approved an article and left it word for word as it was: the
+        // operator had said what was wrong and the only thing that could act on
+        // it was a human rewriting by hand.
+        $this->assertTrue(
+            PipelineRun::acrossProjects()
+                ->where('pipeline', 'generation')
+                ->where('content_item_id', $unit->getKey())
+                ->exists(),
+            'Sending an article back should hand it to the engine.',
+        );
+    }
+
+    #[Test]
+    public function an_off_brand_rejection_waits_for_a_human_instead_of_rewriting(): void
+    {
+        Queue::fake();
+
+        $unit = $this->draft();
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+
+        $this->actingAs($this->operator)
+            ->post(route('content.reject', $unit), ['reason' => RejectionReason::OffBrand->value])
+            ->assertRedirect();
+
+        // §7 and phase 9 both say it: a project whose rejections are mostly
+        // off-brand has a brief problem, and regenerating the same article from
+        // the same brief produces the same article at full price.
+        $this->assertSame(ContentItemState::Draft, $unit->refresh()->state);
+
+        $this->assertFalse(
+            PipelineRun::acrossProjects()
+                ->where('pipeline', 'generation')
+                ->where('content_item_id', $unit->getKey())
+                ->exists(),
+        );
+    }
+
+    #[Test]
+    public function approving_clears_the_complaint(): void
+    {
+        Queue::fake();
+
+        $unit = $this->draft();
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+        $this->actingAs($this->operator)
+            ->post(route('content.reject', $unit), ['reason' => RejectionReason::TooThin->value])
+            ->assertRedirect();
+
+        $this->assertNotNull($unit->refresh()->reviewed_at);
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+
+        // Left standing it would be read by every future rewrite and shown on
+        // the card as an objection to an article nobody objects to any more.
+        $this->assertNull($unit->refresh()->reviewed_at);
+        $this->assertSame([], $unit->review);
+    }
+
+    #[Test]
     public function a_published_article_is_not_sent_back(): void
     {
         $unit = ContentItem::factory()->published()->create();

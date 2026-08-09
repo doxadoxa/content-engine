@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Pipelines\Steps\Generation;
 
 use App\Enums\ContentItemState;
+use App\Enums\RejectionReason;
 use App\Models\BrandBrief;
+use App\Models\ContentItem;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
@@ -66,7 +68,7 @@ class CompileBrief extends AbstractStep
 
         return StepResult::success(new BriefContextPayload(
             briefId: $brief->getKey(),
-            compiledBrief: $brief->compileToPrompt(),
+            compiledBrief: $this->withOutstandingReview($brief->compileToPrompt(), $unit),
             // Only when the planner asked for it (§4.3). Handing a model the
             // price list on every article is how prices end up in guides that
             // never needed them.
@@ -75,6 +77,44 @@ class CompileBrief extends AbstractStep
             targetQuery: (string) $unit->target_query,
             locale: $unit->locale,
         ));
+    }
+
+    /**
+     * The brief, plus whatever a human said was wrong last time.
+     *
+     * A unit only reaches this step twice if somebody sent it back, and a
+     * rewrite that cannot see the complaint is a rewrite that reproduces it —
+     * the operator typed a reason into a closed set and a note into a box, and
+     * without this the model never learns either. Both writing steps read
+     * `compiledBrief`, so putting it here is what makes the outline *and* the
+     * draft answer the same objection.
+     *
+     * Kept until the unit is approved rather than cleared when it is read: the
+     * complaint stands until somebody accepts the work, so a second rewrite
+     * before that still has to answer it.
+     */
+    private function withOutstandingReview(string $compiled, ContentItem $unit): string
+    {
+        $review = $unit->review;
+
+        if ($unit->reviewed_at === null || $review === []) {
+            return $compiled;
+        }
+
+        $reason = RejectionReason::tryFrom((string) ($review['reason'] ?? ''));
+        $note = trim((string) ($review['note'] ?? ''));
+
+        if ($reason === null && $note === '') {
+            return $compiled;
+        }
+
+        return implode("\n\n", array_filter([
+            $compiled,
+            'This piece was written once and sent back. Fix what was wrong with it rather '
+            .'than writing the same article again.',
+            $reason === null ? null : 'What was wrong: '.$reason->label().'.',
+            $note === '' ? null : 'What the reviewer asked for: '.$note,
+        ]));
     }
 
     /** @return array<string, mixed> */

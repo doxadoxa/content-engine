@@ -19,6 +19,7 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import {
     WorkspaceHeader,
     WorkspacePage,
@@ -89,6 +90,7 @@ type Props = {
     deliveries: Delivery[];
     manual_channels: number;
     reasons: Reason[];
+    rewriting: { done: number; total: number } | null;
 };
 
 /**
@@ -103,6 +105,7 @@ export default function ContentShow({
     deliveries,
     manual_channels,
     reasons,
+    rewriting,
 }: Props) {
     // Null until the operator asks, so the dialog is not mounted around an
     // article nobody is sending anywhere.
@@ -150,6 +153,22 @@ export default function ContentShow({
                             <Badge className="h-9 rounded-full px-3">
                                 {item.state_label}
                             </Badge>
+                            {/*
+                              A unit being rewritten is a `draft`, exactly like
+                              one that is finished and waiting — so the state
+                              badge alone made sending an article back look like
+                              a button that had done nothing.
+                            */}
+                            {rewriting !== null && (
+                                <Badge
+                                    variant="outline"
+                                    className="h-9 gap-2 rounded-full border-violet-500/20 bg-background/70 px-3 text-violet-700 dark:text-violet-200"
+                                >
+                                    <Spinner className="size-3.5" />
+                                    Rewriting · {rewriting.done} of{' '}
+                                    {rewriting.total}
+                                </Badge>
+                            )}
                             <Badge
                                 variant="outline"
                                 className="h-9 rounded-full bg-background/70 px-3"
