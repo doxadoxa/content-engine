@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Integrations\Feeds;
 
 use App\Models\Project;
+use App\Support\Content\Squish;
 use App\Support\Http\PublicHttpClient;
 use App\Support\Http\UnsafePublicUrl;
 use Carbon\CarbonImmutable;
@@ -314,7 +315,7 @@ final class FeedReader
             feedUrl: $url,
             feedTitle: $feedTitle,
             id: $id,
-            title: Str::limit(Str::squish(strip_tags($title)), 300, ''),
+            title: Str::limit(Squish::text(strip_tags($title)), 300, ''),
             url: $link,
             summary: $summary,
             publishedAt: $this->date($date),
@@ -378,7 +379,7 @@ final class FeedReader
             return null;
         }
 
-        $text = Str::squish(strip_tags($value));
+        $text = Squish::text(strip_tags($value));
 
         return $text === '' ? null : Str::limit($text, 500, '');
     }

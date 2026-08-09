@@ -162,6 +162,52 @@ final class LocaleImageReuseTest extends TestCase
         $this->assertCount(2, $this->images->prompts());
     }
 
+    #[Test]
+    public function a_section_that_already_has_a_picture_is_not_bought_a_second_one(): void
+    {
+        $hero = app(HeroImage::class);
+
+        $unit = $this->unit('pt-PT', 'Limpeza pós-obra');
+
+        $first = $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        // `illustrate_draft` runs twice more often than anybody intends: a
+        // retry, a regeneration, a step re-dispatched after a worker died. The
+        // hero has always been idempotent and the inline pictures were not, so
+        // a unit collected a fresh paid set every time — nine rows for three
+        // slots on one article, and the extras referenced by nothing.
+        $second = $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        $this->assertNotNull($first);
+        $this->assertNotNull($second);
+
+        $this->assertCount(1, $this->images->prompts());
+        $this->assertSame(0, $second['cost']);
+        $this->assertSame($first['asset']->getKey(), $second['asset']->getKey());
+
+        $this->assertSame(1, Asset::query()
+            ->where('content_item_id', $unit->getKey())
+            ->where('role', AssetRole::Inline)
+            ->count());
+    }
+
+    #[Test]
+    public function a_section_that_is_genuinely_new_still_gets_its_own_picture(): void
+    {
+        $hero = app(HeroImage::class);
+
+        $unit = $this->unit('pt-PT', 'Limpeza pós-obra');
+
+        $hero->inline($unit, 'Produtos e métodos', 'limpeza', position: 0);
+
+        // Matched on the anchor rather than the position, so a re-run whose
+        // outline came back with different headings is not handed the old
+        // article's pictures under new titles.
+        $hero->inline($unit, 'Quanto tempo demora', 'limpeza', position: 1);
+
+        $this->assertCount(2, $this->images->prompts());
+    }
+
     private function unit(string $locale, string $title): ContentItem
     {
         return ContentItem::factory()->create([

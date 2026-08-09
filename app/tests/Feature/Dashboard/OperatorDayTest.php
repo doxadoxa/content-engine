@@ -19,6 +19,7 @@ use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\WebhookPublisher;
+use App\Support\Content\InvalidStateTransition;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -275,6 +276,71 @@ final class OperatorDayTest extends TestCase
             ->assertSessionHasErrors('reason');
 
         $this->assertNull($draft->refresh()->reviewed_at);
+    }
+
+    // ---------------------------------------------- sending an approval back
+
+    #[Test]
+    public function an_approved_article_can_be_sent_back_for_rework(): void
+    {
+        $unit = $this->draft();
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+        $this->assertSame(ContentItemState::Approved, $unit->refresh()->state);
+
+        // The case the queue had no answer for. `approved` has one edge and it
+        // points at `published`, so an article signed off with a fault in it
+        // could be published or ignored — there was no third option, and the
+        // operator who found the fault was the one person who could not act on
+        // it.
+        $this->actingAs($this->operator)
+            ->post(route('content.reject', $unit), [
+                'reason' => RejectionReason::Inaccurate->value,
+                'note' => 'The section on solvents is wrong.',
+            ])
+            ->assertRedirect();
+
+        $unit->refresh();
+
+        // Back where rework happens, carrying the same structured reason a
+        // draft rejection carries — §7 counts them together because they are
+        // the same complaint.
+        $this->assertSame(ContentItemState::Draft, $unit->state);
+        $this->assertSame('inaccurate', $unit->review['reason']);
+        $this->assertSame('The section on solvents is wrong.', $unit->review['note']);
+        $this->assertNotNull($unit->reviewed_at);
+    }
+
+    #[Test]
+    public function a_published_article_is_not_sent_back(): void
+    {
+        $unit = ContentItem::factory()->published()->create();
+
+        // Text somebody may have linked to is not withdrawn by an approvals
+        // screen. That is what `refreshing` is for.
+        $this->actingAs($this->operator)
+            ->post(route('content.reject', $unit), ['reason' => RejectionReason::Inaccurate->value])
+            ->assertStatus(409);
+
+        $this->assertSame(ContentItemState::Published, $unit->refresh()->state);
+    }
+
+    #[Test]
+    public function the_engine_still_cannot_unapprove_an_article_by_accident(): void
+    {
+        $unit = $this->draft();
+
+        $this->actingAs($this->operator)->post(route('content.approve', $unit))->assertRedirect();
+
+        // `finalise_draft` ends by moving a unit to `draft`, and on 2026-08-09
+        // a regeneration of an approved article tried exactly that. The state
+        // map refusing is what stopped a human's approval being thrown away
+        // silently, so sending back is a named method rather than a new edge —
+        // widening the map would have removed the guard along with the
+        // inconvenience.
+        $this->expectException(InvalidStateTransition::class);
+
+        $unit->refresh()->markDrafted();
     }
 
     // ------------------------------------------------------------- calendar

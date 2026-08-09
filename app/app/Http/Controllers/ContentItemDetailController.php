@@ -61,6 +61,18 @@ class ContentItemDetailController extends Controller
                 ...$this->score->for($item),
                 'data' => $this->score->data($item),
             ],
+            // The closed set behind "send back". Passed here as well as to the
+            // approvals queue because an approved article is not in that queue
+            // — this page is the only place a human meets it after signing it
+            // off, and until now the only thing they could do about a fault was
+            // publish it anyway.
+            'reasons' => array_map(
+                static fn (RejectionReason $reason): array => [
+                    'value' => $reason->value,
+                    'label' => $reason->label(),
+                ],
+                RejectionReason::cases(),
+            ),
             // §2's promise made visible: which voice this was written from.
             'brief' => $brief === null ? null : [
                 'id' => $brief->getKey(),
@@ -99,13 +111,6 @@ class ContentItemDetailController extends Controller
                     'error' => $delivery->error,
                     'created_at' => $delivery->created_at?->toIso8601String(),
                 ])->all(),
-            'reasons' => array_map(
-                static fn (RejectionReason $reason): array => [
-                    'value' => $reason->value,
-                    'label' => $reason->label(),
-                ],
-                RejectionReason::cases(),
-            ),
             'manual_channels' => $this->channels->manualTargets($item),
         ]);
     }

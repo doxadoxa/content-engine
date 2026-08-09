@@ -95,7 +95,7 @@ class SiteAnalyst
     {
         $fields = [];
 
-        foreach (preg_split('/\R/', trim($text)) ?: [] as $line) {
+        foreach (preg_split('/\R/u', trim($text)) ?: [] as $line) {
             if (preg_match('/^([A-Z]+):\s*(.*)$/u', trim($line), $m) === 1) {
                 $fields[$m[1]] = trim($m[2]);
             }

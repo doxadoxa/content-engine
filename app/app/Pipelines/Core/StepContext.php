@@ -8,6 +8,8 @@ use App\Ai\Contracts\ModelGateway;
 use App\Ai\Contracts\ModelSession;
 use App\Ai\ModelRequest;
 use App\Ai\ModelResponse;
+use App\Media\GeneratedImage;
+use App\Media\HeroImage;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Contracts\StepPayload;
@@ -25,6 +27,9 @@ final class StepContext implements ModelSession
 {
     /** @var list<ModelResponse> */
     private array $usage = [];
+
+    /** @var list<array{cost_micros: int, provider: string, model: string}> */
+    private array $spend = [];
 
     /** @var array<string, mixed> */
     private array $remembered = [];
@@ -118,6 +123,46 @@ final class StepContext implements ModelSession
     public function recall(string $key, mixed $default = null): mixed
     {
         return data_get($this->runContext, $key, $default);
+    }
+
+    /**
+     * Money spent on something that is not tokens.
+     *
+     * Images, and today only images. {@see GeneratedImage} has
+     * always carried its own price — "image models are priced per picture, not
+     * per token, so the provider reports money directly" — and there was
+     * nowhere for it to go: `meter()` reads {@see usage()}, `usage()` holds
+     * model responses, and an image is not one. So `illustrate_draft` recorded
+     * `cost_micros = 0` while buying four pictures, which is the single largest
+     * per-article cost in the product, and §6's per-unit number was wrong by
+     * most of itself.
+     *
+     * Reported rather than intercepted, and that is a step down from how tokens
+     * work — `ask()` meters by construction because a step cannot reach a model
+     * except through it, whereas this asks the step to remember. The honest
+     * reason is that {@see HeroImage} is injected into three steps
+     * and returns a file, and routing it through here would be a port shaped
+     * for text stretched over something that is not. The mitigation is that
+     * there is exactly one place to buy a picture, so there is exactly one
+     * return value to follow.
+     */
+    public function spend(int $costMicros, string $provider, string $model): void
+    {
+        if ($costMicros <= 0) {
+            return;
+        }
+
+        $this->spend[] = [
+            'cost_micros' => $costMicros,
+            'provider' => $provider,
+            'model' => $model,
+        ];
+    }
+
+    /** @return list<array{cost_micros: int, provider: string, model: string}> */
+    public function spent(): array
+    {
+        return $this->spend;
     }
 
     public function remember(string $key, mixed $value): void

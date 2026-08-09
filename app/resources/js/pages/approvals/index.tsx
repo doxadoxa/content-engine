@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { Pagination } from '@/components/pagination';
+import { SendBackDialog } from '@/components/send-back-dialog';
+import type { Reason } from '@/components/send-back-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,29 +19,12 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
-import {
     WorkspaceHeader,
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
 import { index } from '@/routes/approvals';
-import { approve, reject, show } from '@/routes/content';
+import { approve, show } from '@/routes/content';
 import type { Paginated } from '@/types';
 
 type Draft = {
@@ -67,8 +52,6 @@ type Draft = {
     slot_at: string | null;
     expires_at: string | null;
 };
-
-type Reason = { value: string; label: string };
 
 type Props = {
     drafts: Paginated<Draft>;
@@ -119,8 +102,8 @@ export default function Approvals({ drafts, reasons }: Props) {
                 <Pagination page={drafts} />
             </WorkspacePage>
 
-            <RejectDialog
-                draft={rejecting}
+            <SendBackDialog
+                item={rejecting}
                 reasons={reasons}
                 onClose={() => setRejecting(null)}
             />
@@ -347,106 +330,6 @@ function DraftRow({ draft, onReject }: { draft: Draft; onReject: () => void }) {
                 )}
             </CardContent>
         </Card>
-    );
-}
-
-/**
- * A reason is required and comes from a closed set — §7 makes the rejection the
- * input to phase 9's quality loop, and free text cannot be counted.
- */
-function RejectDialog({
-    draft,
-    reasons,
-    onClose,
-}: {
-    draft: Draft | null;
-    reasons: Reason[];
-    onClose: () => void;
-}) {
-    return (
-        <Dialog
-            open={draft !== null}
-            onOpenChange={(open) => !open && onClose()}
-        >
-            <DialogContent className="rounded-[1.5rem]">
-                {draft !== null && (
-                    <Form
-                        action={reject(draft.id).url}
-                        method="post"
-                        options={{ preserveScroll: true }}
-                        onSuccess={onClose}
-                    >
-                        {({ processing, errors }) => (
-                            <>
-                                <DialogHeader>
-                                    <DialogTitle>Send back</DialogTitle>
-                                    <DialogDescription>
-                                        {draft.title}
-                                    </DialogDescription>
-                                </DialogHeader>
-
-                                <div className="grid gap-4 py-2">
-                                    <div className="grid gap-2">
-                                        <Label htmlFor="reason">
-                                            What is wrong with it
-                                        </Label>
-                                        <Select name="reason" required>
-                                            <SelectTrigger id="reason">
-                                                <SelectValue placeholder="Pick a reason" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {reasons.map((reason) => (
-                                                    <SelectItem
-                                                        key={reason.value}
-                                                        value={reason.value}
-                                                    >
-                                                        {reason.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <p className="text-xs text-muted-foreground">
-                                            Counted across the project, so the
-                                            same complaint forty times becomes a
-                                            signal about the brief.
-                                        </p>
-                                        {errors.reason && (
-                                            <p className="text-xs text-destructive">
-                                                {errors.reason}
-                                            </p>
-                                        )}
-                                    </div>
-
-                                    <div className="grid gap-2">
-                                        <Label htmlFor="note">
-                                            What would fix it
-                                        </Label>
-                                        <Textarea
-                                            id="note"
-                                            name="note"
-                                            rows={3}
-                                        />
-                                    </div>
-                                </div>
-
-                                <DialogFooter>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        onClick={onClose}
-                                    >
-                                        Cancel
-                                    </Button>
-                                    <Button type="submit" disabled={processing}>
-                                        Send back
-                                    </Button>
-                                </DialogFooter>
-                            </>
-                        )}
-                    </Form>
-                )}
-            </DialogContent>
-        </Dialog>
     );
 }
 

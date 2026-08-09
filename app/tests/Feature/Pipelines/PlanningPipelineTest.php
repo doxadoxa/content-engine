@@ -721,6 +721,96 @@ final class PlanningPipelineTest extends TestCase
         Carbon::setTestNow();
     }
 
+    // ------------------------------------------------ a locale of its own (§2)
+
+    #[Test]
+    public function a_locale_row_is_given_a_title_and_a_query_in_its_own_language(): void
+    {
+        // The row is created as a copy of the unit it came from, so it starts
+        // life holding Portuguese. Generation reads both fields, which is how a
+        // Russian article came to be outlined from "limpeza pós-obra".
+        $this->models()->willAnswerRole(
+            'utility',
+            'en | Post-renovation cleaning in Lisbon | post renovation cleaning lisbon',
+        );
+
+        $this->idea('limpeza pós-obra', 'renovation');
+
+        $this->plan();
+
+        $variant = ContentItem::query()->roots()->where('locale', 'en')->firstOrFail();
+
+        $this->assertSame('Post-renovation cleaning in Lisbon', $variant->title);
+        $this->assertSame('post renovation cleaning lisbon', $variant->target_query);
+
+        // The slug was built from the Portuguese one and would have read as
+        // Portuguese on an English page.
+        $this->assertStringStartsWith('post-renovation-cleaning-in-lisbon', (string) $variant->slug);
+    }
+
+    #[Test]
+    public function the_source_unit_keeps_its_own_language(): void
+    {
+        $this->models()->willAnswerRole('utility', 'en | Something else entirely | something else');
+
+        $this->idea('limpeza pós-obra', 'renovation');
+
+        $this->plan();
+
+        $source = ContentItem::query()->roots()->where('locale', 'pt-PT')->firstOrFail();
+
+        // Only the copies are localised. Rewriting the researched unit would
+        // throw away the keyword the whole month was planned from.
+        $this->assertSame('limpeza pós-obra', $source->target_query);
+    }
+
+    #[Test]
+    public function an_answer_that_cannot_be_read_costs_a_title_and_not_the_month(): void
+    {
+        // A month is thirty of these calls. One malformed answer must not lose
+        // the plan an operator is waiting on.
+        $this->models()->willAnswerRole('utility', 'I could not do that.');
+
+        $this->idea('limpeza pós-obra', 'renovation');
+
+        $run = $this->plan();
+
+        $this->assertSame(PipelineRunStatus::Completed, $run->refresh()->status);
+
+        $variant = ContentItem::query()->roots()->where('locale', 'en')->firstOrFail();
+
+        // Left saying what it already said, and the run records that it did.
+        $this->assertSame('limpeza pós-obra', $variant->target_query);
+        $this->assertSame(1, $run->context['planning.untranslated_locale_rows'] ?? null);
+    }
+
+    #[Test]
+    public function a_locale_row_does_not_inherit_another_markets_numbers(): void
+    {
+        $this->models()->willAnswerRole('utility', 'en | Post-renovation cleaning | post renovation cleaning');
+
+        $this->idea('limpeza pós-obra', 'renovation', 720);
+
+        $this->plan();
+
+        $variant = ContentItem::query()->roots()->where('locale', 'en')->firstOrFail();
+
+        // "limpeza pós-obra" in Portugal and "post renovation cleaning" in the
+        // UK are the same unit and nowhere near the same search volume, so the
+        // parent's figures are not this row's — they are another market's
+        // wearing this one's label. Everything that reads these columns decides
+        // something with them.
+        $this->assertNull($variant->topic_volume);
+        $this->assertNull($variant->topic_difficulty);
+
+        // The seasonal *shape* does travel, and still does: when in the year a
+        // subject peaks is a fact about the subject, not about the market.
+        $this->assertSame(
+            ContentItem::query()->roots()->where('locale', 'pt-PT')->firstOrFail()->monthly_volumes,
+            $variant->monthly_volumes,
+        );
+    }
+
     private function sitePage(string $title, int $months): SitePage
     {
         return SitePage::factory()->create([

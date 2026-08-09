@@ -8,7 +8,7 @@ use App\Enums\ContentItemType;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
-use Illuminate\Support\Str;
+use App\Support\Content\Squish;
 
 /**
  * The GEO layer (§5.3, §1's first differentiator).
@@ -128,7 +128,7 @@ class BuildGeoLayer extends AbstractStep
         $faq = [];
         $question = null;
 
-        foreach (preg_split('/\R/', trim($answer->text)) ?: [] as $line) {
+        foreach (preg_split('/\R/u', trim($answer->text)) ?: [] as $line) {
             $line = trim($line);
 
             if (preg_match('/^Q:\s*(.+)$/u', $line, $m) === 1) {
@@ -162,20 +162,13 @@ class BuildGeoLayer extends AbstractStep
 
         $blocks = [];
 
-        foreach (preg_split('/\R{2,}/', trim($markdown)) ?: [] as $block) {
-            // Str::squish runs `/u` regexes, and preg_replace returns null
-            // rather than the subject when one of them fails — on invalid
-            // UTF-8, or on hitting PCRE's backtrack limit, which a long block
-            // of non-Latin text reaches sooner because it is more bytes for the
-            // same number of characters. Every article here was Latin until
-            // this project added Russian, and the first Cyrillic draft killed
-            // the step on a TypeError three lines down.
-            //
-            // A block that cannot be read is a block with no quotable line in
-            // it. That is a skip, not a lost article.
-            /** @var string|null $squished */
-            $squished = Str::squish($block);
-            $clean = $squished ?? '';
+        foreach (preg_split('/\R{2,}/u', trim($markdown)) ?: [] as $block) {
+            // Not `Str::squish()`, which is typed `string` and returns null on
+            // unreadable input — this is the line a Cyrillic draft died on, and
+            // {@see Squish} is where the reasoning now lives. A block that
+            // cannot be read is a block with no quotable line in it: a skip,
+            // not a lost article.
+            $clean = Squish::text($block);
 
             if ($clean === '' || str_starts_with($clean, '#') || str_starts_with($clean, '-')) {
                 continue;

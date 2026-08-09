@@ -309,7 +309,7 @@ class WriteDraft extends AbstractStep
         // The first real sentence, or the title. A unit without a summary has
         // no meta description and no line in an llms.txt (§5.3), so something
         // true is better than nothing.
-        $firstLine = collect(preg_split('/\R/', $markdown) ?: [])
+        $firstLine = collect(preg_split('/\R/u', $markdown) ?: [])
             ->map(static fn (string $line): string => trim($line))
             ->first(static fn (string $line): bool => $line !== '' && ! str_starts_with($line, '#'));
 

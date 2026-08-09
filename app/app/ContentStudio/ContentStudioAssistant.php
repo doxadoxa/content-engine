@@ -382,6 +382,7 @@ class ContentStudioAssistant
             'Separate facts found in the supplied context from assumptions. Never invent a customer, result, price, statistic, launch, or personal experience.',
             'Plan native expressions of shared ideas for Threads, X, and Instagram. Do not cut an article into three smaller articles.',
             'Threads should invite a real conversation. X should make a compact, useful argument. Instagram should have a visual reason to exist.',
+            'Write every idea angle with exactly these channel prefixes: "Threads: ... X: ... Instagram: ...". Give each channel a distinct execution, not one shared paragraph.',
             'Return JSON only, with exactly this shape:',
             '{"summary":"...","site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x","instagram"]}]}',
             'Use only dates inside the requested month. Spread the ideas across the month. Keep questions to the two or three unknowns that would materially change the plan.',
@@ -600,7 +601,7 @@ class ContentStudioAssistant
             'Never invent facts. If evidence is absent, write an opinion, question, or framing rather than manufacturing proof.',
             'Threads: one conversational thought, normally one segment, each segment at most 500 characters. Include a visual_brief for one supporting image.',
             'X: one compact post or a justified short thread, each segment at most 280 characters. Include a visual_brief for one supporting image.',
-            $this->instagramFormat($idea) === 'carousel'
+            $idea->instagramFormat() === 'carousel'
                 ? 'Instagram: a caption plus a visually coherent carousel of at most 10 slides. Slides need short headings and concise bodies.'
                 : 'Instagram: a caption paired with one strong editorial image. Include a visual_brief and do not invent carousel slides.',
             $brief,
@@ -611,7 +612,7 @@ class ContentStudioAssistant
     /** @param list<string> $channels */
     private function draftPrompt(ContentIdea $idea, array $channels, ?string $lastError): string
     {
-        $instagram = $this->instagramFormat($idea) === 'carousel'
+        $instagram = $idea->instagramFormat() === 'carousel'
             ? '"instagram":{"format":"carousel","caption":"...","slides":[{"heading":"...","body":"..."}],"visual_brief":"..."}'
             : '"instagram":{"format":"image","caption":"...","visual_brief":"..."}';
 
@@ -693,7 +694,7 @@ class ContentStudioAssistant
             throw new InvalidAssistantResponse('Instagram has no caption.');
         }
 
-        $format = $this->instagramFormat($idea);
+        $format = $idea->instagramFormat();
         $visual = $this->text($raw['visual_brief'] ?? null, 2000);
 
         if ($format === 'image') {
@@ -750,11 +751,6 @@ class ContentStudioAssistant
                 'visual_brief' => $visual,
             ],
         ];
-    }
-
-    private function instagramFormat(ContentIdea $idea): string
-    {
-        return $idea->scheduled_for->day % 2 === 0 ? 'carousel' : 'image';
     }
 
     /** @param list<string> $itemIds */

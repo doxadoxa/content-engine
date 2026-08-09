@@ -7,7 +7,7 @@ namespace App\Pipelines\Steps\Generation;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
-use Illuminate\Support\Str;
+use App\Support\Content\Squish;
 
 /**
  * Measure entity coverage against the text (§5.3).
@@ -40,12 +40,12 @@ class CoverEntities extends AbstractStep
         $unit = $this->unit($context);
         $draft = $context->output(WriteDraft::key(), DraftPayload::class);
 
-        $haystack = Str::squish(mb_strtolower($draft->markdown));
+        $haystack = Squish::text(mb_strtolower($draft->markdown));
 
         $coverage = [];
 
         foreach ($unit->entities as $entity) {
-            $needle = Str::squish(mb_strtolower($entity));
+            $needle = Squish::text(mb_strtolower($entity));
 
             $coverage[$entity] = $needle !== '' && str_contains($haystack, $needle);
         }

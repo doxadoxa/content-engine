@@ -10,6 +10,7 @@ use App\Models\Concerns\BelongsToProject;
 use App\Pipelines\Steps\SocialListen\Deduplicate;
 use App\Pipelines\Steps\SocialListen\FeedPlanner;
 use App\Pipelines\Steps\SocialListen\Normalise;
+use App\Support\Content\Squish;
 use Carbon\CarbonInterface;
 use Database\Factories\SignalFactory;
 use Illuminate\Database\Eloquent\Builder;
@@ -18,7 +19,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Normalizer;
 
@@ -349,7 +349,7 @@ class Signal extends Model
             }
         }
 
-        return Str::squish((string) preg_replace(
+        return Squish::text((string) preg_replace(
             '/[^\p{L}\p{N}]+/u',
             ' ',
             mb_strtolower($value),

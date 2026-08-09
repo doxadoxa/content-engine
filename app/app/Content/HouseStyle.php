@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Content;
 
-use Illuminate\Support\Str;
+use App\Support\Content\Squish;
 
 /**
  * The house style, from `product/humanizated-articles.md`.
@@ -403,7 +403,7 @@ class HouseStyle
         // and hyphens stay, because "it's worth noting" is one of the phrases.
         $flattened = (string) preg_replace('/[^\p{L}\p{N}\'’\-]+/u', ' ', mb_strtolower(strip_tags($body)));
 
-        $haystack = ' '.Str::squish($flattened).' ';
+        $haystack = ' '.Squish::text($flattened).' ';
         $found = [];
 
         foreach (self::BANNED[$language] ?? [] as $word) {

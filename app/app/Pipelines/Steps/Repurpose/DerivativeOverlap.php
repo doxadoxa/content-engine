@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Repurpose;
 
-use Illuminate\Support\Str;
+use App\Support\Content\Squish;
 
 /**
  * How much of a parent article survives into a post derived from it (§8.1).
@@ -65,11 +65,11 @@ final class DerivativeOverlap
             return 1.0;
         }
 
-        $haystack = Str::squish(mb_strtolower($body));
+        $haystack = Squish::text(mb_strtolower($body));
 
         $found = array_filter(
             $entities,
-            static fn (string $entity): bool => str_contains($haystack, Str::squish(mb_strtolower($entity))),
+            static fn (string $entity): bool => str_contains($haystack, Squish::text(mb_strtolower($entity))),
         );
 
         return count($found) / count($entities);

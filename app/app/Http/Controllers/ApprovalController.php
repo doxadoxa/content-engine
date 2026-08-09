@@ -199,10 +199,27 @@ class ApprovalController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            abort_unless($draft->state === ContentItemState::Draft, 409, 'Only a draft can be rejected.');
+            abort_unless(
+                in_array($draft->state, [ContentItemState::Draft, ContentItemState::Approved], true),
+                409,
+                'Only a draft or an approved unit can be sent back.',
+            );
 
-            // The unit stays a draft. A rejection is a note for whoever
-            // rewrites it, not a state.
+            // Approved is the case this screen had no answer for. An article
+            // signed off with a fault in it could be published or ignored and
+            // nothing else — there was no way back to the queue, because
+            // `approved` has one edge and it points at `published`. Taking an
+            // approval back is a person's decision, so it is a named method
+            // rather than a widening of the state map: see
+            // {@see ContentItem::returnForRework()} for why that distinction is
+            // worth keeping.
+            //
+            // A draft that is sent back stays a draft. It is already where
+            // rework happens, and the note is the whole of the change.
+            if ($draft->state === ContentItemState::Approved) {
+                $draft->returnForRework();
+            }
+
             $draft->forceFill([
                 'review' => [
                     'reason' => $request->string('reason')->value(),

@@ -61,6 +61,36 @@ class ContentIdea extends Model
         return $this->hasMany(ContentItem::class);
     }
 
+    /**
+     * The production shape is part of the idea, not a UI guess. Drafting and
+     * Studio both read this contract so the preview cannot promise a carousel
+     * while the generator silently asks for an image post.
+     *
+     * @return array<string, array{format: string, visual: string}>
+     */
+    public function plannedProduction(): array
+    {
+        $production = [];
+
+        foreach ($this->channels as $channel) {
+            $production[$channel] = match ($channel) {
+                'threads' => ['format' => 'post', 'visual' => 'image'],
+                'x' => ['format' => 'post_or_thread', 'visual' => 'image'],
+                'instagram' => $this->instagramFormat() === 'carousel'
+                    ? ['format' => 'carousel', 'visual' => 'slides']
+                    : ['format' => 'image_post', 'visual' => 'image'],
+                default => ['format' => 'post', 'visual' => 'none'],
+            };
+        }
+
+        return $production;
+    }
+
+    public function instagramFormat(): string
+    {
+        return $this->scheduled_for->day % 2 === 0 ? 'carousel' : 'image';
+    }
+
     /** @return array<string, string> */
     protected function casts(): array
     {

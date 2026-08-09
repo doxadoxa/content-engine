@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Content;
 
+use App\Support\Content\Squish;
 use Illuminate\Support\Str;
 
 /**
@@ -272,6 +273,6 @@ class Readability
         $text = preg_replace('/\[([^\]]*)\]\([^)]*\)/', '$1', $text) ?? $text;
         $text = preg_replace('/[*_`>|-]+/', ' ', $text) ?? $text;
 
-        return Str::squish($text);
+        return Squish::text($text);
     }
 }

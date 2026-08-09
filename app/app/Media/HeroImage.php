@@ -45,7 +45,7 @@ class HeroImage
      * locale for the picture it put in the same place. See {@see borrow()}.
      *
      * @param  list<string>  $references  URLs of images already made for this unit
-     * @return array{asset: Asset, cost: int}|null
+     * @return array{asset: Asset, cost: int, provider: string|null, model: string|null}|null
      */
     public function inline(
         ContentItem $unit,
@@ -58,11 +58,34 @@ class HeroImage
             return null;
         }
 
+        $anchor = Str::slug($heading);
+
+        // This unit's own picture for this section, if it has one. The same
+        // check {@see for()} has always made for the hero, and its absence here
+        // is why a unit accumulated a fresh set of inline pictures every time
+        // `illustrate_draft` ran a second time — a retry, a regeneration, a
+        // step re-dispatched after a worker died. Nine rows for three slots on
+        // one article, each of them paid for, and the extras referenced by
+        // nothing because the body only ever names the newest.
+        //
+        // Matched on the anchor rather than the position, because the anchor is
+        // where the picture *goes*: a re-run whose outline came back with the
+        // same headings reuses them, and one whose headings changed correctly
+        // does not.
+        $existing = $unit->assets()
+            ->where('role', AssetRole::Inline)
+            ->where('anchor', $anchor)
+            ->first();
+
+        if ($existing !== null) {
+            return ['asset' => $existing, 'cost' => 0, 'provider' => null, 'model' => null];
+        }
+
         if ($position !== null) {
-            $borrowed = $this->borrow($unit, AssetRole::Inline, $position, Str::slug($heading), $heading);
+            $borrowed = $this->borrow($unit, AssetRole::Inline, $position, $anchor, $heading);
 
             if ($borrowed !== null) {
-                return ['asset' => $borrowed, 'cost' => 0];
+                return ['asset' => $borrowed, 'cost' => 0, 'provider' => null, 'model' => null];
             }
         }
 
@@ -85,7 +108,7 @@ class HeroImage
             'role' => AssetRole::Inline,
             // The heading it belongs under, so a second run can tell which
             // sections already have a picture.
-            'anchor' => Str::slug($heading),
+            'anchor' => $anchor,
             'disk' => $image->disk,
             'path' => $image->path,
             // Alt text is the heading, which is what the section is about and
@@ -95,7 +118,12 @@ class HeroImage
             'height' => $image->height,
         ]);
 
-        return ['asset' => $asset, 'cost' => $image->costMicros];
+        return [
+            'asset' => $asset,
+            'cost' => $image->costMicros,
+            'provider' => $image->provider,
+            'model' => $image->model,
+        ];
     }
 
     /**
@@ -104,7 +132,7 @@ class HeroImage
      * At most one per unit — the database says so, and a second call would
      * spend money to hit a unique index.
      *
-     * @return array{asset: Asset, cost: int}|null null when there is no provider
+     * @return array{asset: Asset, cost: int, provider: string|null, model: string|null}|null null when there is no provider
      */
     public function for(ContentItem $unit, string $title, ?string $summary): ?array
     {
@@ -115,13 +143,13 @@ class HeroImage
         $existing = $unit->assets()->where('role', AssetRole::Hero)->first();
 
         if ($existing !== null) {
-            return ['asset' => $existing, 'cost' => 0];
+            return ['asset' => $existing, 'cost' => 0, 'provider' => null, 'model' => null];
         }
 
         $borrowed = $this->borrow($unit, AssetRole::Hero, 0, null, $title);
 
         if ($borrowed !== null) {
-            return ['asset' => $borrowed, 'cost' => 0];
+            return ['asset' => $borrowed, 'cost' => 0, 'provider' => null, 'model' => null];
         }
 
         $image = $this->images->generate(
@@ -150,7 +178,12 @@ class HeroImage
             'height' => $image->height,
         ]);
 
-        return ['asset' => $asset, 'cost' => $image->costMicros];
+        return [
+            'asset' => $asset,
+            'cost' => $image->costMicros,
+            'provider' => $image->provider,
+            'model' => $image->model,
+        ];
     }
 
     /**

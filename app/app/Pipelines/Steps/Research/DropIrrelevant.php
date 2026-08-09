@@ -266,7 +266,7 @@ class DropIrrelevant extends AbstractStep
 
         $rejected = [];
 
-        foreach (preg_split('/\R/', $trimmed) ?: [] as $line) {
+        foreach (preg_split('/\R/u', $trimmed) ?: [] as $line) {
             $line = Str::lower(trim(ltrim(trim($line), '-• ')));
 
             if ($line !== '' && isset($offered[$line])) {

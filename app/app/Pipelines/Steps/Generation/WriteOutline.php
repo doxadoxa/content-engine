@@ -119,7 +119,16 @@ class WriteOutline extends AbstractStep
     /** @return list<string> */
     private function parse(string $text): array
     {
-        $lines = preg_split('/\R/', trim($text)) ?: [];
+        // `/u` is load-bearing. Without it PCRE reads the answer as bytes, and
+        // in byte mode `\R` matches 0x85 — which is the second byte of Cyrillic
+        // `х` (D1 85). Every heading containing one was split mid-character;
+        // the piece before the split was then invalid UTF-8, so the `/u` regex
+        // below returned null for it and `?? ''` dropped it without a word.
+        // What reached the writer was the tail after the last `х`: an outline
+        // of "ода бригады" and "ности" from a model answer that was perfect.
+        // Latin passes through untouched, which is why this survived until the
+        // first Russian article.
+        $lines = preg_split('/\R/u', trim($text)) ?: [];
 
         $sections = [];
 

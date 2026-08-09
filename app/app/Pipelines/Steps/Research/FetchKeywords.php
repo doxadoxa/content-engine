@@ -11,6 +11,7 @@ use App\Pipelines\Core\StepResult;
 use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Research\Contracts\KeywordSource;
 use App\Research\KeywordIdea;
+use App\Support\Content\Squish;
 use App\Support\Corpus\SiteLibrary;
 use App\Support\Corpus\TopicLibrary;
 use Illuminate\Support\Facades\Log;
@@ -191,7 +192,7 @@ class FetchKeywords extends AbstractStep
             return false;
         }
 
-        $haystack = ' '.Str::squish(mb_strtolower(str_replace(['.', '-', '_'], ' ', $keyword))).' ';
+        $haystack = ' '.Squish::text(mb_strtolower(str_replace(['.', '-', '_'], ' ', $keyword))).' ';
 
         foreach ($brands as $brand) {
             if (str_contains($haystack, ' '.$brand.' ')) {

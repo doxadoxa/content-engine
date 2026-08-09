@@ -5,7 +5,11 @@ import {
     ExternalLink,
     FileText,
     Send,
+    Undo2,
 } from 'lucide-react';
+import { useState } from 'react';
+import { SendBackDialog } from '@/components/send-back-dialog';
+import type { Reason, SendBackTarget } from '@/components/send-back-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -84,6 +88,7 @@ type Props = {
     }[];
     deliveries: Delivery[];
     manual_channels: number;
+    reasons: Reason[];
 };
 
 /**
@@ -97,7 +102,11 @@ export default function ContentShow({
     derivatives,
     deliveries,
     manual_channels,
+    reasons,
 }: Props) {
+    // Null until the operator asks, so the dialog is not mounted around an
+    // article nobody is sending anywhere.
+    const [sendingBack, setSendingBack] = useState<SendBackTarget | null>(null);
     const missing = Object.entries(item.entity_coverage)
         .filter(([, covered]) => !covered)
         .map(([entity]) => entity);
@@ -106,6 +115,12 @@ export default function ContentShow({
     return (
         <>
             <Head title={item.title} />
+
+            <SendBackDialog
+                item={sendingBack}
+                reasons={reasons}
+                onClose={() => setSendingBack(null)}
+            />
 
             <WorkspacePage width="reading">
                 <WorkspaceHeader
@@ -141,6 +156,25 @@ export default function ContentShow({
                             >
                                 {item.type_label}
                             </Badge>
+                            {item.state === 'approved' && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="rounded-full bg-background/70 shadow-sm"
+                                    onClick={() =>
+                                        setSendingBack({
+                                            id: item.id,
+                                            title: item.title,
+                                        })
+                                    }
+                                >
+                                    <Undo2
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                    Send back
+                                </Button>
+                            )}
                             {(item.state === 'approved' ||
                                 item.state === 'published') && (
                                 <Form
