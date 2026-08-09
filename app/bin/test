@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+status=0
+
+run_gate() {
+    local label="$1"
+    shift
+
+    echo
+    echo "==> ${label}"
+
+    if ! "$@"; then
+        status=1
+    fi
+}
+
+run_gate "Pint" docker compose exec -T app vendor/bin/pint --test
+run_gate "PHPStan" docker compose exec -T app vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+run_gate "Laravel tests" docker compose exec -T app php artisan test "$@"
+run_gate "Frontend lint, formatting, and types" npm run check
+run_gate "Production frontend build" npm run build
+
+exit "$status"

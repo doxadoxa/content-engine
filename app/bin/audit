@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+status=0
+
+run_audit() {
+    local label="$1"
+    shift
+
+    echo
+    echo "==> ${label}"
+
+    if ! "$@"; then
+        status=1
+    fi
+}
+
+run_audit "Composer dependency advisories" composer audit --locked --no-interaction
+run_audit "NPM dependency advisories" npm audit --audit-level=high
+
+exit "$status"

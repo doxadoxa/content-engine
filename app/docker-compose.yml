@@ -1,0 +1,179 @@
+# content-engine — the whole local stack.
+#
+#   cp .env.example .env           # then fill in your API keys
+#   docker compose up --build      # app + horizon + scheduler + datastores
+#
+#   http://localhost:8091          the operator dashboard (sign in at /login)
+#   http://localhost:8091/horizon  queue dashboard
+#
+# app / horizon / scheduler are the SAME image differing only by CONTAINER_MODE,
+# which is how it runs in production too.
+#
+# Host ports are shifted off the defaults so this can run alongside other local
+# stacks. Override them with the CE_*_PORT variables in your .env.
+
+name: content-engine
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: content-engine:dev
+    # Everything from your .env reaches the container, so a key you add there
+    # just works. The `environment` block below still wins where it is set,
+    # which is how the host-facing values in .env (DB_HOST=127.0.0.1 and
+    # friends) get replaced by the compose network's own addresses.
+    env_file: &app-env-file
+      - path: .env
+        required: false
+    environment: &app-env
+      CONTAINER_MODE: app
+      APP_ENV: "${APP_ENV:-local}"
+      # Overridable, because `environment:` wins over `env_file:` and these are
+      # the pair you change to put the app behind a tunnel. Hardcoded, they
+      # silently ignore .env: APP_DEBUG stays on with a public hostname pointed
+      # at it, which serves a stack trace containing every key in the
+      # environment to whoever triggers an error.
+      APP_DEBUG: "${APP_DEBUG:-true}"
+      APP_URL: "${APP_URL:-http://localhost:${CE_APP_PORT:-8091}}"
+      # Local-only key, shared by every container. Not a production secret.
+      APP_KEY: base64:qO3H1n8cJt5vX2bK9wR4dM7gY0sT6uA1eL5pN8iZ3Fc=
+      LOG_CHANNEL: stderr
+
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: content_engine
+      DB_USERNAME: content_engine
+      DB_PASSWORD: secret
+      # The suite runs against content_engine_test, created by
+      # docker/postgres/init and pinned in phpunit.xml, so `php artisan test`
+      # never touches the database above.
+
+      # predis rather than the phpredis C extension, so the image needs no
+      # extra build step for Redis.
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      BROADCAST_CONNECTION: log
+
+      # Seeded on boot so the stack is immediately usable. Change these in your
+      # .env; they are local-only credentials.
+      SEED_ADMIN_EMAIL: "${SEED_ADMIN_EMAIL:-admin@content-engine.test}"
+      SEED_ADMIN_NAME: "${SEED_ADMIN_NAME:-Operator}"
+      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-password}"
+    ports:
+      - "127.0.0.1:${CE_APP_PORT:-8091}:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes: &app-volumes
+      # The checkout, mounted over the image's copy of it. Without this the code
+      # is whatever `COPY . .` baked in at build time, so every change needs a
+      # rebuild before it is running anywhere.
+      #
+      # Local only, and this file is the local stack: it builds `target: dev`
+      # and hardcodes a throwaway APP_KEY. Anything deploying this app builds
+      # the `production` target, which has no mount and carries its own code.
+      - .:/app
+      # Kept out of the mount — nothing at runtime reads node_modules, and a
+      # directory that size is what makes a macOS bind mount crawl.
+      - /app/node_modules
+      # Shared so every container sees the same APP_KEY file. Nested inside the
+      # bind above, and the longer path wins.
+      - storage:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/up"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  horizon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: content-engine:dev
+    env_file: *app-env-file
+    environment:
+      <<: *app-env
+      CONTAINER_MODE: horizon
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes: *app-volumes
+    # The FrankenPHP base image healthchecks Caddy's admin endpoint, which a
+    # worker container does not run. Ask Horizon itself instead.
+    healthcheck:
+      test: ["CMD", "php", "artisan", "horizon:status"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: content-engine:dev
+    env_file: *app-env-file
+    environment:
+      <<: *app-env
+      CONTAINER_MODE: scheduler
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes: *app-volumes
+    # Nothing to probe — `schedule:work` sleeps between minutes and serves no
+    # port. Disable the base image's check rather than report a permanently
+    # unhealthy container.
+    healthcheck:
+      disable: true
+
+  postgres:
+    # pgvector's image rather than postgres:17-alpine, which ships no `vector`
+    # extension — the enable-extension migration would fail on a clean volume
+    # and the stack would only work for whoever installed it by hand.
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: content_engine
+      POSTGRES_USER: content_engine
+      POSTGRES_PASSWORD: secret
+    ports:
+      # For external DB tools only; the app connects over the compose network.
+      - "127.0.0.1:${CE_DB_PORT:-5437}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once, on an empty volume: creates the suite's database and enables
+      # pgvector in both.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U content_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CE_REDIS_PORT:-6384}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  storage:
+  pgdata:

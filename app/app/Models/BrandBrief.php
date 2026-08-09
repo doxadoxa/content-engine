@@ -1,0 +1,268 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Models;
+
+use App\Models\Concerns\BelongsToProject;
+use App\Support\Tenancy\CurrentProject;
+use Database\Factories\BrandBriefFactory;
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * The Brand Brief (§3.1) — the answer to "звучит не как мы".
+ *
+ * Versioned, and versioned by append: {@see revise()} writes a new row and
+ * flips the active flag, and nothing else in the engine updates a brief in
+ * place. That is what makes §2's promise keepable — "старые публикации знают,
+ * на какой версии сделаны" — because a published article holds the id of the
+ * row it was written from, and that row still says what it said then.
+ *
+ * @property string $id
+ * @property string $project_id
+ * @property int $version
+ * @property bool $is_active
+ * @property string $positioning
+ * @property string $audience
+ * @property string $tone
+ * @property string $visual_language
+ * @property list<string> $forbidden_topics
+ * @property list<string> $examples_liked
+ * @property list<string> $examples_disliked
+ * @property list<string> $competitors
+ * @property string|null $change_note
+ */
+class BrandBrief extends Model
+{
+    use BelongsToProject;
+
+    /** @use HasFactory<BrandBriefFactory> */
+    use HasFactory;
+
+    use HasUlids;
+
+    /** @var list<string> */
+    public const array TEXT_FIELDS = [
+        'positioning',
+        'audience',
+        'tone',
+        'visual_language',
+    ];
+
+    /** @var list<string> */
+    public const array LIST_FIELDS = [
+        'forbidden_topics',
+        'examples_liked',
+        'examples_disliked',
+        'competitors',
+    ];
+
+    /**
+     * The fields an operator edits. `version` and `is_active` are not here on
+     * purpose: they are bookkeeping, and the only correct way to set them is
+     * {@see revise()}.
+     *
+     * @var list<string>
+     */
+    public const array CONTENT_FIELDS = [
+        ...self::TEXT_FIELDS,
+        ...self::LIST_FIELDS,
+    ];
+
+    protected $fillable = [
+        ...self::CONTENT_FIELDS,
+        'change_note',
+    ];
+
+    protected $attributes = [
+        'positioning' => '',
+        'audience' => '',
+        'tone' => '',
+        'visual_language' => '',
+        'forbidden_topics' => '[]',
+        'examples_liked' => '[]',
+        'examples_disliked' => '[]',
+        'competitors' => '[]',
+    ];
+
+    /**
+     * Save a change as a new version and make it the active one.
+     *
+     * `$changes` is a partial edit: anything absent is carried over from the
+     * current active version, so changing the tone does not silently blank the
+     * competitor list. A key that is present but null *clears* that field — see
+     * {@see normalise()}. The whole thing is one transaction because the
+     * partial unique index refuses two active rows: deactivating and inserting
+     * have to succeed or fail together, or a failed insert leaves the project
+     * with no active brief at all.
+     *
+     * Two operators saving at the same instant is resolved by the database, not
+     * here: both read the same `max(version)` and the loser hits the unique
+     * index on `(project_id, version)`. That is a failed save with nothing
+     * written, which is the right outcome — the alternative to an error is one
+     * of the two edits silently disappearing.
+     *
+     * @param  array<string, mixed>  $changes
+     */
+    public static function revise(Project $project, array $changes, ?string $note = null): self
+    {
+        // Run *as* the project being revised. Editing project B's brief while
+        // the operator is in project A is refused by BelongsToProject, and
+        // rightly: without this, revise() would be callable only from inside
+        // the tenant it targets, which is not true of seeders, the onboarding
+        // agent of phase 9, or any maintenance command.
+        return app(CurrentProject::class)->run($project, fn (): self => DB::transaction(function () use ($project, $changes, $note): self {
+            $current = self::activeFor($project);
+
+            $carried = $current === null
+                ? []
+                : $current->only(self::CONTENT_FIELDS);
+
+            $next = self::acrossProjects()
+                ->where('project_id', $project->getKey())
+                ->max('version');
+
+            $brief = new self([
+                ...$carried,
+                ...self::normalise($changes),
+                'change_note' => $note,
+            ]);
+
+            $brief->project_id = $project->getKey();
+            $brief->version = ((int) $next) + 1;
+
+            // Deactivate before inserting, not after: the index is enforced per
+            // statement, so the other order fails on the insert.
+            if ($current !== null) {
+                self::acrossProjects()
+                    ->whereKey($current->getKey())
+                    ->update(['is_active' => false]);
+            }
+
+            $brief->is_active = true;
+            $brief->save();
+
+            return $brief;
+        }));
+    }
+
+    public static function activeFor(Project $project): ?self
+    {
+        return self::acrossProjects()
+            ->where('project_id', $project->getKey())
+            ->where('is_active', true)
+            ->first();
+    }
+
+    /**
+     * The units written from this version — "какие публикации на ней сделаны".
+     *
+     * @return HasMany<ContentItem, $this>
+     */
+    public function contentItems(): HasMany
+    {
+        return $this->hasMany(ContentItem::class);
+    }
+
+    /**
+     * The brief as it reaches a pipeline prompt.
+     *
+     * A stub with a real contract: phase 3 is the first consumer, and what it
+     * needs from phase 2 is the guarantee that the same brief compiles to the
+     * same bytes. Without that, a prompt cache keyed on this string misses at
+     * random and two runs of one pipeline are not comparable — which is the
+     * data §9 wants to pick models on.
+     *
+     * Deterministic here means: fixed section order, no timestamps, no ids, and
+     * lists in the order the operator entered them.
+     */
+    public function compileToPrompt(): string
+    {
+        $sections = [
+            'Positioning' => $this->positioning,
+            'Audience' => $this->audience,
+            'Tone of voice' => $this->tone,
+            'Visual language' => $this->visual_language,
+            'Never write about' => $this->asLines($this->forbidden_topics),
+            'Good examples' => $this->asLines($this->examples_liked),
+            'Bad examples' => $this->asLines($this->examples_disliked),
+            'Competitors' => $this->asLines($this->competitors),
+        ];
+
+        $rendered = [];
+
+        foreach ($sections as $heading => $body) {
+            $body = trim($body);
+
+            if ($body === '') {
+                continue;
+            }
+
+            $rendered[] = "## {$heading}\n{$body}";
+        }
+
+        return implode("\n\n", $rendered);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'version' => 'integer',
+            'is_active' => 'boolean',
+            'forbidden_topics' => 'array',
+            'examples_liked' => 'array',
+            'examples_disliked' => 'array',
+            'competitors' => 'array',
+        ];
+    }
+
+    /**
+     * Keep only the editable fields, and turn "absent" into the column's empty
+     * value rather than null.
+     *
+     * Every text column here is NOT NULL with a default of `''`, and every list
+     * column is NOT NULL json. A null therefore does not clear a field, it
+     * fails the insert — and null is exactly what arrives when an operator
+     * empties a textarea, because Laravel's global ConvertEmptyStringsToNull
+     * middleware rewrites `''` to null before the request is ever validated.
+     *
+     * Done here rather than in the form request because revise() is the only
+     * writer this table has, and its other callers — seeders, the console, the
+     * onboarding agent of phase 9 — never pass through a request at all.
+     *
+     * @param  array<string, mixed>  $changes
+     * @return array<string, mixed>
+     */
+    private static function normalise(array $changes): array
+    {
+        $clean = [];
+
+        foreach (array_intersect_key($changes, array_flip(self::CONTENT_FIELDS)) as $field => $value) {
+            $clean[$field] = match (true) {
+                $value !== null => $value,
+                in_array($field, self::LIST_FIELDS, true) => [],
+                default => '',
+            };
+        }
+
+        return $clean;
+    }
+
+    /**
+     * @param  list<string>  $values
+     */
+    private function asLines(array $values): string
+    {
+        return implode("\n", array_map(
+            static fn (string $value): string => '- '.trim($value),
+            array_filter($values, static fn (string $value): bool => trim($value) !== ''),
+        ));
+    }
+}

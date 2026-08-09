@@ -1,0 +1,23 @@
+{
+    "name": "persistance/engine-receiver",
+    "description": "Receive published content from the Content Engine: endpoint, signature check, idempotency, storage and a minimal render.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.3",
+        "illuminate/support": "^11.0||^12.0||^13.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Persistance\\EngineReceiver\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Persistance\\EngineReceiver\\EngineReceiverServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable"
+}

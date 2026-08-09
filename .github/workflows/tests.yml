@@ -1,0 +1,93 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      # pgvector's image, matching docker-compose.yml. The stock postgres image
+      # has no `vector` extension and the enable-extension migration fails on it.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: content_engine_test
+          POSTGRES_USER: content_engine
+          POSTGRES_PASSWORD: secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U content_engine"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: content_engine_test
+      DB_USERNAME: content_engine
+      DB_PASSWORD: secret
+      REDIS_CLIENT: predis
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_pgsql, pgsql, pcntl, posix, bcmath, intl, gd, zip
+          tools: composer:v2
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: app/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('app/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Setup application
+        run: composer setup
+
+      - name: Run PHP checks
+        run: composer ci:check
+
+      - name: Run frontend checks
+        run: npm run check

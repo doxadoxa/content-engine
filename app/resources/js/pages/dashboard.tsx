@@ -1,0 +1,1108 @@
+import { Deferred, Head, Link, router, usePage } from '@inertiajs/react';
+import {
+    AlertTriangle,
+    ArrowRight,
+    ArrowUpRight,
+    CalendarDays,
+    CheckCircle2,
+    ExternalLink,
+    Eye,
+    FileText,
+    Layers,
+    Quote,
+    Search,
+    Sparkles,
+    Users,
+} from 'lucide-react';
+import { useEffect } from 'react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { index as approvalsIndex } from '@/routes/approvals';
+import { index as calendarIndex } from '@/routes/calendar';
+import { show as showContent } from '@/routes/content';
+import { show as showOnboarding } from '@/routes/onboarding';
+import { edit as editProject } from '@/routes/projects';
+import { index as visibilityIndex } from '@/routes/visibility';
+
+type Project = {
+    id: string;
+    name: string;
+    slug: string;
+    website_url: string | null;
+    onboarding_status: 'draft' | 'analysing' | 'launching' | 'active';
+    weekly_target: number;
+    is_ymyl: boolean;
+};
+
+type ActiveRun = {
+    id: string;
+    pipeline: string;
+    status: string;
+    subject: string | null;
+    started_at: string | null;
+    total_steps: number;
+    done_steps: number;
+    current_step: string | null;
+};
+
+type Work = {
+    launching: boolean;
+    active: ActiveRun[];
+    failed: {
+        id: string;
+        pipeline: string;
+        subject: string | null;
+        step: string | null;
+        message: string | null;
+    }[];
+};
+
+type Stats = {
+    published: number;
+    planned: number;
+    drafts: number;
+    awaiting_approval: number;
+    targeted_volume: number;
+    citations: { checked: number; cited: number };
+    search: { impressions: number; clicks: number; days: number };
+    engagement: { sessions: number; engaged: number; days: number };
+};
+
+type Connected = { search_console: boolean; analytics: boolean };
+
+type Upcoming = {
+    id: string;
+    title: string;
+    state: string;
+    scheduled_for: string | null;
+    target_query: string | null;
+    topic_volume: number | null;
+    locales: string[];
+};
+
+type Recent = {
+    id: string;
+    title: string;
+    state: string;
+    updated_at: string | null;
+    public_url: string | null;
+    locales: string[];
+};
+
+type Health = { healthy: boolean; reason: string | null };
+
+type Visibility = {
+    score: number | null;
+    monitored_prompts: number;
+    mentions: number;
+    answered: number;
+    last_asked_on: string | null;
+    by_locale: { locale: string; score: number | null; answered: number }[];
+};
+
+type Props = {
+    project: Project | null;
+    hasProjects: boolean;
+    work?: Work;
+    stats?: Stats;
+    connected?: Connected;
+    upcoming?: Upcoming[];
+    recent?: Recent[];
+    health?: Health;
+    visibility?: Visibility;
+};
+
+/** How the pipeline keys read to somebody who did not build them. */
+const PIPELINE_LABELS: Record<string, string> = {
+    research: 'Researching the market',
+    planning: 'Planning the month',
+    generation: 'Writing',
+    content_studio: 'Proposing the social content system',
+    publishing: 'Publishing',
+    refresh: 'Refreshing',
+    repurpose: 'Cutting down for social',
+};
+
+export default function Dashboard({
+    project,
+    hasProjects,
+    work,
+    stats,
+    connected,
+    upcoming,
+    recent,
+    health,
+    visibility,
+}: Props) {
+    const { auth } = usePage().props;
+    const busy = (work?.active.length ?? 0) > 0 || (work?.launching ?? false);
+
+    // Poll only while work is active, slow down repeated requests, and do not
+    // spend server time refreshing a tab nobody can see. A visibility change
+    // resets the backoff so returning operators get current state promptly.
+    useEffect(() => {
+        if (!busy) {
+            return;
+        }
+
+        let cancelled = false;
+        let attempts = 0;
+        let timer: number | undefined;
+
+        const schedule = () => {
+            const baseDelay = document.hidden
+                ? 30_000
+                : Math.min(20_000, 5_000 * 2 ** Math.min(attempts, 2));
+            const jitter = Math.floor(Math.random() * 1_000);
+
+            timer = window.setTimeout(poll, baseDelay + jitter);
+        };
+
+        const poll = () => {
+            if (cancelled) {
+                return;
+            }
+
+            if (document.hidden) {
+                schedule();
+
+                return;
+            }
+
+            router.reload({
+                only: ['work', 'stats', 'upcoming', 'recent'],
+                onFinish: () => {
+                    if (!cancelled) {
+                        attempts += 1;
+                        schedule();
+                    }
+                },
+            });
+        };
+
+        const onVisibilityChange = () => {
+            window.clearTimeout(timer);
+
+            if (document.hidden) {
+                schedule();
+
+                return;
+            }
+
+            attempts = 0;
+            poll();
+        };
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        schedule();
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+            document.removeEventListener(
+                'visibilitychange',
+                onVisibilityChange,
+            );
+        };
+    }, [busy]);
+
+    if (!project) {
+        return <NoProject hasProjects={hasProjects} />;
+    }
+
+    return (
+        <>
+            <Head title={project.name} />
+
+            <div className="relative isolate min-h-full overflow-hidden">
+                <div
+                    className="pointer-events-none absolute -top-40 right-0 -z-10 size-[32rem] rounded-full bg-violet-500/8 blur-3xl dark:bg-violet-500/5"
+                    aria-hidden="true"
+                />
+                <div
+                    className="pointer-events-none absolute top-[38rem] -left-52 -z-10 size-[28rem] rounded-full bg-orange-400/7 blur-3xl dark:bg-orange-400/4"
+                    aria-hidden="true"
+                />
+
+                <div className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-5 p-4 sm:gap-6 sm:p-6 lg:p-8">
+                    <header className="flex flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="min-w-0">
+                            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                                <span>Project overview</span>
+                                <span className="size-1 rounded-full bg-violet-500" />
+                                <span className="tracking-normal text-foreground/70 normal-case">
+                                    {project.onboarding_status === 'active'
+                                        ? 'Engine active'
+                                        : project.onboarding_status}
+                                </span>
+                            </div>
+                            <h1 className="truncate text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
+                                {project.name}
+                            </h1>
+                            <p className="mt-2 truncate text-sm text-muted-foreground">
+                                {project.website_url ??
+                                    'Content performance and publishing operations.'}
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            {project.is_ymyl && (
+                                <Badge
+                                    variant="outline"
+                                    className="h-9 rounded-full bg-background/70 px-3"
+                                >
+                                    <CheckCircle2 className="size-3.5 text-emerald-600" />
+                                    Review required
+                                </Badge>
+                            )}
+                            <Button
+                                variant="outline"
+                                className="rounded-full bg-background/70 shadow-sm"
+                                asChild
+                            >
+                                <Link href={calendarIndex()}>
+                                    <CalendarDays
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                    Content calendar
+                                </Link>
+                            </Button>
+                        </div>
+                    </header>
+
+                    <StoppedNotice health={health} />
+
+                    {work && <WorkInProgress work={work} project={project} />}
+
+                    {auth.project?.role === 'owner' && (
+                        <ConnectGoogle
+                            projectId={project.id}
+                            connected={connected}
+                        />
+                    )}
+
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)] [&>*]:min-w-0">
+                        <Deferred
+                            data="visibility"
+                            fallback={() => <LlmVisibilityCard />}
+                        >
+                            <LlmVisibilityCard visibility={visibility} />
+                        </Deferred>
+
+                        <Stats
+                            stats={stats}
+                            connected={connected}
+                            busy={busy}
+                        />
+                    </div>
+
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] [&>*]:min-w-0">
+                        <Upcoming items={upcoming} busy={busy} />
+                        <Recent items={recent} busy={busy} />
+                    </div>
+                </div>
+            </div>
+        </>
+    );
+}
+
+/**
+ * The first hour.
+ *
+ * A project that was set up ten minutes ago has no articles and no impressions,
+ * and a grid of zeroes reads as a broken product rather than a young one. What
+ * it does have is work in flight, so that is what the top of the page is until
+ * the work stops.
+ */
+function WorkInProgress({ work, project }: { work: Work; project: Project }) {
+    if (work.active.length === 0 && work.failed.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="flex flex-col gap-3">
+            {work.active.length > 0 && (
+                <Card className="gap-5 overflow-hidden rounded-[1.5rem] border-violet-500/20 bg-violet-500/[0.045] shadow-none">
+                    <CardHeader className="sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <CardTitle className="flex items-center gap-2 text-base">
+                                <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                                    <Spinner className="size-4" />
+                                </span>
+                                {work.launching
+                                    ? 'Setting up your project'
+                                    : 'Work in progress'}
+                            </CardTitle>
+                            <CardDescription>
+                                {work.launching
+                                    ? `Researching what ${project.name} should write about, proposing its social content system, planning a month, and drafting the first few. This takes a while — you can close this page.`
+                                    : 'Pipelines currently running for this project.'}
+                            </CardDescription>
+                        </div>
+                        <Badge
+                            variant="outline"
+                            className="w-fit rounded-full border-violet-500/20 bg-background/60 text-violet-700 dark:text-violet-200"
+                        >
+                            Live
+                        </Badge>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-5">
+                        {work.active.map((run) => (
+                            <RunProgress key={run.id} run={run} />
+                        ))}
+                    </CardContent>
+                </Card>
+            )}
+
+            {work.failed.length > 0 && (
+                <Card className="rounded-[1.5rem] border-destructive/30 bg-destructive/[0.035] shadow-none">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                            <AlertTriangle
+                                className="size-4 text-destructive"
+                                aria-hidden="true"
+                            />
+                            Stopped in the last day
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-2 text-sm">
+                        {work.failed.map((run) => (
+                            <div key={run.id} className="flex flex-col">
+                                <span className="font-medium">
+                                    {PIPELINE_LABELS[run.pipeline] ??
+                                        run.pipeline}
+                                    {run.subject && ` · ${run.subject}`}
+                                </span>
+                                <span className="text-muted-foreground">
+                                    {run.step && `at ${run.step}: `}
+                                    {run.message ?? 'No message recorded.'}
+                                </span>
+                            </div>
+                        ))}
+                    </CardContent>
+                </Card>
+            )}
+        </div>
+    );
+}
+
+function RunProgress({ run }: { run: ActiveRun }) {
+    const label = PIPELINE_LABELS[run.pipeline] ?? run.pipeline;
+    const percent =
+        run.total_steps > 0
+            ? Math.round((run.done_steps / run.total_steps) * 100)
+            : 0;
+
+    return (
+        <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="truncate font-medium">
+                    {label}
+                    {run.subject && (
+                        <span className="text-muted-foreground">
+                            {' '}
+                            · {run.subject}
+                        </span>
+                    )}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                    {run.total_steps === 0
+                        ? 'starting'
+                        : `${run.done_steps} of ${run.total_steps}`}
+                </span>
+            </div>
+            <Progress
+                value={percent}
+                className="h-1.5"
+                aria-label={`${label} progress`}
+                aria-valuetext={
+                    run.total_steps === 0
+                        ? 'Starting'
+                        : `${run.done_steps} of ${run.total_steps} steps complete`
+                }
+            />
+            {run.current_step && (
+                <p
+                    className="text-xs text-muted-foreground"
+                    role="status"
+                    aria-live="polite"
+                >
+                    {run.current_step.replaceAll('_', ' ')}
+                </p>
+            )}
+        </div>
+    );
+}
+
+/**
+ * The numbers this system can actually measure.
+ *
+ * Backlinks, page speed and sessions are deliberately absent: nothing here
+ * collects them, and a card that will read "—" forever teaches an operator to
+ * stop reading the row.
+ */
+function Stats({
+    stats,
+    connected,
+    busy,
+}: {
+    stats?: Stats;
+    connected?: Connected;
+    busy: boolean;
+}) {
+    return (
+        <section className="overflow-hidden rounded-[1.5rem] border bg-card/85 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.05)] backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b px-5 py-4 sm:px-6">
+                <div>
+                    <h2 className="font-semibold tracking-tight">
+                        Content pulse
+                    </h2>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                        Output and reach at a glance
+                    </p>
+                </div>
+                <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                    Last 28 days
+                </span>
+            </div>
+            <div className="grid grid-cols-2">
+                <Deferred
+                    data="stats"
+                    fallback={() => (
+                        <>
+                            {[0, 1, 2, 3, 4].map((index) => (
+                                <StatSkeleton
+                                    key={index}
+                                    featured={index === 0}
+                                />
+                            ))}
+                        </>
+                    )}
+                >
+                    {stats && (
+                        <>
+                            <Stat
+                                icon={FileText}
+                                label="Published"
+                                value={stats.published}
+                                hint={
+                                    busy && stats.published === 0
+                                        ? 'First drafts are being written'
+                                        : `${stats.drafts} in draft · ${stats.awaiting_approval} waiting for you`
+                                }
+                                href={
+                                    stats.awaiting_approval > 0
+                                        ? approvalsIndex()
+                                        : undefined
+                                }
+                                featured
+                            />
+                            <Stat
+                                icon={Search}
+                                label="Targeted search volume"
+                                value={stats.targeted_volume.toLocaleString()}
+                                hint={`Across ${stats.planned} planned topics`}
+                            />
+                            <Stat
+                                icon={Quote}
+                                label="Cited by assistants"
+                                value={
+                                    stats.citations.checked === 0
+                                        ? '—'
+                                        : `${stats.citations.cited} of ${stats.citations.checked}`
+                                }
+                                hint={
+                                    stats.citations.checked === 0
+                                        ? 'Checked once articles are live'
+                                        : 'Articles an assistant quoted back'
+                                }
+                            />
+                            <Stat
+                                icon={Eye}
+                                label="Search impressions"
+                                value={
+                                    connected?.search_console === false
+                                        ? '—'
+                                        : stats.search.impressions.toLocaleString()
+                                }
+                                hint={
+                                    connected?.search_console === false
+                                        ? 'Connect Search Console to see this'
+                                        : `${stats.search.clicks.toLocaleString()} clicks · last ${stats.search.days} days`
+                                }
+                            />
+                            <Stat
+                                icon={Users}
+                                label="Engaged visits"
+                                value={
+                                    connected?.analytics === false
+                                        ? '—'
+                                        : engagementRate(stats)
+                                }
+                                hint={
+                                    connected?.analytics === false
+                                        ? 'Connect Analytics to see this'
+                                        : `${stats.engagement.sessions.toLocaleString()} visits · last ${stats.engagement.days} days`
+                                }
+                            />
+                        </>
+                    )}
+                </Deferred>
+            </div>
+        </section>
+    );
+}
+
+/**
+ * The share of visits that held attention.
+ *
+ * A rate rather than a count, because the count only says how much traffic
+ * arrived — which the card beside this one already covers.
+ */
+function engagementRate(stats: Stats): string {
+    if (stats.engagement.sessions === 0) {
+        return '—';
+    }
+
+    return `${Math.round((stats.engagement.engaged / stats.engagement.sessions) * 100)}%`;
+}
+
+/**
+ * Shown only while something is missing.
+ *
+ * The two cards above read "—" without a connection, and an operator cannot
+ * tell that apart from a project nobody has visited yet. This says which.
+ */
+function ConnectGoogle({
+    projectId,
+    connected,
+}: {
+    projectId: string;
+    connected?: Connected;
+}) {
+    if (!connected || (connected.search_console && connected.analytics)) {
+        return null;
+    }
+
+    const missing =
+        !connected.search_console && !connected.analytics
+            ? 'Search Console and Analytics'
+            : !connected.search_console
+              ? 'Search Console'
+              : 'Analytics';
+
+    return (
+        <Card className="gap-0 rounded-[1.5rem] border-dashed bg-card/60 py-0 shadow-none">
+            <CardHeader className="flex-col items-start gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 py-5">
+                    <CardTitle className="text-base">
+                        Connect {missing}
+                    </CardTitle>
+                    <CardDescription>
+                        Until you do, the engine is writing without seeing what
+                        any of it did.
+                    </CardDescription>
+                </div>
+                <Button
+                    variant="outline"
+                    className="mb-5 rounded-full sm:my-5"
+                    asChild
+                >
+                    <Link href={editProject(projectId)}>
+                        Connect
+                        <ArrowRight className="size-4" aria-hidden="true" />
+                    </Link>
+                </Button>
+            </CardHeader>
+        </Card>
+    );
+}
+
+function Stat({
+    icon: Icon,
+    label,
+    value,
+    hint,
+    href,
+    featured = false,
+}: {
+    icon: typeof FileText;
+    label: string;
+    value: number | string;
+    hint: string;
+    href?: { url: string; method: 'get' };
+    featured?: boolean;
+}) {
+    const className = `group relative flex h-full min-h-32 flex-col justify-between border-b p-5 transition-colors hover:bg-muted/45 focus-visible:z-10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:p-6 ${
+        featured ? 'col-span-2 min-h-40' : 'even:border-r'
+    }`;
+
+    const body = (
+        <>
+            <div className="flex items-center justify-between gap-3 text-xs font-medium text-muted-foreground">
+                <span className="flex items-center gap-2">
+                    <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-foreground">
+                        <Icon className="size-3.5" aria-hidden="true" />
+                    </span>
+                    {label}
+                </span>
+                {href && (
+                    <ArrowUpRight
+                        className="size-4 opacity-40 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100"
+                        aria-hidden="true"
+                    />
+                )}
+            </div>
+            <div className="mt-5">
+                <div
+                    className={`font-semibold tracking-[-0.04em] tabular-nums ${featured ? 'text-5xl' : 'text-2xl'}`}
+                >
+                    {value}
+                </div>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                    {hint}
+                </p>
+            </div>
+        </>
+    );
+
+    return href ? (
+        <Link href={href} className={className}>
+            {body}
+        </Link>
+    ) : (
+        <div className={className}>{body}</div>
+    );
+}
+
+function StatSkeleton({ featured = false }: { featured?: boolean }) {
+    return (
+        <div
+            className={`flex min-h-32 flex-col justify-between border-b p-5 sm:p-6 ${featured ? 'col-span-2 min-h-40' : 'even:border-r'}`}
+        >
+            <Skeleton className="h-7 w-28 rounded-lg" />
+            <div className="mt-5 space-y-2">
+                <Skeleton className={featured ? 'h-11 w-20' : 'h-7 w-16'} />
+                <Skeleton className="h-3 w-32 max-w-full" />
+            </div>
+        </div>
+    );
+}
+
+function Upcoming({ items, busy }: { items?: Upcoming[]; busy: boolean }) {
+    return (
+        <Card className="gap-0 overflow-hidden rounded-[1.5rem] bg-card/85 py-0 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.04)] backdrop-blur-sm">
+            <CardHeader className="flex-row items-start justify-between gap-4 border-b px-5 py-5 sm:px-6">
+                <div>
+                    <CardTitle className="text-base tracking-tight">
+                        Coming up
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                        Next in the publishing queue
+                    </CardDescription>
+                </div>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="-mr-2 rounded-full text-xs text-muted-foreground"
+                    asChild
+                >
+                    <Link href={calendarIndex()}>
+                        View plan
+                        <ArrowUpRight className="size-3.5" />
+                    </Link>
+                </Button>
+            </CardHeader>
+            <CardContent className="px-0">
+                <Deferred data="upcoming" fallback={() => <ListSkeleton />}>
+                    {items && items.length === 0 ? (
+                        <Pending
+                            busy={busy}
+                            waiting="The planner is still choosing topics."
+                            empty="Nothing scheduled. The planner fills the next month on its weekly run."
+                        />
+                    ) : (
+                        <ul className="flex flex-col divide-y">
+                            {items?.map((item) => (
+                                <li key={item.id}>
+                                    <Link
+                                        href={showContent(item.id)}
+                                        className="group flex min-w-0 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/45 sm:px-6"
+                                    >
+                                        <span className="flex min-w-0 items-start gap-3">
+                                            <span className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/8 text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                                                {item.scheduled_for
+                                                    ? new Date(
+                                                          `${item.scheduled_for}T00:00:00`,
+                                                      ).toLocaleDateString(
+                                                          undefined,
+                                                          {
+                                                              day: '2-digit',
+                                                          },
+                                                      )
+                                                    : '—'}
+                                            </span>
+                                            <span className="min-w-0 text-sm leading-5 break-words">
+                                                <span className="font-medium group-hover:underline">
+                                                    {item.title}
+                                                </span>
+                                                {item.target_query && (
+                                                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                                                        {item.target_query}
+                                                        {item.topic_volume
+                                                            ? ` · ${item.topic_volume.toLocaleString()}/mo`
+                                                            : ''}
+                                                    </span>
+                                                )}
+                                                {item.locales.length > 1 && (
+                                                    <span className="block text-xs text-muted-foreground">
+                                                        {item.locales.length}{' '}
+                                                        languages
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </span>
+                                        <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                                            {item.scheduled_for ??
+                                                'Unscheduled'}
+                                            <ArrowRight className="size-3.5 opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
+                                        </span>
+                                    </Link>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Deferred>
+            </CardContent>
+        </Card>
+    );
+}
+
+function Recent({ items, busy }: { items?: Recent[]; busy: boolean }) {
+    return (
+        <Card className="min-w-0 gap-0 overflow-hidden rounded-[1.5rem] bg-card/85 py-0 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.04)] backdrop-blur-sm">
+            <CardHeader className="border-b px-5 py-5 sm:px-6">
+                <CardTitle className="text-base tracking-tight">
+                    Latest work
+                </CardTitle>
+                <CardDescription className="mt-1">
+                    Recently touched drafts and articles
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="px-0">
+                <Deferred data="recent" fallback={() => <ListSkeleton />}>
+                    {items && items.length === 0 ? (
+                        <Pending
+                            busy={busy}
+                            waiting="The first drafts are being written now."
+                            empty="Nothing written yet."
+                        />
+                    ) : (
+                        <ul className="flex flex-col divide-y">
+                            {items?.map((item) => (
+                                <li
+                                    key={item.id}
+                                    className="group flex min-w-0 items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-muted/45 sm:px-6"
+                                >
+                                    <Link
+                                        href={showContent(item.id)}
+                                        className="min-w-0 truncate text-sm font-medium group-hover:underline"
+                                    >
+                                        {item.title}
+                                        {item.locales.length > 1 && (
+                                            <span className="ml-1 text-xs text-muted-foreground">
+                                                · {item.locales.length} langs
+                                            </span>
+                                        )}
+                                    </Link>
+                                    <span className="flex shrink-0 items-center gap-2">
+                                        <Badge
+                                            variant={
+                                                item.state === 'published'
+                                                    ? 'default'
+                                                    : 'secondary'
+                                            }
+                                            className="rounded-full px-2.5 font-medium capitalize"
+                                        >
+                                            {item.state}
+                                        </Badge>
+                                        {item.public_url && (
+                                            <a
+                                                href={item.public_url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                aria-label="Open the published article"
+                                            >
+                                                <ExternalLink
+                                                    className="size-3.5 text-muted-foreground"
+                                                    aria-hidden="true"
+                                                />
+                                            </a>
+                                        )}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Deferred>
+            </CardContent>
+        </Card>
+    );
+}
+
+/**
+ * Empty because it has not happened yet, or empty because there is nothing.
+ *
+ * The two look identical and mean opposite things — one is worth waiting for
+ * and the other is worth acting on — so the running state decides the wording.
+ */
+function Pending({
+    busy,
+    waiting,
+    empty,
+}: {
+    busy: boolean;
+    waiting: string;
+    empty: string;
+}) {
+    return (
+        <p className="flex items-center gap-2 px-5 py-5 text-sm text-muted-foreground sm:px-6">
+            {busy ? (
+                <>
+                    <Spinner className="size-3.5" />
+                    {waiting}
+                </>
+            ) : (
+                <>
+                    <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                    {empty}
+                </>
+            )}
+        </p>
+    );
+}
+
+function ListSkeleton() {
+    return (
+        <div className="flex flex-col gap-3 px-5 py-5 sm:px-6">
+            {[0, 1, 2].map((index) => (
+                <Skeleton key={index} className="h-5 w-full" />
+            ))}
+        </div>
+    );
+}
+
+function StoppedNotice({ health }: { health?: Health }) {
+    return (
+        <Deferred data="health" fallback={() => null}>
+            {health && !health.healthy && (
+                <Card className="rounded-[1.5rem] border-amber-500/35 bg-amber-50/60 shadow-none dark:bg-amber-950/20">
+                    <CardHeader className="flex-row items-start gap-3 space-y-0">
+                        <AlertTriangle
+                            className="mt-0.5 size-5 shrink-0 text-amber-600"
+                            aria-hidden="true"
+                        />
+                        <div>
+                            <CardTitle className="text-base">
+                                The engine is not running work right now
+                            </CardTitle>
+                            <CardDescription>
+                                {health.reason} Scheduled pipelines will not
+                                produce drafts until this is fixed.
+                            </CardDescription>
+                        </div>
+                    </CardHeader>
+                </Card>
+            )}
+        </Deferred>
+    );
+}
+
+function NoProject({ hasProjects }: { hasProjects: boolean }) {
+    return (
+        <>
+            <Head title="Dashboard" />
+            <div className="flex min-h-[65vh] flex-col justify-center p-6">
+                <Card className="mx-auto max-w-lg rounded-[1.75rem] border-border/70 px-4 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+                    <CardHeader className="items-center text-center">
+                        {hasProjects ? (
+                            <span className="mb-2 flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600">
+                                <Layers className="size-6" aria-hidden="true" />
+                            </span>
+                        ) : (
+                            <span className="mb-2 flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600">
+                                <Sparkles
+                                    className="size-6"
+                                    aria-hidden="true"
+                                />
+                            </span>
+                        )}
+                        <CardTitle>
+                            {hasProjects
+                                ? 'Pick a project'
+                                : 'Set up your first project'}
+                        </CardTitle>
+                        <CardDescription>
+                            {hasProjects
+                                ? 'Choose one from the switcher at the top of the sidebar.'
+                                : 'Give us the website. We read it, work out what it should be writing about, and start.'}
+                        </CardDescription>
+                        {!hasProjects && (
+                            <Button asChild className="mt-2">
+                                <Link href={showOnboarding()}>
+                                    Start
+                                    <ArrowRight
+                                        className="size-4"
+                                        aria-hidden="true"
+                                    />
+                                </Link>
+                            </Button>
+                        )}
+                    </CardHeader>
+                </Card>
+            </div>
+        </>
+    );
+}
+
+/**
+ * Where the brand stands in AI answers.
+ *
+ * The per-language line under the headline is not decoration. This project read
+ * 0% overall while a customer arrived through ChatGPT answering in Russian —
+ * one number across every language is exactly how that gets missed, so the
+ * breakdown sits beside the headline rather than a click away.
+ */
+function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
+    // Undefined is still loading; a null score is loaded-but-never-asked. Both
+    // differ from 0%, which is a real and bad measurement.
+    const measured = visibility !== undefined && visibility.score !== null;
+
+    return (
+        <section className="relative isolate min-h-[34rem] overflow-hidden rounded-[1.75rem] border border-white/8 bg-[#17141f] text-white shadow-[0_24px_80px_rgba(26,20,43,0.22)] xl:min-h-full">
+            <div
+                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-violet-500/30 blur-3xl"
+                aria-hidden="true"
+            />
+            <div
+                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-orange-500/15 blur-3xl"
+                aria-hidden="true"
+            />
+
+            <div className="flex h-full flex-col p-6 sm:p-8">
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-violet-200 uppercase">
+                            <Sparkles className="size-3.5" />
+                            AI visibility
+                        </div>
+                        <p className="mt-2 text-sm text-white/50">
+                            {visibility?.last_asked_on
+                                ? `Last measured ${visibility.last_asked_on}`
+                                : 'The first prompt sweep has not run yet'}
+                        </p>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="rounded-full border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+                        asChild
+                    >
+                        <Link
+                            href={visibilityIndex().url}
+                            aria-label="Open prompt analysis"
+                        >
+                            <ArrowUpRight className="size-4" />
+                        </Link>
+                    </Button>
+                </div>
+
+                <div className="my-auto grid gap-10 py-10 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] md:items-end">
+                    <div>
+                        <div className="flex items-start font-semibold tracking-[-0.075em] tabular-nums">
+                            <span className="text-[5.5rem] leading-[0.82] sm:text-[7rem]">
+                                {measured ? visibility?.score : '—'}
+                            </span>
+                            {measured && (
+                                <span className="ml-2 text-2xl text-violet-300">
+                                    %
+                                </span>
+                            )}
+                        </div>
+                        <p className="mt-5 max-w-52 text-sm leading-6 text-white/55">
+                            Share of answered prompts where your brand appeared.
+                        </p>
+                    </div>
+
+                    <div>
+                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/40 uppercase">
+                            Visibility by locale
+                        </p>
+                        {(visibility?.by_locale ?? []).length === 0 ? (
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-5 text-sm text-white/45">
+                                No prompt results yet. Locale performance will
+                                appear here after the first sweep.
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {visibility?.by_locale.map((row) => (
+                                    <div key={row.locale}>
+                                        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                                            <span className="font-medium text-white/75">
+                                                {row.locale}
+                                            </span>
+                                            <span className="text-white/55 tabular-nums">
+                                                {row.score === null
+                                                    ? 'Not measured'
+                                                    : `${row.score}%`}
+                                            </span>
+                                        </div>
+                                        <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                                            <div
+                                                className="h-full rounded-full bg-gradient-to-r from-violet-400 to-orange-300"
+                                                style={{
+                                                    width: `${Math.max(0, Math.min(100, row.score ?? 0))}%`,
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 divide-x divide-white/10 border-t border-white/10 pt-5">
+                    <div className="pr-5">
+                        <p className="text-[11px] tracking-wide text-white/40 uppercase">
+                            Monitored prompts
+                        </p>
+                        <p className="mt-1.5 text-xl font-semibold tabular-nums">
+                            {visibility?.monitored_prompts ?? '—'}
+                        </p>
+                    </div>
+                    <div className="pl-5">
+                        <p className="text-[11px] tracking-wide text-white/40 uppercase">
+                            Brand mentions
+                        </p>
+                        <p className="mt-1.5 text-xl font-semibold tabular-nums">
+                            {visibility === undefined
+                                ? '—'
+                                : `${visibility.mentions} / ${visibility.answered}`}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}

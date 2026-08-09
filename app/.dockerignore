@@ -1,0 +1,25 @@
+# Reinstalled inside the image; copying them in would be slower and could mix
+# host-architecture binaries into a Linux image.
+node_modules
+vendor
+public/build
+resources/js/actions
+resources/js/routes
+resources/js/wayfinder
+
+.git
+.github
+.env
+.env.backup
+.env.production
+.phpunit.cache
+.phpunit.result.cache
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+database/database.sqlite
+
+.DS_Store
+.idea
+.vscode
