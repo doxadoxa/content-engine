@@ -1,0 +1,53 @@
+{
+    "projectId": "a0791e48-723c-4ea9-b13b-60c38792594b",
+    "shape": "package",
+    "pkg": "avyo",
+    "globalName": "Avyo",
+    "srcDir": "resources/js/components/ui",
+    "tsconfig": "tsconfig.json",
+    "cssEntry": "assets/css/ds.css",
+    "docsDir": "assets/docs",
+    "overrides": {
+        "Dialog": {
+            "cardMode": "single",
+            "viewport": "760x620"
+        },
+        "Sheet": {
+            "cardMode": "single",
+            "viewport": "900x640"
+        },
+        "DropdownMenu": {
+            "cardMode": "single",
+            "viewport": "640x560"
+        },
+        "Toaster": {
+            "cardMode": "single",
+            "primaryStory": "Success",
+            "viewport": "720x420"
+        },
+        "Card": {
+            "cardMode": "column"
+        },
+        "Table": {
+            "cardMode": "column"
+        },
+        "Sidebar": {
+            "cardMode": "column"
+        },
+        "SidebarMenuSkeleton": {
+            "cardMode": "column"
+        },
+        "Tooltip": {
+            "cardMode": "single",
+            "primaryStory": "Open",
+            "viewport": "560x360"
+        },
+        "Select": {
+            "cardMode": "column"
+        }
+    },
+    "extraEntries": [
+        "sonner"
+    ],
+    "readmeHeader": ".design-sync/conventions.md"
+}
