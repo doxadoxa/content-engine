@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Enums\AssetRole;
+use App\Enums\AssetSource;
 use App\Models\Concerns\BelongsToProject;
 use Database\Factories\AssetFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\Storage;
  * @property string $project_id
  * @property string $content_item_id
  * @property AssetRole $role
+ * @property AssetSource $source
  * @property string|null $anchor
  * @property string $disk
  * @property string $path
@@ -42,6 +44,7 @@ class Asset extends Model
     protected $fillable = [
         'content_item_id',
         'role',
+        'source',
         'anchor',
         'disk',
         'path',
@@ -77,6 +80,7 @@ class Asset extends Model
     {
         return [
             'role' => AssetRole::class,
+            'source' => AssetSource::class,
             'width' => 'integer',
             'height' => 'integer',
             'superseded_at' => 'datetime',

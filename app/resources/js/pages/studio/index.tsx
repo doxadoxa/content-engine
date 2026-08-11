@@ -38,6 +38,7 @@ import {
 } from '@/components/workspace-page';
 import { postJson } from '@/lib/json';
 import { accept, generate, index, propose, refine } from '@/routes/studio';
+import { choose, revise, upload } from '@/routes/studio/image';
 
 type Source = {
     website_url: string | null;
@@ -57,6 +58,8 @@ type Strategy = {
     pillars?: Pillar[];
     channel_roles?: Record<string, string>;
     questions?: string[];
+    /** What is still wrong with the month's mix after the assistant was asked twice. */
+    mix_findings?: string[];
 };
 
 type Draft = {
@@ -71,6 +74,9 @@ type Draft = {
         alt: string;
         width: number | null;
         height: number | null;
+        chosen: boolean;
+        retired: boolean;
+        source: string;
     }>;
 };
 
@@ -84,6 +90,8 @@ type Idea = {
     key: string;
     date: string;
     title: string;
+    kind: string;
+    kind_label: string;
     pillar: string;
     thesis: string;
     evidence: string[];
@@ -120,12 +128,24 @@ type Plan = {
 
 type Operation = {
     id: string;
-    action: 'proposal' | 'refine' | 'generate_week' | null;
+    action:
+        | 'proposal'
+        | 'refine'
+        | 'generate_week'
+        | 'generate_idea'
+        | 'revise_image'
+        | null;
     status: 'pending' | 'running' | 'failed' | 'completed' | 'cancelled';
     message: string | null;
     result: {
         version?: number;
+        /** Drafts written — on a per-idea run. */
         created?: number;
+        /** Ideas dispatched — on a fan-out run. */
+        ideas?: number;
+        idea?: string;
+        /** Pictures drawn — on an image revision. */
+        variants?: number;
         from?: string | null;
         until?: string | null;
     } | null;
@@ -159,7 +179,16 @@ function busyFor(operation: Operation | null): Busy {
         return 'refining';
     }
 
-    if (operation?.action === 'generate_week') {
+    // Drafting is a fan-out run followed by one run per idea, and the poll
+    // follows the newest — so after the fan-out the screen is watching a
+    // `generate_idea`. Without these two arms it fell through to 'proposing'
+    // and told the operator it was building a proposal while it drafted their
+    // week, or drew a picture.
+    if (
+        operation?.action === 'generate_week' ||
+        operation?.action === 'generate_idea' ||
+        operation?.action === 'revise_image'
+    ) {
         return 'generating';
     }
 
@@ -173,15 +202,41 @@ function notifyCompleted(operation: Operation, plan: Plan | null) {
         return;
     }
 
-    if (operation.action === 'generate_week') {
+    if (operation.action === 'generate_idea') {
         const created = operation.result?.created;
 
         toast.success(
-            created === 0
+            typeof created === 'number' && created > 0
+                ? `${created} drafts ready for one idea`
+                : 'An idea finished drafting',
+        );
+
+        return;
+    }
+
+    if (operation.action === 'revise_image') {
+        const variants = operation.result?.variants;
+
+        toast.success(
+            typeof variants === 'number' && variants > 1
+                ? `${variants} pictures to choose from`
+                : 'A new picture is ready',
+        );
+
+        return;
+    }
+
+    if (operation.action === 'generate_week') {
+        // What it dispatched, not what it wrote: drafting is a run per idea
+        // now, and each finishes on its own. The plan reloads as they land.
+        const ideas = operation.result?.ideas;
+
+        toast.success(
+            ideas === 0
                 ? 'Every batch in this proposal is already drafted'
-                : typeof created === 'number'
-                  ? `${created} channel drafts created`
-                  : 'The next weekly batch is ready',
+                : typeof ideas === 'number'
+                  ? `Drafting ${ideas} ${ideas === 1 ? 'idea' : 'ideas'}…`
+                  : 'The next weekly batch is on its way',
         );
 
         return;
@@ -499,7 +554,17 @@ export default function Studio({
                                     onGenerate={() => void generateBatch()}
                                 />
                                 <StrategyArtifact plan={readyPlan} />
-                                <IdeasPanel plan={readyPlan} />
+                                <IdeasPanel
+                                    plan={readyPlan}
+                                    onRefreshed={(nextPlan, nextOperation) => {
+                                        setPlan(nextPlan);
+                                        setOperation(nextOperation);
+
+                                        if (isActive(nextOperation)) {
+                                            setBusy('generating');
+                                        }
+                                    }}
+                                />
                             </>
                         )}
                     </aside>
@@ -778,6 +843,7 @@ function StrategyArtifact({ plan }: { plan: Plan }) {
     const objectives = strategy.objectives ?? [];
     const pillars = strategy.pillars ?? [];
     const roles = strategy.channel_roles ?? {};
+    const mixFindings = strategy.mix_findings ?? [];
     const month = new Intl.DateTimeFormat(undefined, {
         month: 'long',
         year: 'numeric',
@@ -838,6 +904,23 @@ function StrategyArtifact({ plan }: { plan: Plan }) {
 
                 <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                     <div className="mx-auto grid w-full max-w-6xl gap-8 px-6 py-7 sm:px-8 sm:py-9">
+                        {/*
+                          A month that stayed unbalanced after two asks is
+                          proposed anyway, so this is the only place an operator
+                          finds out. Storing the finding and not showing it
+                          would be the silent machine the engine argues against.
+                        */}
+                        {mixFindings.length > 0 && (
+                            <section className="rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4">
+                                <SectionLabel>Unbalanced month</SectionLabel>
+                                <ul className="mt-3 grid gap-2 text-sm leading-relaxed">
+                                    {mixFindings.map((finding) => (
+                                        <li key={finding}>{finding}</li>
+                                    ))}
+                                </ul>
+                            </section>
+                        )}
+
                         {(objectives.length > 0 || pillars.length > 0) && (
                             <div className="grid gap-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                                 {objectives.length > 0 && (
@@ -1035,7 +1118,22 @@ function PlanActions({
 
 const STUDIO_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function IdeasPanel({ plan }: { plan: Plan }) {
+/**
+ * What a draft's media controls hand back when they have changed something.
+ *
+ * Threaded rather than synced from props: writing server props into state from
+ * an effect is the pattern React now warns about, and it would also fight the
+ * poll below for ownership of the same two values. One owner, told directly.
+ */
+type OnRefreshed = (plan: Plan, operation: Operation | null) => void;
+
+function IdeasPanel({
+    plan,
+    onRefreshed,
+}: {
+    plan: Plan;
+    onRefreshed: OnRefreshed;
+}) {
     const [open, setOpen] = useState(false);
     const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
     const ideas = plan.ideas;
@@ -1087,7 +1185,11 @@ function IdeasPanel({ plan }: { plan: Plan }) {
                 </button>
                 <div className="grid gap-2 p-3">
                     {ideas.map((idea) => (
-                        <IdeaCard key={idea.id} idea={idea} />
+                        <IdeaCard
+                            key={idea.id}
+                            idea={idea}
+                            onRefreshed={onRefreshed}
+                        />
                     ))}
                 </div>
             </section>
@@ -1119,6 +1221,7 @@ function IdeasPanel({ plan }: { plan: Plan }) {
                         <IdeaInspector
                             idea={selectedIdea}
                             onClose={() => setSelectedIdea(null)}
+                            onRefreshed={onRefreshed}
                         />
                     )}
                 </div>
@@ -1259,8 +1362,8 @@ function CalendarIdea({
                 <span className="truncate">{productionSummary(idea)}</span>
             </span>
             <span className="mt-2 flex min-w-0 items-center justify-between gap-2">
-                <span className="truncate text-[10px] text-muted-foreground">
-                    {idea.pillar}
+                <span className="truncate text-[10px] font-medium text-muted-foreground">
+                    {idea.kind_label}
                 </span>
                 <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
                     {idea.drafts.length}/{idea.channels.length}
@@ -1407,7 +1510,15 @@ function productionSummary(idea: Idea): string {
     return parts.length > 0 ? parts.join(' · ') : 'Text only';
 }
 
-function IdeaInspector({ idea, onClose }: { idea: Idea; onClose: () => void }) {
+function IdeaInspector({
+    idea,
+    onClose,
+    onRefreshed,
+}: {
+    idea: Idea;
+    onClose: () => void;
+    onRefreshed: OnRefreshed;
+}) {
     const date = new Intl.DateTimeFormat(undefined, {
         weekday: 'long',
         month: 'long',
@@ -1444,6 +1555,15 @@ function IdeaInspector({ idea, onClose }: { idea: Idea; onClose: () => void }) {
             <div className="grid gap-5 p-5">
                 <div>
                     <div className="flex flex-wrap items-center gap-2">
+                        {/*
+                          What the post is, beside what it is about. The kind
+                          decides the channels and the Instagram format, so an
+                          operator reading a two-channel idea needs it to make
+                          sense of the row.
+                        */}
+                        <Badge className="rounded-full">
+                            {idea.kind_label}
+                        </Badge>
                         <Badge variant="secondary" className="rounded-full">
                             {idea.pillar}
                         </Badge>
@@ -1480,7 +1600,11 @@ function IdeaInspector({ idea, onClose }: { idea: Idea; onClose: () => void }) {
                 ) : (
                     <div className="grid gap-3">
                         {idea.drafts.map((draft) => (
-                            <DraftPreview key={draft.id} draft={draft} />
+                            <DraftPreview
+                                key={draft.id}
+                                draft={draft}
+                                onRefreshed={onRefreshed}
+                            />
                         ))}
                     </div>
                 )}
@@ -1489,7 +1613,13 @@ function IdeaInspector({ idea, onClose }: { idea: Idea; onClose: () => void }) {
     );
 }
 
-function IdeaCard({ idea }: { idea: Idea }) {
+function IdeaCard({
+    idea,
+    onRefreshed,
+}: {
+    idea: Idea;
+    onRefreshed: OnRefreshed;
+}) {
     const [open, setOpen] = useState(idea.drafts.length > 0);
     const date = new Intl.DateTimeFormat(undefined, {
         weekday: 'short',
@@ -1580,7 +1710,11 @@ function IdeaCard({ idea }: { idea: Idea }) {
                     ) : (
                         <div className="grid gap-3">
                             {idea.drafts.map((draft) => (
-                                <DraftPreview key={draft.id} draft={draft} />
+                                <DraftPreview
+                                    key={draft.id}
+                                    draft={draft}
+                                    onRefreshed={onRefreshed}
+                                />
                             ))}
                         </div>
                     )}
@@ -1590,21 +1724,280 @@ function IdeaCard({ idea }: { idea: Idea }) {
     );
 }
 
-function DraftPreview({ draft }: { draft: Draft }) {
-    const asset = draft.assets?.[0];
+/**
+ * The picture controls on a draft.
+ *
+ * Until these existed a draft's first picture was its only picture: the
+ * generator drew one and the reviewer had no way to disagree with it that did
+ * not involve deleting rows. The three things here are the three things a
+ * person actually does — look at alternatives, say what is wrong, and pick one.
+ *
+ * The note is a note about the photograph, not a prompt. It goes to an art
+ * director that rewrites the stored brief, so what accumulates on the draft is
+ * an edited description rather than a pile of appended complaints.
+ */
+function DraftMedia({
+    draft,
+    onRefreshed,
+}: {
+    draft: Draft;
+    onRefreshed: OnRefreshed;
+}) {
+    const [note, setNote] = useState('');
+    const [pending, setPending] = useState<
+        'drawing' | 'choosing' | 'uploading' | null
+    >(null);
+    const variants = draft.assets.filter((asset) => !asset.chosen);
+    const notes = Array.isArray(draft.payload?.visual_notes)
+        ? (draft.payload.visual_notes as Array<{ said: string }>)
+        : [];
+
+    async function draw(count: number) {
+        setPending('drawing');
+
+        const result = await postJson<unknown>(revise(draft.id).url, {
+            instruction: note.trim() === '' ? null : note.trim(),
+            variants: count,
+        });
+
+        setPending(null);
+
+        if (!result.ok) {
+            toast.error(result.message);
+
+            return;
+        }
+
+        setNote('');
+        // The page polls while an operation is active, so handing the fresh
+        // state back is what makes the pictures appear when the provider is
+        // done rather than on the next manual reload.
+        router.reload({
+            only: ['plan', 'operation'],
+            onSuccess: (page) => {
+                const nextPlan = page.props.plan as Plan | null;
+
+                if (nextPlan !== null) {
+                    onRefreshed(
+                        nextPlan,
+                        page.props.operation as Operation | null,
+                    );
+                }
+            },
+        });
+    }
+
+    async function attach(file: File) {
+        setPending('uploading');
+
+        const body = new FormData();
+        body.append('photo', file);
+
+        const response = await fetch(upload(draft.id).url, {
+            method: 'POST',
+            body,
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+
+        setPending(null);
+
+        if (!response.ok) {
+            const problem = (await response.json().catch(() => null)) as {
+                message?: string;
+            } | null;
+
+            toast.error(
+                problem?.message ?? 'That photograph could not be used.',
+            );
+
+            return;
+        }
+
+        router.reload({
+            only: ['plan'],
+            onSuccess: (page) => {
+                const nextPlan = page.props.plan as Plan | null;
+
+                if (nextPlan !== null) {
+                    onRefreshed(nextPlan, null);
+                }
+            },
+        });
+    }
+
+    async function pick(assetId: string) {
+        setPending('choosing');
+
+        const result = await postJson<unknown>(
+            choose([draft.id, assetId]).url,
+            {},
+        );
+
+        setPending(null);
+
+        if (!result.ok) {
+            toast.error(result.message);
+
+            return;
+        }
+
+        router.reload({
+            only: ['plan'],
+            onSuccess: (page) => {
+                const nextPlan = page.props.plan as Plan | null;
+
+                if (nextPlan !== null) {
+                    onRefreshed(nextPlan, null);
+                }
+            },
+        });
+    }
+
+    return (
+        <div className="mt-3 grid gap-2 border-t pt-3">
+            {variants.length > 0 && (
+                <div className="grid gap-1.5">
+                    <SectionLabel>Other takes</SectionLabel>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                        {variants.map((variant) => (
+                            <button
+                                key={variant.id}
+                                type="button"
+                                disabled={pending !== null}
+                                onClick={() => pick(variant.id)}
+                                title={
+                                    variant.retired
+                                        ? 'Previously used — put it back'
+                                        : 'Use this one'
+                                }
+                                className="relative shrink-0 overflow-hidden rounded-md border transition hover:ring-2 hover:ring-primary disabled:opacity-50"
+                            >
+                                <img
+                                    src={variant.url}
+                                    alt={variant.alt}
+                                    className="h-20 w-auto object-cover"
+                                />
+                                {variant.source === 'uploaded' && (
+                                    <span className="absolute inset-x-0 top-0 bg-primary/90 py-0.5 text-center text-[9px] text-primary-foreground">
+                                        photo
+                                    </span>
+                                )}
+                                {variant.retired && (
+                                    <span className="absolute inset-x-0 bottom-0 bg-background/80 py-0.5 text-center text-[9px]">
+                                        was used
+                                    </span>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <Textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="What is wrong with this picture? e.g. too clean, show the actual residue"
+                rows={2}
+                className="text-xs"
+                disabled={pending !== null}
+            />
+
+            <div className="flex flex-wrap items-center gap-2">
+                {/*
+                  First, and not by accident. A real photograph beats anything
+                  the provider can draw and costs nothing, so it is the option
+                  an operator should reach for before the two that spend money.
+                */}
+                <label className="inline-flex">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        disabled={pending !== null}
+                        onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            event.target.value = '';
+
+                            if (file) {
+                                void attach(file);
+                            }
+                        }}
+                    />
+                    <span className="inline-flex h-8 cursor-pointer items-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent">
+                        {pending === 'uploading'
+                            ? 'Uploading…'
+                            : 'Use a real photo'}
+                    </span>
+                </label>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pending !== null}
+                    onClick={() => draw(1)}
+                >
+                    {pending === 'drawing' ? 'Drawing…' : 'Draw another'}
+                </Button>
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending !== null}
+                    onClick={() => draw(3)}
+                >
+                    Three to choose from
+                </Button>
+                {/* Said before it is spent, not after. */}
+                <span className="text-[10px] text-muted-foreground">
+                    each picture is a paid generation
+                </span>
+            </div>
+
+            {notes.length > 0 && (
+                <ul className="grid gap-1 text-[11px] leading-relaxed text-muted-foreground">
+                    {notes.map((entry, index) => (
+                        <li key={`${entry.said}-${index}`}>· {entry.said}</li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
+function DraftPreview({
+    draft,
+    onRefreshed,
+}: {
+    draft: Draft;
+    onRefreshed: OnRefreshed;
+}) {
+    const asset = draft.assets?.find((candidate) => candidate.chosen);
     const format =
         typeof draft.payload?.format === 'string'
             ? draft.payload.format
             : 'post';
+    const guardFindings = Array.isArray(draft.payload?.guard_findings)
+        ? (draft.payload.guard_findings as Array<{
+              code: string;
+              detail: string;
+          }>)
+        : [];
+    const factCheck = draft.payload?.fact_check as
+        { passed: boolean; findings: string[] } | undefined;
 
     return (
         <article className="min-w-0 overflow-hidden rounded-xl border bg-background">
             {asset && (
-                <div className="aspect-[1.91/1] overflow-hidden border-b bg-muted">
+                // The asset's own shape, not a fixed 1.91:1 box. Each channel
+                // now renders its own crop — 4:5 on Instagram, square on
+                // Threads — and cropping them all back to an Open Graph strip
+                // hid the one thing this screen exists to let an operator check.
+                <div className="overflow-hidden border-b bg-muted">
                     <img
                         src={asset.url}
                         alt={asset.alt}
-                        className="size-full object-cover"
+                        width={asset.width ?? undefined}
+                        height={asset.height ?? undefined}
+                        className="h-auto w-full object-contain"
                     />
                 </div>
             )}
@@ -1635,6 +2028,40 @@ function DraftPreview({ draft }: { draft: Draft }) {
                 <p className="mt-3 max-h-52 overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
                     {draft.body}
                 </p>
+
+                {/*
+                  The refusals and the fact-check verdict, which were written
+                  into the payload and shown nowhere. The engine ships a flawed
+                  draft on the argument that an operator can fix what they can
+                  see — an argument that only holds if they can see it.
+                */}
+                {factCheck && !factCheck.passed && (
+                    <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/5 p-2.5">
+                        <p className="text-[11px] font-medium">
+                            Unsupported by the business facts
+                        </p>
+                        <ul className="mt-1 grid gap-1 text-[11px] leading-relaxed text-muted-foreground">
+                            {factCheck.findings.map((finding) => (
+                                <li key={finding}>{finding}</li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
+                {guardFindings.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-2.5">
+                        <p className="text-[11px] font-medium">
+                            Would not publish as written
+                        </p>
+                        <ul className="mt-1 grid gap-1 text-[11px] leading-relaxed text-muted-foreground">
+                            {guardFindings.map((finding) => (
+                                <li key={finding.code}>{finding.detail}</li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
+                <DraftMedia draft={draft} onRefreshed={onRefreshed} />
             </div>
         </article>
     );

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\PostKind;
 use App\Models\Concerns\BelongsToProject;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
@@ -21,6 +22,7 @@ use Illuminate\Support\Carbon;
  * @property string $idea_key
  * @property string $title
  * @property string $pillar
+ * @property PostKind $kind
  * @property string $thesis
  * @property list<string> $evidence
  * @property string $goal
@@ -40,6 +42,7 @@ class ContentIdea extends Model
         'idea_key',
         'title',
         'pillar',
+        'kind',
         'thesis',
         'evidence',
         'goal',
@@ -86,9 +89,19 @@ class ContentIdea extends Model
         return $production;
     }
 
+    /**
+     * Carousel or one picture, decided by what the post is.
+     *
+     * This used to read `$this->scheduled_for->day % 2 === 0`: a carousel on
+     * even days. Nothing about the idea entered into it, so a refinement that
+     * moved a post from the 12th to the 13th silently turned a carousel into a
+     * single image, and a step-by-step guide landing on an odd date shipped as
+     * one picture with the steps buried in the caption. {@see PostKind} answers
+     * the question the date was standing in for.
+     */
     public function instagramFormat(): string
     {
-        return $this->scheduled_for->day % 2 === 0 ? 'carousel' : 'image';
+        return $this->kind->instagramFormat();
     }
 
     /** @return array<string, string> */
@@ -96,6 +109,7 @@ class ContentIdea extends Model
     {
         return [
             'proposal_version' => 'integer',
+            'kind' => PostKind::class,
             'evidence' => 'array',
             'channels' => 'array',
             'scheduled_for' => 'date',

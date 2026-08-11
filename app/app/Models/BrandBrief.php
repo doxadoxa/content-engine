@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToProject;
+use App\Support\Brand\VisualStyle;
 use App\Support\Tenancy\CurrentProject;
 use Database\Factories\BrandBriefFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -30,6 +31,10 @@ use Illuminate\Support\Facades\DB;
  * @property string $audience
  * @property string $tone
  * @property string $visual_language
+ * @property string $brand_colour
+ * @property string $brand_ink
+ * @property string $overlay_position
+ * @property string $overlay_case
  * @property list<string> $forbidden_topics
  * @property list<string> $examples_liked
  * @property list<string> $examples_disliked
@@ -53,6 +58,24 @@ class BrandBrief extends Model
         'visual_language',
     ];
 
+    /**
+     * The look as values a renderer draws with, beside the prose above.
+     *
+     * Their own group because they are neither free text nor a list: each has a
+     * constrained set of legal values, and {@see VisualStyle} is what enforces
+     * them at the point of use. They are still CONTENT_FIELDS, so a change to
+     * the brand colour makes a new version like any other edit — which is what
+     * lets a post published last month say what colour it was made in.
+     *
+     * @var list<string>
+     */
+    public const array VISUAL_FIELDS = [
+        'brand_colour',
+        'brand_ink',
+        'overlay_position',
+        'overlay_case',
+    ];
+
     /** @var list<string> */
     public const array LIST_FIELDS = [
         'forbidden_topics',
@@ -70,6 +93,7 @@ class BrandBrief extends Model
      */
     public const array CONTENT_FIELDS = [
         ...self::TEXT_FIELDS,
+        ...self::VISUAL_FIELDS,
         ...self::LIST_FIELDS,
     ];
 
@@ -83,6 +107,10 @@ class BrandBrief extends Model
         'audience' => '',
         'tone' => '',
         'visual_language' => '',
+        'brand_colour' => VisualStyle::DEFAULT_COLOUR,
+        'brand_ink' => VisualStyle::DEFAULT_INK,
+        'overlay_position' => VisualStyle::DEFAULT_POSITION,
+        'overlay_case' => VisualStyle::DEFAULT_CASE,
         'forbidden_topics' => '[]',
         'examples_liked' => '[]',
         'examples_disliked' => '[]',
@@ -248,11 +276,27 @@ class BrandBrief extends Model
             $clean[$field] = match (true) {
                 $value !== null => $value,
                 in_array($field, self::LIST_FIELDS, true) => [],
+                // Clearing a colour or a corner means "back to the house
+                // value", not "no value". A renderer with an empty string for
+                // a fill draws nothing, and the operator who blanked the field
+                // meant to undo their choice rather than to break the panel.
+                in_array($field, self::VISUAL_FIELDS, true) => self::visualDefault($field),
                 default => '',
             };
         }
 
         return $clean;
+    }
+
+    /** The house value for a visual field an operator cleared. */
+    private static function visualDefault(string $field): string
+    {
+        return match ($field) {
+            'brand_colour' => VisualStyle::DEFAULT_COLOUR,
+            'brand_ink' => VisualStyle::DEFAULT_INK,
+            'overlay_position' => VisualStyle::DEFAULT_POSITION,
+            default => VisualStyle::DEFAULT_CASE,
+        };
     }
 
     /**

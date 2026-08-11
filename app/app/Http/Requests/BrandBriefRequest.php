@@ -35,6 +35,16 @@ class BrandBriefRequest extends FormRequest
             'tone' => ['nullable', 'string', 'max:5000'],
             'visual_language' => ['nullable', 'string', 'max:5000'],
 
+            // Validated here as well as in VisualStyle, and the two are not
+            // redundant. This one tells an operator that what they typed is
+            // not a colour, at the moment they typed it; that one keeps a
+            // renderer running when a bad value reaches it anyway — from a
+            // seeder, the console, or a row written before this rule existed.
+            'brand_colour' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
+            'brand_ink' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
+            'overlay_position' => ['nullable', 'string', 'in:top,centre,bottom'],
+            'overlay_case' => ['nullable', 'string', 'in:sentence,upper'],
+
             'forbidden_topics' => ['array', 'max:100'],
             'forbidden_topics.*' => ['string', 'max:500'],
             'examples_liked' => ['array', 'max:100'],
@@ -57,6 +67,10 @@ class BrandBriefRequest extends FormRequest
     {
         return [
             'visual_language' => 'visual language',
+            'brand_colour' => 'brand colour',
+            'brand_ink' => 'text colour on the brand colour',
+            'overlay_position' => 'overlay position',
+            'overlay_case' => 'overlay case',
             'forbidden_topics' => 'topics to avoid',
             'examples_liked' => 'good examples',
             'examples_disliked' => 'bad examples',

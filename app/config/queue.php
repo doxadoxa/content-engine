@@ -95,9 +95,12 @@ return [
              * and a two-phase publish has no equivalent protection — a
              * duplicated Threads job is a duplicated post.
              *
-             * Raise this whenever a supervisor's timeout goes up.
+             * Raise this whenever a supervisor's timeout goes up. It went up:
+             * `pipeline-expensive` is 2100 now, because two steps on that queue
+             * were asking for longer than the worker allowed and losing. 2700
+             * keeps the same margin over it that 1200 kept over 900.
              */
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 1_200),
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 2_700),
             'block_for' => null,
             'after_commit' => false,
         ],

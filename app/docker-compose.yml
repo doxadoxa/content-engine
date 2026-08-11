@@ -42,6 +42,11 @@ services:
       APP_KEY: base64:qO3H1n8cJt5vX2bK9wR4dM7gY0sT6uA1eL5pN8iZ3Fc=
       LOG_CHANNEL: stderr
 
+      # Inside the compose network. Absent in production until the service is
+      # deployed there, and PanelRenderer treats absent as "not configured"
+      # rather than as an error.
+      RENDERER_URL: "${RENDERER_URL:-http://renderer:3020}"
+
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432
@@ -95,6 +100,27 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+
+  # Draws the panels a teaching carousel is made of, and the seam video will
+  # arrive through. Not published to the host: it is an unauthenticated browser
+  # that renders whatever HTML it is handed, and it is safe only because nothing
+  # outside this network can reach it.
+  renderer:
+    build:
+      # The app root, so the image can take the brand's typeface from
+      # resources/fonts rather than keeping a second copy of it.
+      context: .
+      dockerfile: docker/renderer/Dockerfile
+    image: content-engine-renderer:dev
+    environment:
+      RENDERER_PORT: 3020
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3020/up').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # Bundling happens once at boot and takes a while on a cold image.
+      start_period: 120s
 
   horizon:
     build:

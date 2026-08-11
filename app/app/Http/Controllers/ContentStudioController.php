@@ -9,19 +9,25 @@ use App\ContentStudio\ContentStudioAssistant;
 use App\ContentStudio\ContentStudioConflict;
 use App\ContentStudio\ContentStudioException;
 use App\ContentStudio\ContentStudioOperations;
+use App\Enums\AssetRole;
+use App\Enums\ChannelType;
 use App\Enums\PipelineRunStatus;
+use App\Media\UploadedPicture;
+use App\Models\Asset;
 use App\Models\ContentIdea;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Definitions\ContentStudioPipeline;
+use App\Support\Social\ChannelPlaybook;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
+use RuntimeException;
 use Throwable;
 
 /** The hybrid assistant + artifact workspace for one project-month. */
@@ -130,6 +136,101 @@ class ContentStudioController extends Controller
         }
     }
 
+    /**
+     * Draw this draft another picture, optionally after being told what is wrong.
+     *
+     * Queued like every other model action here. The response carries the
+     * operation so the screen can show that something is being drawn rather
+     * than appearing to do nothing for forty seconds.
+     */
+    public function reviseImage(Request $request, ContentItem $item): JsonResponse
+    {
+        $validated = $request->validate([
+            'instruction' => ['nullable', 'string', 'max:2000'],
+            'variants' => ['nullable', 'integer', 'min:1', 'max:3'],
+        ]);
+
+        $plan = $item->contentPlan;
+
+        if ($plan === null) {
+            return response()->json(['message' => 'That draft does not belong to a plan.'], 422);
+        }
+
+        $run = $this->operations->start($this->project(), $plan, ContentStudioAction::ReviseImage, [
+            'content_item_id' => (string) $item->getKey(),
+            'instruction' => $validated['instruction'] ?? null,
+            'variants' => $validated['variants'] ?? 1,
+        ]);
+
+        return response()->json([
+            'plan' => $this->planProps($plan->refresh()),
+            'operation' => $this->operationProps($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Take a photograph an operator actually took.
+     *
+     * No queue and no provider: there is nothing to wait for, and a person who
+     * has just chosen a file from their machine should see it appear rather
+     * than watch a spinner. It lands as a candidate rather than as the picture
+     * — choosing stays one deliberate act, whatever the source.
+     */
+    public function uploadImage(Request $request, ContentItem $item): JsonResponse
+    {
+        $request->validate([
+            'photo' => ['required', 'file', 'image', 'max:12288'],
+        ]);
+
+        $plan = $item->contentPlan;
+
+        if ($plan === null) {
+            return response()->json(['message' => 'That draft does not belong to a plan.'], 422);
+        }
+
+        $channel = ChannelType::tryFrom((string) $item->channel_type);
+
+        if ($channel === null) {
+            return response()->json(['message' => 'That draft is not a social post.'], 422);
+        }
+
+        try {
+            app(UploadedPicture::class)->store(
+                $item,
+                $request->file('photo'),
+                ChannelPlaybook::for($channel),
+            );
+        } catch (RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['plan' => $this->planProps($plan->refresh())]);
+    }
+
+    /**
+     * Make one of the candidates the picture this draft ships.
+     *
+     * Synchronous on purpose. There is no model and no provider in this path —
+     * the decision was made by the person clicking — and queueing it would mean
+     * an operator watching a spinner to record their own choice.
+     */
+    public function chooseImage(ContentItem $item, Asset $asset): JsonResponse
+    {
+        $plan = $item->contentPlan;
+
+        if ($plan === null) {
+            return response()->json(['message' => 'That draft does not belong to a plan.'], 422);
+        }
+
+        try {
+            app(ContentStudioAssistant::class)->chooseImage($item, $asset);
+        } catch (ContentStudioException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['plan' => $this->planProps($plan->refresh())]);
+    }
+
     public function generate(
         ContentPlan $plan,
     ): JsonResponse {
@@ -175,6 +276,8 @@ class ContentStudioController extends Controller
                 : match ($action) {
                     ContentStudioAction::Refine => 'The assistant could not refine this proposal right now.',
                     ContentStudioAction::Generate => 'The assistant could not generate this batch right now.',
+                    ContentStudioAction::GenerateIdea => 'The assistant could not draft one of this week\'s ideas.',
+                    ContentStudioAction::ReviseImage => 'The picture could not be drawn right now.',
                     default => 'The assistant could not build a proposal right now.',
                 };
         }
@@ -204,7 +307,7 @@ class ContentStudioController extends Controller
         $draftsByKey = ContentItem::query()
             ->where('content_plan_id', $plan->getKey())
             ->whereNotNull('content_idea_id')
-            ->with(['contentIdea', 'assets'])
+            ->with(['contentIdea', 'everyAsset'])
             ->orderBy('channel_type')
             ->get()
             ->filter(static fn (ContentItem $item): bool => $item->contentIdea !== null)
@@ -233,6 +336,8 @@ class ContentStudioController extends Controller
                 'key' => $idea->idea_key,
                 'date' => $idea->scheduled_for->toDateString(),
                 'title' => $idea->title,
+                'kind' => $idea->kind->value,
+                'kind_label' => $idea->kind->label(),
                 'pillar' => $idea->pillar,
                 'thesis' => $idea->thesis,
                 'evidence' => $idea->evidence,
@@ -248,13 +353,48 @@ class ContentStudioController extends Controller
                         'body' => $item->body_markdown,
                         'payload' => $item->channel_payload,
                         'state' => $item->state->value,
-                        'assets' => $item->assets->map(static fn ($asset): array => [
-                            'id' => $asset->getKey(),
-                            'url' => $asset->url(),
-                            'alt' => $asset->alt,
-                            'width' => $asset->width,
-                            'height' => $asset->height,
-                        ])->values()->all(),
+                        // A carousel's panels, in the order they are published.
+                        // Kept apart from the candidates below: these are the
+                        // post's sequence, not alternatives to one picture, and
+                        // showing them in the "other takes" strip would invite
+                        // an operator to choose slide four as the cover.
+                        'slides' => $item->everyAsset
+                            ->filter(static fn ($asset): bool => $asset->role === AssetRole::Inline
+                                && $asset->superseded_at === null)
+                            ->sortBy('anchor')
+                            ->map(static fn ($asset): array => [
+                                'id' => $asset->getKey(),
+                                'url' => $asset->url(),
+                                'alt' => $asset->alt,
+                            ])->values()->all(),
+                        // Every picture the draft has, not only the one it
+                        // ships: the review screen is where an operator chooses
+                        // between them, and a candidate it cannot see is a
+                        // candidate that may as well not have been drawn.
+                        // everyAsset, not assets: the relation filters out
+                        // superseded rows, and choosing a candidate retires the
+                        // one it replaced. Reading the filtered relation made
+                        // the replaced picture vanish the moment it was
+                        // replaced, so "put back the one you rejected" — the
+                        // reason AssetRole::Variant retires instead of
+                        // deleting — was unreachable.
+                        'assets' => $item->everyAsset
+                            ->reject(static fn ($asset): bool => $asset->role === AssetRole::Inline)
+                            ->sortBy(static fn ($asset): array => [
+                                $asset->isHero() ? 0 : 1,
+                                $asset->superseded_at === null ? 0 : 1,
+                                (string) $asset->getKey(),
+                            ])
+                            ->map(static fn ($asset): array => [
+                                'id' => $asset->getKey(),
+                                'url' => $asset->url(),
+                                'alt' => $asset->alt,
+                                'width' => $asset->width,
+                                'height' => $asset->height,
+                                'chosen' => $asset->isHero(),
+                                'retired' => $asset->superseded_at !== null,
+                                'source' => $asset->source->value,
+                            ])->values()->all(),
                     ],
                 )->values()->all(),
             ])->values()->all(),

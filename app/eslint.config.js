@@ -149,6 +149,20 @@ export default [
     },
     prettier,
     {
+        // The panel renderer is a Node service, not part of the browser bundle.
+        // It lives in the repo so its React templates can use the app's own
+        // typeface and design decisions, but `process` and `Buffer` are the
+        // globals it actually runs against.
+        files: ['docker/renderer/**/*.{js,mjs,jsx}'],
+        languageOptions: {
+            globals: {
+                process: 'readonly',
+                Buffer: 'readonly',
+                console: 'readonly',
+            },
+        },
+    },
+    {
         plugins: {
             '@stylistic': stylistic,
         },

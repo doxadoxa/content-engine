@@ -146,9 +146,12 @@ final class StepContext implements ModelSession
      * there is exactly one place to buy a picture, so there is exactly one
      * return value to follow.
      */
-    public function spend(int $costMicros, string $provider, string $model): void
+    public function spend(int $costMicros, ?string $provider, ?string $model): void
     {
-        if ($costMicros <= 0) {
+        // Nullable because a picture the engine did not buy — one already on
+        // the unit, or borrowed from a sibling locale — reports no provider and
+        // no model. Those cost nothing and must not reach the cost rows.
+        if ($costMicros <= 0 || $provider === null || $model === null) {
             return;
         }
 
