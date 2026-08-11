@@ -258,10 +258,28 @@ return [
             'maxJobs' => 0,
             'memory' => 512,
             'tries' => 1,
-            // Comfortably past a step's own timeout, so a wedged step is
-            // recovered by the runner's stale claim rather than by the queue
-            // killing the job first and racing that takeover.
-            'timeout' => 900,
+            // Comfortably past the *longest* step that runs here, which is the
+            // part that had quietly stopped being true.
+            //
+            // A step's own timeout is a deadline the pipeline enforces: it marks
+            // the step failed and records why. This one is a signal — the
+            // process stops and no PHP runs afterwards, so nothing is recorded.
+            // Whichever is smaller is the one that actually decides, and when
+            // that is this one the step's timeout is not a setting, it is a
+            // promise with nobody to keep it.
+            //
+            // It had drifted below two steps at once. AskAssistants asks for
+            // 1800 and its docblock explains that a shorter deadline kills a
+            // paid sweep half way and pays for it twice — which is exactly what
+            // 900 was doing to it. ApplyContentStudioAction asked for 900, a tie
+            // with this number, so which fired first was a coin toss.
+            //
+            // 2100 clears the longest (1800) with room. The cost is real and
+            // worth stating: a genuinely wedged step now occupies the single
+            // expensive worker for thirty-five minutes instead of fifteen.
+            // PipelineTimeoutChainTest asserts the ordering so the next person
+            // to raise a step timeout finds out here rather than in production.
+            'timeout' => 2100,
             'nice' => 0,
         ],
     ],

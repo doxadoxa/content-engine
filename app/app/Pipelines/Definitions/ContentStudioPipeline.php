@@ -43,6 +43,10 @@ class ContentStudioPipeline implements PipelineDefinition
             'expected_version' => ['nullable', 'integer', 'min:1', 'required_if:action,refine'],
             'message' => ['nullable', 'string', 'max:5000', 'required_if:action,refine'],
             'initial' => ['nullable', 'boolean'],
+            'content_idea_id' => ['nullable', 'string', 'ulid', 'required_if:action,generate_idea'],
+            'content_item_id' => ['nullable', 'string', 'ulid', 'required_if:action,revise_image'],
+            'instruction' => ['nullable', 'string', 'max:2000'],
+            'variants' => ['nullable', 'integer', 'min:1', 'max:3'],
         ];
     }
 }

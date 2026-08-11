@@ -32,9 +32,21 @@ abstract class AbstractStep implements Step
         return $backoff;
     }
 
+    /**
+     * How long this step may run, defaulted from the queue it runs on.
+     *
+     * Per queue rather than one number, because the two pools are deliberately
+     * an order of magnitude apart and a step's deadline is only meaningful
+     * under its worker's. A single 300 sat above the cheap worker's 120, so
+     * every step that did not override this was stopped by a signal instead of
+     * failing with a reason. `PipelineTimeoutChainTest`
+     * holds the relation.
+     */
     public function timeout(): int
     {
-        return (int) config('pipeline.defaults.timeout', 300);
+        $perQueue = (array) config('pipeline.defaults.timeouts', []);
+
+        return (int) ($perQueue[$this->queue()] ?? config('pipeline.defaults.timeout', 300));
     }
 
     public function queue(): string

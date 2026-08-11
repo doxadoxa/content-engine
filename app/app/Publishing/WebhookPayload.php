@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Publishing;
 
+use App\Enums\AssetRole;
 use App\Enums\WebhookEvent;
 use App\Models\Asset;
 use App\Models\ContentItem;
@@ -115,6 +116,11 @@ final class WebhookPayload
     {
         /** @var list<array<string, mixed>> $images */
         $images = $unit->assets()
+            // What the post ships, not what it was choosing between. Variants
+            // are live rows until one is promoted, so without this every
+            // rejected candidate went out in the payload and a receiver
+            // rendering `images` attached the drafts nobody picked.
+            ->whereIn('role', [AssetRole::Hero, AssetRole::Inline])
             ->orderBy('role')
             ->get()
             ->map(static fn (Asset $asset): array => [

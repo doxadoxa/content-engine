@@ -31,6 +31,10 @@ type BriefContent = {
     audience: string;
     tone: string;
     visual_language: string;
+    brand_colour: string;
+    brand_ink: string;
+    overlay_position: string;
+    overlay_case: string;
     forbidden_topics: string[];
     examples_liked: string[];
     examples_disliked: string[];
@@ -211,6 +215,112 @@ export default function BrandBriefEdit({ brief, versions }: Props) {
                                             />
                                         </div>
                                     ))}
+                                </CardContent>
+                            </Card>
+
+                            <Card className={workspacePanelClass}>
+                                <CardHeader>
+                                    <CardTitle>Look</CardTitle>
+                                    <CardDescription>
+                                        The part something draws with rather
+                                        than reads. Visual language above tells
+                                        an image model what to make; these tell
+                                        the engine what colour to fill and where
+                                        to put the words when it lays out a
+                                        panel itself.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="grid gap-4 sm:grid-cols-2">
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="brand_colour">
+                                            Brand colour
+                                        </Label>
+                                        <input
+                                            id="brand_colour"
+                                            name="brand_colour"
+                                            type="color"
+                                            defaultValue={
+                                                brief?.brand_colour ?? '#1a1a2e'
+                                            }
+                                            disabled={!isOwner}
+                                            className="h-9 w-full rounded-md border bg-background px-1"
+                                        />
+                                        <InputError
+                                            message={errors.brand_colour}
+                                        />
+                                    </div>
+
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="brand_ink">
+                                            Text on that colour
+                                        </Label>
+                                        <input
+                                            id="brand_ink"
+                                            name="brand_ink"
+                                            type="color"
+                                            defaultValue={
+                                                brief?.brand_ink ?? '#ffffff'
+                                            }
+                                            disabled={!isOwner}
+                                            className="h-9 w-full rounded-md border bg-background px-1"
+                                        />
+                                        <InputError
+                                            message={errors.brand_ink}
+                                        />
+                                    </div>
+
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="overlay_position">
+                                            Where words sit
+                                        </Label>
+                                        <select
+                                            id="overlay_position"
+                                            name="overlay_position"
+                                            defaultValue={
+                                                brief?.overlay_position ??
+                                                'bottom'
+                                            }
+                                            disabled={!isOwner}
+                                            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                                        >
+                                            <option value="top">Top</option>
+                                            <option value="centre">
+                                                Centre
+                                            </option>
+                                            <option value="bottom">
+                                                Bottom
+                                            </option>
+                                        </select>
+                                        <InputError
+                                            message={errors.overlay_position}
+                                        />
+                                    </div>
+
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="overlay_case">
+                                            How they are cased
+                                        </Label>
+                                        <select
+                                            id="overlay_case"
+                                            name="overlay_case"
+                                            defaultValue={
+                                                brief?.overlay_case ??
+                                                'sentence'
+                                            }
+                                            disabled={!isOwner}
+                                            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                                        >
+                                            <option value="sentence">
+                                                Sentence case
+                                            </option>
+                                            <option value="upper">
+                                                UPPERCASE
+                                            </option>
+                                        </select>
+                                        <InputError
+                                            message={errors.overlay_case}
+                                        />
+                                    </div>
                                 </CardContent>
                             </Card>
 

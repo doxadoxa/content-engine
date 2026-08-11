@@ -23,6 +23,18 @@ class FakeImageGeneration implements ImageGenerationProvider
     /** @var list<string> */
     private array $prompts = [];
 
+    /**
+     * Everything each call was given, not only its prompt.
+     *
+     * The size and the reference list are decisions the callers make per
+     * channel, and a suite that could only see the prompt could not tell a
+     * 1080×1350 Instagram picture from the 1200×630 Open Graph card that used
+     * to be sent for every post.
+     *
+     * @var list<array{prompt: string, references: list<string>, options: array<string, mixed>}>
+     */
+    private array $calls = [];
+
     /** After this many images, refuse — the exhausted-balance case. */
     private ?int $failAfter = null;
 
@@ -47,6 +59,7 @@ class FakeImageGeneration implements ImageGenerationProvider
         }
 
         $this->prompts[] = $prompt;
+        $this->calls[] = ['prompt' => $prompt, 'references' => $references, 'options' => $options];
 
         $path = 'generated/'.Str::random(24).'.webp';
 
@@ -80,5 +93,11 @@ class FakeImageGeneration implements ImageGenerationProvider
     public function prompts(): array
     {
         return $this->prompts;
+    }
+
+    /** @return list<array{prompt: string, references: list<string>, options: array<string, mixed>}> */
+    public function calls(): array
+    {
+        return $this->calls;
     }
 }

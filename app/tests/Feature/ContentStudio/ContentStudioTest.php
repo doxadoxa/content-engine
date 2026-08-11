@@ -7,10 +7,21 @@ namespace Tests\Feature\ContentStudio;
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
 use App\Ai\ModelCatalog;
+use App\Ai\ModelRequest;
+use App\Ai\UnmeteredSession;
+use App\ContentStudio\ContentStudioAssistant;
+use App\Enums\AssetRole;
+use App\Enums\AssetSource;
 use App\Enums\ContentItemState;
+use App\Enums\ContentItemType;
 use App\Enums\ContentPlanStatus;
 use App\Enums\PipelineRunStatus;
 use App\Enums\PipelineStepStatus;
+use App\Enums\PostKind;
+use App\Enums\WebhookEvent;
+use App\Media\Contracts\ImageGenerationProvider;
+use App\Media\FakeImageGeneration;
+use App\Models\Asset;
 use App\Models\BrandBrief;
 use App\Models\ContentIdea;
 use App\Models\ContentItem;
@@ -23,11 +34,16 @@ use App\Models\User;
 use App\Pipelines\Core\PipelineRunner;
 use App\Pipelines\Definitions\ContentStudioPipeline;
 use App\Pipelines\Jobs\RunStepJob;
+use App\Publishing\WebhookPayload;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -40,11 +56,21 @@ final class ContentStudioTest extends TestCase
 
     private Project $project;
 
+    private FakeImageGeneration $images;
+
+    /** Flipped mid-test, so it is a property rather than a captured local. */
+    private bool $failsOnTheSecondIdea = false;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         Carbon::setTestNow('2026-08-09 10:00:00');
+
+        // Held rather than resolved on demand, so the assertions can read what
+        // each channel's picture was actually asked for.
+        $this->images = new FakeImageGeneration;
+        $this->app->instance(ImageGenerationProvider::class, $this->images);
 
         $this->operator = User::factory()->create();
         $this->project = Project::factory()->create([
@@ -159,22 +185,33 @@ final class ContentStudioTest extends TestCase
             ->assertJsonPath('plan.accepted', false)
             ->assertJsonPath('plan.strategy.site_facts.0.source', 'site analysis')
             ->assertJsonCount(4, 'plan.ideas')
-            ->assertJsonPath('plan.ideas.0.channels', ['threads', 'x', 'instagram'])
-            ->assertJsonPath('plan.ideas.0.production.threads', [
-                'format' => 'post',
-                'visual' => 'image',
+            // The fixture asked for all three on every idea. The engine gives
+            // each one the two channels its kind is native to — a how_to has
+            // nothing to say on Threads that is not better said as an opinion,
+            // and an opinion has nothing to photograph.
+            ->assertJsonPath('plan.ideas.0.kind', 'how_to')
+            ->assertJsonPath('plan.ideas.0.channels', ['instagram', 'x'])
+            ->assertJsonPath('plan.ideas.1.kind', 'take')
+            ->assertJsonPath('plan.ideas.1.channels', ['threads', 'x'])
+            ->assertJsonPath('plan.ideas.2.kind', 'proof')
+            ->assertJsonPath('plan.ideas.2.channels', ['instagram', 'threads'])
+            // Teaching is the carousel, and it is the carousel on whichever day
+            // it falls. This used to be decided by whether the date was even.
+            ->assertJsonPath('plan.ideas.0.production.instagram', [
+                'format' => 'carousel',
+                'visual' => 'slides',
             ])
             ->assertJsonPath('plan.ideas.0.production.x', [
                 'format' => 'post_or_thread',
                 'visual' => 'image',
             ])
-            ->assertJsonPath('plan.ideas.0.production.instagram', [
+            ->assertJsonPath('plan.ideas.2.production.instagram', [
                 'format' => 'image_post',
                 'visual' => 'image',
             ])
-            ->assertJsonPath('plan.ideas.1.production.instagram', [
-                'format' => 'carousel',
-                'visual' => 'slides',
+            ->assertJsonPath('plan.ideas.1.production.threads', [
+                'format' => 'post',
+                'visual' => 'image',
             ]);
 
         $this->assertStringContainsString('persistance.io', $fake->lastRequest()->prompt);
@@ -237,6 +274,60 @@ final class ContentStudioTest extends TestCase
                 ->where('by_step.0.step_key', 'apply_content_studio_action')
                 ->where('by_step.0.runs', 1)
             );
+    }
+
+    #[Test]
+    public function a_month_of_nothing_but_tips_is_sent_back_before_it_is_stored(): void
+    {
+        $fake = $this->fakeModel([
+            // Twenty how-tos: exactly the plan this release was written about.
+            $this->proposal(kinds: ['how_to']),
+            $this->proposal(kinds: ['how_to', 'take', 'proof', 'behind']),
+        ]);
+
+        $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->assertStatus(202)
+            ->assertJsonPath('plan.version', 1);
+
+        $this->assertSame(2, $fake->callCount());
+        $this->assertStringContainsString(
+            'no take',
+            $fake->lastRequest()->prompt,
+            'The second ask has to carry what was wrong with the first.',
+        );
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $kinds = ContentIdea::query()->orderBy('scheduled_for')->pluck('kind')->all();
+
+            $this->assertSame(
+                [PostKind::HowTo, PostKind::Take, PostKind::Proof, PostKind::Behind],
+                $kinds,
+            );
+        });
+    }
+
+    #[Test]
+    public function a_month_that_stays_unbalanced_is_proposed_with_the_imbalance_recorded(): void
+    {
+        // Both asks come back the same. An operator who clicks Propose and gets
+        // nothing cannot act; an imbalance they can see, they can refine.
+        $this->fakeModel([
+            $this->proposal(kinds: ['how_to']),
+            $this->proposal(kinds: ['how_to']),
+        ]);
+
+        $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->assertStatus(202)
+            ->assertJsonPath('plan.version', 1);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $plan = ContentPlan::query()->firstOrFail();
+            $findings = $plan->assistant_strategy['mix_findings'] ?? [];
+
+            $this->assertNotSame([], $findings);
+            $this->assertStringContainsString('no take', $findings[0]);
+            $this->assertSame(4, ContentIdea::query()->count());
+        });
     }
 
     #[Test]
@@ -306,9 +397,9 @@ final class ContentStudioTest extends TestCase
     }
 
     #[Test]
-    public function onboarding_can_generate_one_three_channel_preview_before_plan_acceptance(): void
+    public function onboarding_can_generate_one_preview_idea_before_plan_acceptance(): void
     {
-        $this->fakeModel([$this->proposal(), $this->drafts()]);
+        $this->fakeStudio();
 
         $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
             ->json('plan.id');
@@ -328,7 +419,10 @@ final class ContentStudioTest extends TestCase
             $items = ContentItem::query()->with('assets')->get();
 
             $this->assertFalse($plan->hasAcceptedAssistantVersion());
-            $this->assertCount(3, $items);
+            // Two, not three: the preview idea is a how_to, and teaching goes
+            // to Instagram and X. An idea that reached all three channels was
+            // the cross-posting this release stopped producing.
+            $this->assertCount(2, $items);
             $this->assertTrue($items->every(
                 static fn (ContentItem $item): bool => $item->assets->count() === 1,
             ));
@@ -341,11 +435,9 @@ final class ContentStudioTest extends TestCase
     #[Test]
     public function generation_stops_at_native_reviewable_drafts_for_the_next_week(): void
     {
-        $this->fakeModel([
+        $this->fakeStudio([
             $this->proposal(),
-            $this->drafts(),
             $this->proposal('The remaining month now focuses on operator lessons.'),
-            $this->drafts(),
         ]);
 
         $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
@@ -359,25 +451,28 @@ final class ContentStudioTest extends TestCase
 
         $this->postJson("/studio/plans/{$planId}/generate")
             ->assertStatus(202)
-            ->assertJsonPath('operation.result.created', 3)
+            // The fan-out reports what it dispatched, not what the drafting
+            // produced — the drafts are written by a run per idea now.
+            ->assertJsonPath('operation.result.ideas', 2)
             ->assertJsonPath('operation.result.from', '2026-08-03')
             ->assertJsonPath('operation.result.until', '2026-08-09')
-            ->assertJsonCount(3, 'plan.ideas.0.drafts')
+            ->assertJsonCount(2, 'plan.ideas.0.drafts')
             ->assertJsonCount(1, 'plan.ideas.0.drafts.0.assets')
-            ->assertJsonCount(0, 'plan.ideas.1.drafts');
+            ->assertJsonCount(2, 'plan.ideas.1.drafts')
+            ->assertJsonCount(0, 'plan.ideas.2.drafts');
 
         app(CurrentProject::class)->run($this->project, function (): void {
             $items = ContentItem::query()->orderBy('channel_type')->get();
 
-            $this->assertCount(3, $items);
+            $this->assertCount(4, $items);
             $this->assertSame(
-                ['instagram', 'threads', 'x'],
+                ['instagram', 'threads', 'x', 'x'],
                 $items->pluck('channel_type')->all(),
             );
             $this->assertTrue($items->every(
                 static fn (ContentItem $item): bool => $item->state === ContentItemState::Draft,
             ));
-            $this->assertSame('image', $items->first()->channel_payload['format']);
+            $this->assertSame('carousel', $items->first()->channel_payload['format']);
             $this->assertNull($items->first()->published_at);
             $this->assertStringStartsWith('2026-08-', $items->first()->slug);
         });
@@ -390,24 +485,28 @@ final class ContentStudioTest extends TestCase
             'message' => 'Keep week one and make the rest more operational.',
         ])->assertStatus(202)
             ->assertJsonPath('plan.version', 2)
-            ->assertJsonCount(3, 'plan.ideas.0.drafts');
+            ->assertJsonCount(2, 'plan.ideas.0.drafts');
 
         $this->postJson("/studio/plans/{$planId}/accept", ['version' => 2])->assertOk();
         $this->postJson("/studio/plans/{$planId}/generate")
             ->assertStatus(202)
-            ->assertJsonPath('operation.result.created', 3)
-            ->assertJsonCount(3, 'plan.ideas.0.drafts')
-            ->assertJsonCount(3, 'plan.ideas.1.drafts');
+            ->assertJsonPath('operation.result.ideas', 1)
+            ->assertJsonCount(2, 'plan.ideas.0.drafts')
+            ->assertJsonCount(2, 'plan.ideas.1.drafts');
 
         app(CurrentProject::class)->run($this->project, function (): void {
-            $this->assertSame(6, ContentItem::query()->count());
-            $this->assertSame(4, PipelineRun::query()->count());
+            $this->assertSame(6, ContentItem::query()->count());  // 4 + the refined week's 2
+            // Two proposals, two fan-outs, and a run for each idea they
+            // dispatched: seven. A run per idea is the point — the count going
+            // up is what the deadline going down bought.
+            $this->assertSame(7, PipelineRun::query()->count());
             $this->assertSame(2, PipelineRun::query()->where('input->action', 'generate_week')->count());
+            $this->assertSame(3, PipelineRun::query()->where('input->action', 'generate_idea')->count());
             $this->assertSame(
                 'carousel',
                 ContentItem::query()
                     ->where('channel_type', 'instagram')
-                    ->whereDate('scheduled_for', '2026-08-12')
+                    ->whereDate('scheduled_for', '2026-08-03')
                     ->firstOrFail()
                     ->channel_payload['format'],
             );
@@ -474,33 +573,1161 @@ final class ContentStudioTest extends TestCase
     #[Test]
     public function invalid_channel_copy_is_rejected_and_corrected_instead_of_truncated(): void
     {
-        $tooLong = $this->drafts(str_repeat('x', 281));
-        $fake = $this->fakeModel([
-            $this->proposal(),
-            $tooLong,
-            $this->drafts(),
-        ]);
+        $overLong = 0;
+        $corrections = [];
+
+        $fake = $this->fakeStudio(draft: function (ModelRequest $request) use (&$overLong, &$corrections): ?string {
+            if ($this->channelOf($request) !== 'x') {
+                return null;
+            }
+
+            if (str_contains($request->prompt, 'Your previous answer was invalid')) {
+                $corrections[] = $request->prompt;
+
+                return null;
+            }
+
+            // Only the first X candidate comes back over the limit, so the run
+            // shows a correction happening without every candidate needing one.
+            if ($overLong++ > 0) {
+                return null;
+            }
+
+            return $this->candidate($request, str_repeat('x', 281));
+        });
 
         $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
             ->json('plan.id');
         $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
         $this->postJson("/studio/plans/{$planId}/generate")
             ->assertStatus(202)
-            ->assertJsonPath('operation.result.created', 3);
+            ->assertJsonPath('operation.result.ideas', 2);
 
-        $this->assertSame(3, $fake->callCount());
-        $this->assertStringContainsString(
-            'exceeds 280 characters',
-            $fake->lastRequest()->prompt,
-        );
+        // The over-long candidate was sent back with the reason rather than cut
+        // to fit: a truncated post is a post that stops mid-sentence.
+        $this->assertCount(1, $corrections);
+        $this->assertStringContainsString('exceeds 280 characters', $corrections[0]);
+        $this->assertGreaterThan(3, $fake->callCount());
 
         app(CurrentProject::class)->run($this->project, function (): void {
             $x = ContentItem::query()->where('channel_type', 'x')->firstOrFail();
-            $run = PipelineRun::query()->where('input->action', 'generate_week')->firstOrFail();
+            $this->assertSame('A compact X post.', $x->channel_payload['segments'][0]['text']);
+            $this->assertSame([], $x->channel_payload['guard_findings']);
+
+            // The tokens are on the idea's run, not the fan-out's. Dispatching
+            // spends nothing, and §6's per-unit cost is a sum of step rows —
+            // so the rows have to be where the spending happened.
+            $this->assertSame(
+                0,
+                (int) PipelineRun::query()->where('input->action', 'generate_week')->firstOrFail()->cost_micros,
+            );
+
+            foreach (PipelineRun::query()->where('input->action', 'generate_idea')->get() as $run) {
+                $this->assertGreaterThan(0, $run->steps()->firstOrFail()->cost_micros);
+            }
+        });
+    }
+
+    #[Test]
+    public function each_channel_is_written_separately_against_its_own_rules(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $drafts = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $request): bool => $request->role === 'draft',
+        ));
+
+        // Four channel slots across the window's two ideas — a how_to on
+        // Instagram and X, a take on Threads and X — four candidates each. One
+        // call for every channel at once is what produced the paraphrases.
+        $this->assertCount(16, $drafts);
+
+        $byChannel = [];
+
+        foreach ($drafts as $request) {
+            $byChannel[$this->channelOf($request)][] = $request;
+        }
+
+        $this->assertEqualsCanonicalizing(['threads', 'x', 'instagram'], array_keys($byChannel));
+        $this->assertCount(4, $byChannel['threads']);
+        $this->assertCount(8, $byChannel['x']);
+        $this->assertCount(4, $byChannel['instagram']);
+
+        // Each channel is told its own rules, and they are not the same rules.
+        $this->assertStringContainsString('No hashtags at all.', $byChannel['threads'][0]->instructions);
+        $this->assertStringContainsString('One point per post.', $byChannel['x'][0]->instructions);
+        $this->assertStringContainsString(
+            'The first line is the hook',
+            $byChannel['instagram'][0]->instructions,
+        );
+
+        // And the four calls of a pool ask for four different shapes, which is
+        // the only reason a pool is worth ranking.
+        $shapes = array_map(
+            static fn (ModelRequest $request): string => $request->prompt,
+            $byChannel['threads'],
+        );
+
+        // Three rather than four: the channel's list is narrowed to the shapes
+        // the idea's kind can actually take, so an opinion post never spends a
+        // quarter of its pool writing a photo caption.
+        $this->assertCount(3, array_unique($shapes));
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+            $selection = $threads->channel_payload['selection'];
+
+            $this->assertSame(4, $selection['pool']);
+            $this->assertSame(50, $selection['bar']);
+            $this->assertTrue($selection['cleared_bar']);
+            $this->assertContains($selection['angle'], ['question', 'take', 'observation', 'caption']);
+            $this->assertCount(4, $selection['scores']);
+        });
+    }
+
+    #[Test]
+    public function a_candidate_that_could_not_be_published_loses_to_one_that_could(): void
+    {
+        $written = 0;
+
+        $this->fakeStudio(draft: function (ModelRequest $request) use (&$written): ?string {
+            if ($this->channelOf($request) !== 'threads') {
+                return null;
+            }
+
+            // A bare link scores well on nothing and the guard refuses it
+            // outright; it is also the first candidate written, so only the
+            // ranking can keep it out of the draft.
+            return $written++ === 0
+                ? $this->candidate($request, 'https://persistance.io/blog/one')
+                : null;
+        });
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+
+            $this->assertSame(
+                'What should a content pipeline explain before you trust it?',
+                $threads->channel_payload['segments'][0]['text'],
+            );
+            $this->assertSame([], $threads->channel_payload['guard_findings']);
+
+            // The bare link is still in the pool and still scored — it lost on
+            // the ranking rather than being quietly dropped, which is what
+            // makes "the best of four" an honest sentence.
+            $scores = $threads->channel_payload['selection']['scores'];
+
+            $this->assertCount(4, $scores);
+            $this->assertLessThan(50, min($scores));
+        });
+    }
+
+    #[Test]
+    public function a_draft_nothing_could_save_ships_with_its_refusals_attached(): void
+    {
+        // Every candidate is a bare link, so there is no clean one to prefer.
+        $this->fakeStudio(draft: fn (ModelRequest $request): ?string => $this->channelOf($request) === 'threads'
+            ? $this->candidate($request, 'https://persistance.io/blog/one')
+            : null);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+            $findings = $threads->channel_payload['guard_findings'];
+
+            // The draft still exists — the Studio is a review surface, and an
+            // operator shown an empty slot can only re-run and hope — but it
+            // does not arrive looking like a post that passed.
+            $this->assertSame(ContentItemState::Draft, $threads->state);
+            $this->assertNotSame([], $findings);
+            $this->assertContains(
+                'bare_link',
+                array_column($findings, 'code'),
+            );
+            $this->assertFalse($threads->channel_payload['selection']['cleared_bar']);
+        });
+    }
+
+    #[Test]
+    public function an_ordinary_project_is_not_fact_checked(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $this->assertSame(
+            0,
+            count(array_filter(
+                $fake->sent(),
+                static fn (ModelRequest $request): bool => $request->role === 'factcheck',
+            )),
+            '§10 names one kind of project, and a check nobody needs is money spent on latency.',
+        );
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+
+            $this->assertArrayNotHasKey('fact_check', $threads->channel_payload);
+        });
+    }
+
+    #[Test]
+    public function an_invented_figure_is_recorded_against_the_draft_on_a_ymyl_project(): void
+    {
+        $this->project->forceFill(['is_ymyl' => true])->save();
+
+        $this->fakeStudio(
+            factCheck: static fn (ModelRequest $request): ?string => str_contains($request->prompt, 'content pipeline')
+                ? 'The post claims a figure that is not in the supplied facts.'
+                : null,
+        );
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+            $x = ContentItem::query()->where('channel_type', 'x')->firstOrFail();
+
+            $this->assertFalse($threads->channel_payload['fact_check']['passed']);
+            $this->assertSame(
+                ['The post claims a figure that is not in the supplied facts.'],
+                $threads->channel_payload['fact_check']['findings'],
+            );
+            $this->assertTrue($x->channel_payload['fact_check']['passed']);
+        });
+    }
+
+    #[Test]
+    public function a_fact_check_pass_does_not_promote_a_post_the_guard_refused(): void
+    {
+        $this->project->forceFill(['is_ymyl' => true])->save();
+
+        $written = 0;
+
+        $this->fakeStudio(
+            // The clean candidates all state a figure; the bare link states
+            // nothing and so passes every fact check trivially. Walking past
+            // the clean group to find a pass would publish the bare link.
+            draft: function (ModelRequest $request) use (&$written): ?string {
+                if ($this->channelOf($request) !== 'threads') {
+                    return null;
+                }
+
+                return $written++ === 3
+                    ? $this->candidate($request, 'https://persistance.io/blog/one')
+                    : $this->candidate($request, 'We cut 40% of the planner. What would you have cut?');
+            },
+            factCheck: static fn (ModelRequest $request): ?string => str_contains($request->prompt, '40%')
+                ? 'The 40% figure is not in the supplied facts.'
+                : null,
+        );
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+
+            $this->assertStringContainsString('40%', (string) $threads->body_markdown);
+            $this->assertFalse($threads->channel_payload['fact_check']['passed']);
+            $this->assertSame([], $threads->channel_payload['guard_findings']);
+        });
+    }
+
+    #[Test]
+    public function a_carousel_slide_is_checked_like_the_caption_is(): void
+    {
+        app(CurrentProject::class)->run($this->project, function (): void {
+            BrandBrief::revise($this->project, ['forbidden_topics' => ['refunds']], 'No refunds talk.');
+        });
+
+        // An even day, because that is what makes the idea a carousel — see
+        // ContentIdea::instagramFormat().
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ], draft: function (ModelRequest $request): ?string {
+            if ($this->channelOf($request) !== 'instagram') {
+                return null;
+            }
+
+            return (string) json_encode([
+                'caption' => 'A trustworthy content engine shows its work.',
+                'slides' => [
+                    ['heading' => 'The idea', 'body' => 'Decisions should remain inspectable.'],
+                    // The caption is clean; the panel is not. Nothing used to
+                    // read this text at all.
+                    ['heading' => 'The catch', 'body' => 'Ask us about refunds if it does not work.'],
+                ],
+                'visual' => $this->visual(),
+            ]);
+        });
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $instagram = ContentItem::query()->where('channel_type', 'instagram')->firstOrFail();
+
+            $this->assertContains(
+                'forbidden_topic',
+                array_column($instagram->channel_payload['guard_findings'], 'code'),
+            );
+        });
+    }
+
+    #[Test]
+    public function a_link_the_post_was_scored_for_carrying_is_the_link_it_ships_with(): void
+    {
+        $this->fakeStudio(draft: fn (ModelRequest $request): ?string => $this->channelOf($request) === 'threads'
+            ? (string) json_encode([
+                'segments' => ['Our teardown of the pricing change. Does this match what you saw?'],
+                'link' => 'https://persistance.io/blog/pricing',
+                'visual' => $this->visual(),
+            ])
+            : null);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $threads = ContentItem::query()->where('channel_type', 'threads')->firstOrFail();
+
+            // The name a publisher reads. Parsed, scored against and guarded,
+            // and then dropped on the way to storage until this was fixed.
+            $this->assertSame(
+                'https://persistance.io/blog/pricing',
+                $threads->channel_payload['link_attachment'],
+            );
+        });
+    }
+
+    #[Test]
+    public function an_idea_that_will_not_draft_does_not_take_the_week_with_it(): void
+    {
+        $this->fakeStudio(
+            answers: [$this->proposal(dates: ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26'])],
+            draft: function (ModelRequest $request): ?string {
+                if (str_contains($request->instructions, 'Content idea 2')) {
+                    throw new \RuntimeException('the provider refused');
+                }
+
+                return null;
+            },
+        );
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+
+        // The fan-out itself succeeds: dispatching is not drafting.
+        $this->postJson("/studio/plans/{$planId}/generate")
+            ->assertStatus(202)
+            ->assertJsonPath('operation.result.ideas', 2);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            // One idea drafted, one idea's run failed, and the failure is a run
+            // of its own rather than the end of the week. Under the old shape
+            // both ideas lived in one job and the second one's provider error
+            // ended the batch.
+            $this->assertSame(2, ContentItem::query()->count());
+
+            $runs = PipelineRun::query()->where('input->action', 'generate_idea')->get();
+
+            $this->assertCount(2, $runs);
+            $this->assertSame(1, $runs->where('status', PipelineRunStatus::Completed)->count());
+            $this->assertSame(1, $runs->where('status', PipelineRunStatus::Failed)->count());
+        });
+    }
+
+    #[Test]
+    public function the_second_channel_of_an_idea_is_shown_what_the_first_already_said(): void
+    {
+        $prompts = [];
+
+        $this->fakeStudio(draft: function (ModelRequest $request) use (&$prompts): ?string {
+            $prompts[$this->channelOf($request)][] = $request->prompt;
+
+            return null;
+        });
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        // The first channel of an idea has nothing to avoid repeating.
+        $this->assertStringNotContainsString(
+            'already been written for another channel',
+            $prompts['instagram'][0],
+        );
+
+        // The second does, and it is given the text rather than told to differ.
+        // Separate calls alone do not stop two channels arriving at the same
+        // sentence: one thesis and one angle converge.
+        // X is the second channel of the first idea, a how_to, whose first
+        // channel is Instagram.
+        $later = $prompts['x'][0];
+
+        $this->assertStringContainsString('already been written for another channel', $later);
+        $this->assertStringContainsString('A trustworthy content engine shows its work.', $later);
+    }
+
+    #[Test]
+    public function two_channels_of_one_idea_never_take_the_same_shape(): void
+    {
+        $angles = [];
+
+        $this->fakeStudio(draft: function (ModelRequest $request) use (&$angles): ?string {
+            $angles[$this->channelOf($request)][] = $request->prompt;
+
+            return null;
+        });
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $byIdea = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->get()
+                ->groupBy('content_idea_id');
+
+            $this->assertGreaterThan(1, $byIdea->count());
+
+            foreach ($byIdea as $drafts) {
+                $taken = $drafts
+                    ->map(static fn (ContentItem $item): string => (string) ($item->channel_payload['angle'] ?? ''))
+                    ->all();
+
+                // The ranker pays 18 points for a question mark, so without
+                // this the question-shaped candidate won every channel of an
+                // idea and two platforms carried the same sentence.
+                $this->assertSame(
+                    count($taken),
+                    count(array_unique($taken)),
+                    'Two channels of one idea took the same shape: '.implode(', ', $taken),
+                );
+            }
+        });
+    }
+
+    #[Test]
+    public function retrying_one_idea_finishes_that_idea_rather_than_the_week(): void
+    {
+        $this->failsOnTheSecondIdea = true;
+
+        $fake = $this->fakeStudio(
+            answers: [$this->proposal(dates: ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26'])],
+            draft: function (ModelRequest $request): ?string {
+                if ($this->failsOnTheSecondIdea
+                    && str_contains($request->instructions, 'Content idea 2')) {
+                    throw new \RuntimeException('the worker went away');
+                }
+
+                return null;
+            },
+        );
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $failed = app(CurrentProject::class)->run($this->project, static fn (): PipelineRun => PipelineRun::query()
+            ->where('input->action', 'generate_idea')
+            ->where('status', PipelineRunStatus::Failed)
+            ->firstOrFail());
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $this->assertSame(2, ContentItem::query()->count());
+        });
+
+        // The same run, retried — the pipeline retries within a run, so the id
+        // is unchanged. It has one idea to finish, not a week to redo.
+        $this->failsOnTheSecondIdea = false;
+        $fake->willAnswer([]);
+
+        app(CurrentProject::class)->run($this->project, function () use ($failed): void {
+            $idea = ContentIdea::query()->whereKey((string) $failed->input['content_idea_id'])->firstOrFail();
+
+            $result = app(ContentStudioAssistant::class)->generateIdea(
+                $idea,
+                app(UnmeteredSession::class),
+                (string) $failed->getKey(),
+            );
+
+            $this->assertSame(2, $result['created']);
+            $this->assertSame(4, ContentItem::query()->count());
+        });
+    }
+
+    #[Test]
+    public function a_teaching_carousel_gets_a_drawn_panel_for_every_slide(): void
+    {
+        Http::fake(['*/render' => Http::response($this->png(), 200, [
+            'Content-Type' => 'image/png',
+        ])]);
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+
+        // An even day, which is what makes the idea a carousel.
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $carousel = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            $panels = Asset::query()
+                ->where('content_item_id', $carousel->getKey())
+                ->where('role', AssetRole::Inline)
+                ->orderBy('anchor')
+                ->get();
+
+            // The two slides the fixture writes, each its own picture. Until
+            // this existed the steps were caption text under one photograph.
+            $this->assertCount(2, $panels);
+            $this->assertSame(['slide-01', 'slide-02'], $panels->pluck('anchor')->all());
+            $this->assertSame('The idea', $panels->first()->alt);
+            $this->assertSame(AssetSource::Rendered, $panels->first()->source);
+            $this->assertSame(1080, $panels->first()->width);
+            $this->assertSame(1350, $panels->first()->height);
+
+            // And they are the post's sequence, not candidates for its cover.
+            $this->assertSame(
+                AssetSource::Generated,
+                $carousel->assets()->where('role', AssetRole::Hero)->firstOrFail()->source,
+            );
+        });
+
+        Http::assertSent(static fn ($request): bool => str_contains($request->url(), '/render')
+            && $request['props']['total'] === 2
+            && $request['width'] === 1080
+            && $request['height'] === 1350);
+    }
+
+    #[Test]
+    public function a_slide_that_will_not_draw_does_not_lose_the_others(): void
+    {
+        $drawn = 0;
+
+        Http::fake(['*/render' => function () use (&$drawn) {
+            $drawn++;
+
+            return $drawn === 1
+                ? Http::response(['message' => 'the template threw'], 500)
+                : Http::response($this->png(), 200, ['Content-Type' => 'image/png']);
+        }]);
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $carousel = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            // One panel, not zero. A carousel missing a slide is still a
+            // carousel; failing the batch would throw away the ones that drew.
+            $this->assertSame(
+                1,
+                Asset::query()
+                    ->where('content_item_id', $carousel->getKey())
+                    ->where('role', AssetRole::Inline)
+                    ->count(),
+            );
+        });
+    }
+
+    #[Test]
+    public function a_deployment_with_no_renderer_still_writes_the_post(): void
+    {
+        config(['content_studio.renderer.url' => null]);
+        Http::fake();
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $carousel = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            $this->assertNotNull($carousel->body_markdown);
+            $this->assertSame(
+                0,
+                Asset::query()
+                    ->where('content_item_id', $carousel->getKey())
+                    ->where('role', AssetRole::Inline)
+                    ->count(),
+            );
+        });
+
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function an_operator_can_ask_for_other_pictures_without_changing_the_one_it_ships(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->firstOrFail());
+
+        $shipped = app(CurrentProject::class)->run($this->project, static fn (): string => (string) $draft
+            ->assets()->where('role', AssetRole::Hero)->firstOrFail()->getKey());
+
+        $this->postJson("/studio/drafts/{$draft->getKey()}/image", ['variants' => 3])
+            ->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft, $shipped): void {
+            $assets = Asset::query()->where('content_item_id', $draft->getKey())->get();
+
+            $this->assertCount(4, $assets, 'Three candidates beside the one it already had.');
+            $this->assertCount(3, $assets->where('role', AssetRole::Variant));
+
+            // Until somebody picks one, the post still ships what it shipped.
+            $this->assertSame(
+                $shipped,
+                (string) $assets->firstWhere('role', AssetRole::Hero)?->getKey(),
+            );
+        });
+    }
+
+    #[Test]
+    public function a_note_about_a_picture_revises_the_brief_rather_than_the_prompt(): void
+    {
+        $revised = null;
+
+        $this->fakeStudio(draft: function (ModelRequest $request) use (&$revised): ?string {
+            if (! str_contains($request->instructions, 'art director')) {
+                return null;
+            }
+
+            $revised = $request->prompt;
+
+            return (string) json_encode([
+                'subject' => 'limescale crusted around the base of a tap',
+                'light' => 'hard low sun raking across it',
+            ]);
+        });
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->firstOrFail());
+
+        $this->postJson("/studio/drafts/{$draft->getKey()}/image", [
+            'instruction' => 'Too clean. Show the actual residue.',
+        ])->assertStatus(202);
+
+        // The director is shown the brief as it stands, not a growing prompt.
+        $this->assertStringContainsString('Too clean. Show the actual residue.', (string) $revised);
+        $this->assertStringContainsString('a printed content calendar', (string) $revised);
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft): void {
+            $payload = $draft->fresh()->channel_payload;
+
+            $this->assertSame('limescale crusted around the base of a tap', $payload['visual']['subject']);
+            $this->assertSame('hard low sun raking across it', $payload['visual']['light']);
+            // Fields the note said nothing about keep what they had, or a
+            // revision would quietly undo every earlier one.
+            $this->assertSame('a hand crossing out one row and writing a date beside it', $payload['visual']['action']);
+            $this->assertSame('Too clean. Show the actual residue.', $payload['visual_notes'][0]['said']);
+        });
+    }
+
+    #[Test]
+    public function a_real_photograph_can_be_used_and_is_cropped_to_the_channel(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->where('channel_type', 'instagram')
+            ->firstOrFail());
+
+        // A wide photograph on a channel that shows 4:5. Accepting it as it
+        // came would make it the one picture in the set the feed letterboxes.
+        $this->post("/studio/drafts/{$draft->getKey()}/photo", [
+            'photo' => UploadedFile::fake()->image('van-outside-alfama.jpg', 3000, 2400),
+        ])->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft): void {
+            $photo = Asset::query()
+                ->where('content_item_id', $draft->getKey())
+                ->where('source', AssetSource::Uploaded)
+                ->firstOrFail();
+
+            $this->assertSame(AssetRole::Variant, $photo->role);
+            $this->assertSame(1080, $photo->width);
+            $this->assertSame(1350, $photo->height);
+            $this->assertSame('van-outside-alfama', $photo->alt);
+            $this->assertTrue(Storage::disk('public')->exists($photo->path));
+
+            // A candidate, not a decision. Choosing stays one deliberate act
+            // whatever the picture came from.
+            $this->assertSame(
+                AssetSource::Generated,
+                $draft->assets()->where('role', AssetRole::Hero)->firstOrFail()->source,
+            );
+        });
+    }
+
+    #[Test]
+    public function a_photograph_smaller_than_the_frame_keeps_the_ratio_rather_than_being_upscaled(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->where('channel_type', 'instagram')
+            ->firstOrFail());
+
+        // Only 1200 tall against a 1350 frame. Stretching it to fit produces a
+        // soft picture that reads as a bad generation, which is the impression
+        // using a real photograph exists to avoid.
+        $this->post("/studio/drafts/{$draft->getKey()}/photo", [
+            'photo' => UploadedFile::fake()->image('crew.jpg', 2000, 1200),
+        ])->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft): void {
+            $photo = Asset::query()
+                ->where('content_item_id', $draft->getKey())
+                ->where('source', AssetSource::Uploaded)
+                ->firstOrFail();
+
+            $this->assertSame(960, $photo->width);
+            $this->assertSame(1200, $photo->height);
+            $this->assertSame(
+                1080 / 1350,
+                $photo->width / $photo->height,
+                'Smaller than the frame, but still the shape the channel shows.',
+            );
+        });
+    }
+
+    #[Test]
+    public function something_too_small_to_publish_is_refused_with_its_size(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->firstOrFail());
+
+        $this->post("/studio/drafts/{$draft->getKey()}/photo", [
+            'photo' => UploadedFile::fake()->image('icon.png', 120, 120),
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'That picture is 120×120. Both sides need to be at least 400.');
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft): void {
+            $this->assertSame(
+                0,
+                Asset::query()
+                    ->where('content_item_id', $draft->getKey())
+                    ->where('source', AssetSource::Uploaded)
+                    ->count(),
+            );
+        });
+    }
+
+    #[Test]
+    public function choosing_a_candidate_swaps_it_in_and_keeps_the_one_it_replaced(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->firstOrFail());
+
+        $this->postJson("/studio/drafts/{$draft->getKey()}/image", ['variants' => 2])->assertStatus(202);
+
+        [$was, $variant] = app(CurrentProject::class)->run($this->project, static fn (): array => [
+            (string) $draft->assets()->where('role', AssetRole::Hero)->firstOrFail()->getKey(),
+            (string) $draft->assets()->where('role', AssetRole::Variant)->firstOrFail()->getKey(),
+        ]);
+
+        $this->postJson("/studio/drafts/{$draft->getKey()}/image/{$variant}")->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft, $was, $variant): void {
+            $assets = Asset::query()->where('content_item_id', $draft->getKey())->get();
+
+            $this->assertSame($variant, (string) $assets->firstWhere('role', AssetRole::Hero)?->getKey());
+
+            // The picture it replaced is retired, not deleted: an operator who
+            // preferred the one they rejected can still have it back.
+            $replaced = $assets->firstWhere('id', $was);
+
+            $this->assertNotNull($replaced);
+            $this->assertSame(AssetRole::Variant, $replaced->role);
+            $this->assertNotNull($replaced->superseded_at);
+
+            $this->assertSame($variant, $draft->fresh()->channel_payload['asset_id']);
+        });
+    }
+
+    #[Test]
+    public function the_picture_a_candidate_replaced_stays_visible_so_it_can_be_put_back(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->firstOrFail());
+
+        $this->postJson("/studio/drafts/{$draft->getKey()}/image", ['variants' => 1])->assertStatus(202);
+
+        $variant = app(CurrentProject::class)->run($this->project, static fn (): string => (string) $draft
+            ->assets()->where('role', AssetRole::Variant)->firstOrFail()->getKey());
+
+        $plan = $this->postJson("/studio/drafts/{$draft->getKey()}/image/{$variant}")
+            ->assertOk()
+            ->json('plan');
+
+        /** @var list<array<string, mixed>> $ideas */
+        $ideas = $plan['ideas'];
+        $assets = [];
+
+        foreach ($ideas as $idea) {
+            foreach ((array) $idea['drafts'] as $candidate) {
+                if ($candidate['id'] === (string) $draft->getKey()) {
+                    $assets = $candidate['assets'];
+                }
+            }
+        }
+
+        // Choosing retires the picture it replaced rather than deleting it, and
+        // the relation the payload reads filters retired rows out. Reading the
+        // filtered one made the replaced picture vanish the moment it was
+        // replaced, so "put back the one you rejected" was unreachable.
+        $this->assertCount(2, $assets);
+        $this->assertCount(1, array_filter($assets, static fn (array $a): bool => $a['retired']));
+        $this->assertCount(1, array_filter($assets, static fn (array $a): bool => $a['chosen']));
+    }
+
+    #[Test]
+    public function a_renderer_that_will_not_answer_costs_the_panels_and_not_the_drafts(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => fn () => throw new ConnectionException('connection refused')]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            // The drafts are written and paid for before the panels are drawn.
+            // A refused connection used to escape and fail the run, and the
+            // retry then found every channel drafted, returned "created: 0" and
+            // never illustrated anything — one blip, a carousel with no
+            // pictures and no error anybody could see.
+            $this->assertSame(2, ContentItem::query()->count());
+            $this->assertSame(
+                0,
+                PipelineRun::query()->where('status', PipelineRunStatus::Failed)->count(),
+            );
+        });
+    }
+
+    #[Test]
+    public function candidates_nobody_chose_are_not_delivered_to_a_receiver(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $draft = app(CurrentProject::class)->run($this->project, static fn (): ContentItem => ContentItem::query()
+            ->where('type', ContentItemType::SocialPost)
+            ->firstOrFail());
+
+        $this->postJson("/studio/drafts/{$draft->getKey()}/image", ['variants' => 3])->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft): void {
+            $payload = WebhookPayload::for($draft->fresh(), WebhookEvent::Published, 'delivery-1');
+            /** @var list<array<string, mixed>> $images */
+            $images = $payload['content']['images'] ?? [];
+            $roles = array_values(array_unique(array_column($images, 'role')));
+
+            // A variant is a live row until something promotes it, so without a
+            // role filter every rejected candidate went out in the payload and
+            // a receiver rendering `images` attached the drafts nobody picked.
+            $this->assertSame(['hero'], $roles);
+        });
+    }
+
+    #[Test]
+    public function the_pictures_the_studio_buys_reach_the_cost_rows(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $run = PipelineRun::query()->where('input->action', 'generate_idea')->firstOrFail();
             $step = $run->steps()->firstOrFail();
 
-            $this->assertSame('A compact X post.', $x->channel_payload['segments'][0]['text']);
-            $this->assertGreaterThan(0, $step->cost_micros);
+            // §6's per-unit cost is a sum of step rows, and an image is priced
+            // per picture rather than per token — so it only lands there if
+            // something records it. Nothing did.
+            $this->assertGreaterThanOrEqual(
+                2 * FakeImageGeneration::COST_MICROS,
+                $step->cost_micros,
+                'The drafts cost tokens and two pictures; only the tokens were being counted.',
+            );
+        });
+    }
+
+    #[Test]
+    public function the_screen_keeps_watching_while_any_idea_of_the_week_is_still_drafting(): void
+    {
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        // Two children finished; leave one of them running to stand for a
+        // sibling that has not settled. The screen stops polling when what it
+        // is watching settles, and watching the newest run only works while the
+        // expensive queue happens to run one process in creation order.
+        app(CurrentProject::class)->run($this->project, function (): void {
+            PipelineRun::query()
+                ->where('input->action', 'generate_idea')
+                ->oldest()
+                ->firstOrFail()
+                ->forceFill(['status' => PipelineRunStatus::Running, 'finished_at' => null])
+                ->save();
+        });
+
+        $operation = $this->get('/studio?month=2026-08')
+            ->assertOk()
+            ->viewData('page')['props']['operation'];
+
+        $this->assertSame('running', $operation['status']);
+        $this->assertSame('generate_idea', $operation['action']);
+    }
+
+    #[Test]
+    public function a_carousel_gets_its_panels_even_where_no_image_provider_is_configured(): void
+    {
+        // A renderer and no image model is a supported deployment: the panels
+        // are the part that costs nothing. Nesting them inside the photograph
+        // meant such a deployment drew no slides at all.
+        $this->app->instance(ImageGenerationProvider::class, new class extends FakeImageGeneration
+        {
+            public function isConfigured(): bool
+            {
+                return false;
+            }
+        });
+
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => Http::response($this->png(), 200, ['Content-Type' => 'image/png'])]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $carousel = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            $this->assertSame(
+                0,
+                $carousel->assets()->where('role', AssetRole::Hero)->count(),
+                'No provider, so no photograph — which is the point of the test.',
+            );
+            $this->assertSame(2, $carousel->assets()->where('role', AssetRole::Inline)->count());
+        });
+    }
+
+    #[Test]
+    public function a_carousel_panel_cannot_be_promoted_to_the_post_s_picture(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => Http::response($this->png(), 200, ['Content-Type' => 'image/png'])]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        [$draft, $panel, $hero] = app(CurrentProject::class)->run($this->project, static function (): array {
+            $item = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            return [
+                (string) $item->getKey(),
+                (string) $item->assets()->where('role', AssetRole::Inline)->firstOrFail()->getKey(),
+                (string) $item->assets()->where('role', AssetRole::Hero)->firstOrFail()->getKey(),
+            ];
+        });
+
+        // A panel belongs to the same draft, so ownership alone let it through:
+        // the post lost the picture it ships and the carousel lost a step out
+        // of the middle of its sequence.
+        $this->postJson("/studio/drafts/{$draft}/image/{$panel}")
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'That picture is part of the post rather than a choice for it.');
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft, $panel, $hero): void {
+            $item = ContentItem::query()->whereKey($draft)->firstOrFail();
+
+            $this->assertSame($hero, (string) $item->assets()->where('role', AssetRole::Hero)->firstOrFail()->getKey());
+            $this->assertSame(2, $item->assets()->where('role', AssetRole::Inline)->count());
+            $this->assertSame(
+                AssetRole::Inline,
+                Asset::query()->whereKey($panel)->firstOrFail()->role,
+            );
+        });
+    }
+
+    #[Test]
+    public function every_channel_gets_a_directed_picture_at_its_own_crop(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $sizes = ContentItem::query()
+                ->with('assets')
+                ->get()
+                ->mapWithKeys(static fn (ContentItem $item): array => [
+                    $item->channel_type => [
+                        $item->assets->first()?->width,
+                        $item->assets->first()?->height,
+                    ],
+                ])
+                ->all();
+
+            // 1200×630 is an Open Graph card. It was what all three used to get.
+            $this->assertSame([1080, 1080], $sizes['threads']);
+            $this->assertSame([1200, 675], $sizes['x']);
+            $this->assertSame([1080, 1350], $sizes['instagram']);
+
+            $calls = $this->images->calls();
+
+            $this->assertCount(4, $calls);
+
+            foreach ($calls as $call) {
+                foreach (['Subject:', 'Composition:', 'Action:', 'Location:', 'Style:', 'Camera:', 'Light:'] as $element) {
+                    $this->assertStringContainsString($element, $call['prompt']);
+                }
+
+                $this->assertStringContainsString('a printed content calendar', $call['prompt']);
+                $this->assertStringContainsString('no text, no lettering', $call['prompt']);
+                // The sentence that produced the stock illustrations.
+                $this->assertStringNotContainsString('article titled', $call['prompt']);
+            }
+
+            $tall = array_values(array_filter(
+                $calls,
+                static fn (array $call): bool => $call['options']['height'] === 1350,
+            ));
+
+            $this->assertCount(1, $tall);
+            $this->assertStringContainsString('framed for a 4:5 crop', $tall[0]['prompt']);
         });
     }
 
@@ -556,6 +1783,15 @@ final class ContentStudioTest extends TestCase
             );
     }
 
+    /** One real PNG, so what the renderer returns is what gets stored. */
+    private function png(): string
+    {
+        return (string) base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+            true,
+        );
+    }
+
     /** @param list<string> $answers */
     private function fakeModel(array $answers): FakeModelGateway
     {
@@ -565,10 +1801,115 @@ final class ContentStudioTest extends TestCase
         return $fake;
     }
 
+    /**
+     * A gateway that answers a candidate pool.
+     *
+     * The Studio writes one call per candidate per channel, so the positional
+     * queue cannot script it: a test would have to know that the loop reaches
+     * Threads' third angle before Instagram's first. The closure answers by
+     * looking at the request instead, and returns null for the proposal role so
+     * `$answers` still scripts those in order.
+     *
+     * @param  list<string>  $answers  the proposal answers, in order
+     * @param  (\Closure(ModelRequest): ?string)|null  $draft  overrides the default candidate
+     * @param  (\Closure(ModelRequest): ?string)|null  $factCheck  overrides the clean verdict
+     */
+    private function fakeStudio(
+        array $answers = [],
+        ?\Closure $draft = null,
+        ?\Closure $factCheck = null,
+    ): FakeModelGateway {
+        $fake = (new FakeModelGateway)
+            ->willAnswer($answers === [] ? [$this->proposal()] : $answers)
+            ->willAnswerUsing(function (ModelRequest $request) use ($draft, $factCheck): ?string {
+                if ($request->role === 'factcheck') {
+                    return ($factCheck === null ? null : $factCheck($request)) ?? 'PASS';
+                }
+
+                if ($request->role !== 'draft') {
+                    return null;
+                }
+
+                return ($draft === null ? null : $draft($request)) ?? $this->candidate($request);
+            });
+
+        $this->app->instance(ModelGateway::class, $fake);
+
+        return $fake;
+    }
+
+    /** Which channel this draft call is for, read off its standing instruction. */
+    private function channelOf(ModelRequest $request): string
+    {
+        foreach (['Instagram', 'Threads', 'X'] as $label) {
+            if (str_contains($request->instructions, "posts for this brand on {$label}.")) {
+                return strtolower($label);
+            }
+        }
+
+        throw new \RuntimeException('A draft call named no channel.');
+    }
+
+    /** A candidate that is valid for whichever channel asked for it. */
+    private function candidate(ModelRequest $request, ?string $text = null): string
+    {
+        $channel = $this->channelOf($request);
+
+        if ($channel !== 'instagram') {
+            return (string) json_encode([
+                'segments' => [$text ?? ($channel === 'threads'
+                    ? 'What should a content pipeline explain before you trust it?'
+                    : 'A compact X post.')],
+                'link' => null,
+                'chain_reason' => null,
+                'visual' => $this->visual(),
+            ]);
+        }
+
+        $carousel = str_contains($request->prompt, '"slides"');
+
+        return (string) json_encode(array_filter([
+            'caption' => $text ?? 'A trustworthy content engine shows its work.',
+            'slides' => $carousel ? [
+                ['heading' => 'The idea', 'body' => 'Decisions should remain inspectable.'],
+                ['heading' => 'The mechanism', 'body' => 'Version the brief and the plan.'],
+            ] : null,
+            'visual' => $this->visual(),
+        ]));
+    }
+
+    /** @return array<string, string> */
+    private function visual(): array
+    {
+        return [
+            'subject' => 'a printed content calendar covered in pencil corrections',
+            'composition' => 'overhead, the page filling the frame at a slight angle',
+            'action' => 'a hand crossing out one row and writing a date beside it',
+            'location' => 'a shared desk with two cold coffees and a laptop pushed aside',
+            'style' => 'photorealistic editorial photography, unstyled',
+            'light' => 'window light from the left, shallow depth of field',
+        ];
+    }
+
+    /**
+     * A month the mix accepts.
+     *
+     * `kinds` is cycled over the ideas. The default covers what ContentMix
+     * requires of a four-idea month — at least one how_to, at least one take,
+     * and no offer at all — so a test that does not care about the mix does not
+     * have to think about it. A test that does care passes its own.
+     *
+     * @param  list<string>|null  $dates
+     * @param  list<string>|null  $kinds
+     */
     private function proposal(
         string $summary = 'A practical month about building a trustworthy content engine.',
         string $keyPrefix = 'engine',
+        ?array $dates = null,
+        ?array $kinds = null,
     ): string {
+        $kinds ??= ['how_to', 'take', 'proof', 'behind'];
+
         return (string) json_encode([
             'summary' => $summary,
             'site_facts' => [[
@@ -592,40 +1933,25 @@ final class ContentStudioTest extends TestCase
                     'key' => "{$keyPrefix}-{$index}",
                     'date' => $date,
                     'title' => 'Content idea '.$index,
+                    'kind' => $kinds[($index - 1) % count($kinds)],
                     'pillar' => 'Build in public',
                     'thesis' => 'A pipeline is useful when its decisions remain inspectable.',
                     'evidence' => ['The engine keeps versioned briefs.'],
                     'goal' => 'trust',
                     'audience' => 'founders',
                     'angle' => 'A concrete implementation lesson.',
+                    // Asked for greedily on purpose: the engine narrows this to
+                    // the channels the kind is native to, and a fixture that
+                    // pre-narrowed it would be testing itself.
                     'channels' => ['threads', 'x', 'instagram'],
                 ],
-                ['2026-08-03', '2026-08-12', '2026-08-19', '2026-08-26'],
+                // The first two land in the same week on purpose. No single
+                // idea reaches all three channels any more — a how_to goes to
+                // Instagram and X, a take to Threads and X — so a batch that
+                // exercises every channel needs two ideas in the window.
+                $dates ?? ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26'],
                 [1, 2, 3, 4],
             ),
         ], JSON_UNESCAPED_SLASHES);
-    }
-
-    private function drafts(string $x = 'A compact X post.'): string
-    {
-        return (string) json_encode([
-            'threads' => [
-                'format' => 'post',
-                'segments' => ['What should a content pipeline explain before you trust it?'],
-            ],
-            'x' => [
-                'format' => 'post',
-                'segments' => [$x],
-            ],
-            'instagram' => [
-                'format' => 'carousel',
-                'caption' => 'A trustworthy content engine shows its work.',
-                'slides' => [
-                    ['heading' => 'The idea', 'body' => 'Decisions should remain inspectable.'],
-                    ['heading' => 'The mechanism', 'body' => 'Version the brief and the plan.'],
-                ],
-                'visual_brief' => 'Simple editorial diagrams on a warm neutral background.',
-            ],
-        ]);
     }
 }

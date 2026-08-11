@@ -54,6 +54,15 @@ $overrides = [
     // this file: inside the container those values lose to $_SERVER.
     'SOCIAL_PRESENCE_ENABLED' => 'true',
 
+    // No renderer, unless a test asks for one.
+    //
+    // The compose file gives every container a RENDERER_URL, which is right for
+    // running the app and wrong for the suite: a test that did not think about
+    // carousels would reach a real service over the network, and a suite that
+    // goes out to a container is a suite that fails on a laptop with the stack
+    // down. The tests that do care set the config themselves and fake the HTTP.
+    'RENDERER_URL' => '',
+
     'MAIL_MAILER' => 'array',
     'QUEUE_CONNECTION' => 'sync',
     'SESSION_DRIVER' => 'array',

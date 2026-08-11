@@ -32,6 +32,29 @@ class FakeModelGateway implements ModelGateway
 
     private ?\Closure $failure = null;
 
+    private ?\Closure $answer = null;
+
+    /**
+     * Answer by looking at the request.
+     *
+     * Neither {@see willAnswer()} nor {@see willAnswerRole()} survives a caller
+     * that makes many calls in one role and needs different answers to them —
+     * which is what a candidate pool is. The Content Studio writes four drafts
+     * per channel for three channels in the `draft` role alone, so a positional
+     * queue means scripting twelve answers in the order a loop happens to take
+     * them, and a role map means all twelve are identical.
+     *
+     * The closure receives the {@see ModelRequest} and may return null to fall
+     * through to the role map, then the queue, then the echo — so a test can
+     * special-case one kind of call and leave the rest alone.
+     */
+    public function willAnswerUsing(\Closure $answer): self
+    {
+        $this->answer = $answer;
+
+        return $this;
+    }
+
     /**
      * Queue the answers to hand back, in order. Once they run out the gateway
      * echoes the prompt, so a test that only cares about token accounting does
@@ -80,7 +103,10 @@ class FakeModelGateway implements ModelGateway
             throw $failure($request);
         }
 
-        $text = $this->byRole[$request->role]
+        $scripted = $this->answer === null ? null : ($this->answer)($request);
+
+        $text = $scripted
+            ?? $this->byRole[$request->role]
             ?? array_shift($this->answers)
             ?? "echo: {$request->prompt}";
 

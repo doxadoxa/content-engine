@@ -143,11 +143,19 @@ class AtlasSeedreamImageGeneration implements ImageGenerationProvider
 
         Storage::disk((string) config('media.disk', 'public'))->put($path, $response->body());
 
+        // Measured, not assumed. The provider honours the *ratio* it was asked
+        // for and renders on its own grid — a request for 1080×1350 comes back
+        // as 1792×2240 — so recording the request wrote a number into every
+        // asset row that the file does not have. It went unnoticed while every
+        // caller asked for the same 1200×630; it stopped being invisible when
+        // each channel started asking for its own crop.
+        $measured = @getimagesizefromstring($response->body());
+
         return new GeneratedImage(
             disk: (string) config('media.disk', 'public'),
             path: $path,
-            width: (int) ($options['width'] ?? 1200),
-            height: (int) ($options['height'] ?? 630),
+            width: is_array($measured) ? $measured[0] : (int) ($options['width'] ?? 1200),
+            height: is_array($measured) ? $measured[1] : (int) ($options['height'] ?? 630),
             provider: $this->name(),
             model: $model,
             // Per picture, from config: there is no token count to price, and

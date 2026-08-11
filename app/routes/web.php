@@ -169,6 +169,15 @@ Route::middleware(['auth'])->group(function () use ($social): void {
         ->name('studio.accept');
     Route::post('studio/plans/{plan}/generate', [ContentStudioController::class, 'generate'])
         ->middleware('throttle:10,1')->name('studio.generate');
+    // Throttled harder than the text actions: every call here buys pictures
+    // from a provider, and a stuck button should cost a few cents rather than
+    // a few dollars.
+    Route::post('studio/drafts/{item}/image', [ContentStudioController::class, 'reviseImage'])
+        ->middleware('throttle:20,1')->name('studio.image.revise');
+    Route::post('studio/drafts/{item}/photo', [ContentStudioController::class, 'uploadImage'])
+        ->middleware('throttle:60,1')->name('studio.image.upload');
+    Route::post('studio/drafts/{item}/image/{asset}', [ContentStudioController::class, 'chooseImage'])
+        ->name('studio.image.choose');
 
     Route::get('content', [ContentItemController::class, 'index'])->name('content.index');
     Route::get('content/{item}', ContentItemDetailController::class)->name('content.show');

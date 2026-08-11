@@ -6,6 +6,7 @@ namespace App\Pipelines\Steps\Generation;
 
 use App\Console\Commands\EngineTickCommand;
 use App\Media\HeroImage;
+use App\Media\PublicUrl;
 use App\Models\Asset;
 use App\Models\ContentItem;
 use App\Pipelines\Core\AbstractStep;
@@ -174,7 +175,7 @@ class IllustrateDraft extends AbstractStep
                     // passing it makes every generation fail on a connection the
                     // vendor cannot open — so the set loses its visual consistency
                     // there rather than losing its images.
-                    references: $this->isPubliclyFetchable($heroUrl) ? [$heroUrl] : [],
+                    references: PublicUrl::isFetchable($heroUrl) ? [$heroUrl] : [],
                     // Which illustrated section this is, so another locale of
                     // the same unit can hand back the picture it put here
                     // rather than paying to draw the subject again. Counted
@@ -243,39 +244,6 @@ class IllustrateDraft extends AbstractStep
         }
 
         $context->spend($made['cost'], $made['provider'], $made['model']);
-    }
-
-    /**
-     * Whether an outside service could actually fetch this URL.
-     *
-     * Loopback and private ranges cannot be reached from anybody else's
-     * network, and handing one to an image provider fails the whole step on a
-     * connection refused.
-     */
-    private function isPubliclyFetchable(string $url): bool
-    {
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (! is_string($host) || $host === '') {
-            return false;
-        }
-
-        if (in_array(strtolower($host), ['localhost', '127.0.0.1', '::1', '0.0.0.0'], true)) {
-            return false;
-        }
-
-        $ip = filter_var($host, FILTER_VALIDATE_IP) ? $host : gethostbyname($host);
-
-        if (! filter_var($ip, FILTER_VALIDATE_IP)) {
-            // A name that does not resolve here may still resolve out there.
-            return true;
-        }
-
-        return (bool) filter_var(
-            $ip,
-            FILTER_VALIDATE_IP,
-            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
-        );
     }
 
     /**

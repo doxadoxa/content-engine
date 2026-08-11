@@ -30,4 +30,13 @@ final readonly class UnmeteredSession implements ModelSession
     {
         return $this->gateway->send($request);
     }
+
+    /**
+     * Deliberately nothing, which is what this class is named for.
+     *
+     * A purchase made outside a run has no step row to land on. It was still
+     * paid for and still charged by the provider; it is simply not attributed,
+     * exactly as the tokens above are not.
+     */
+    public function spend(int $costMicros, ?string $provider, ?string $model): void {}
 }

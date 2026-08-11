@@ -82,6 +82,26 @@ return [
     'defaults' => [
         'retries' => 3,
         'backoff' => [10, 60, 300],
+
+        /*
+         * A deadline per queue, because one number cannot serve both.
+         *
+         * A step's timeout has to sit under the timeout of the worker that runs
+         * it, or the worker's signal arrives first and the step's own deadline
+         * is unreachable — see PipelineTimeoutChainTest. The two pools are an
+         * order of magnitude apart on purpose (config/horizon.php: "a cheap step
+         * that has not finished in two minutes is wedged, while a model call
+         * that takes four is working"), so a single default was always going to
+         * be wrong for one of them. It was: 300 against a cheap worker that
+         * stops at 120, which meant every step that did not override this was
+         * killed rather than failed, with nothing recorded.
+         *
+         * `timeout` stays as the fallback for a queue not named here.
+         */
+        'timeouts' => [
+            'pipeline' => 90,
+            'pipeline-expensive' => 600,
+        ],
         'timeout' => 300,
     ],
 
