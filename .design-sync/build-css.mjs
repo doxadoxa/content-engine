@@ -54,9 +54,36 @@ function ruleBody(css, selector) {
         .replace(/^\n+|\n+$/g, '');
 }
 
+/*
+ * Declarations that must NOT be promoted to :root.
+ *
+ * `--radius` is the one. The @theme block derives the radius scale from it —
+ * `--radius-md: calc(var(--radius) - 2px)` and friends — and a custom property
+ * is substituted where it is *declared*, not where it is used. Those `calc()`s
+ * therefore resolve once, at :root, against the stock `--radius: 0.75rem`;
+ * `.product-shell` raising it to 1rem never reaches them, so the app's real
+ * scale is 8/10/12px and no component ever sees the rounder corners the
+ * override was reaching for.
+ *
+ * Promote it here and the scale silently becomes 12/14/16px — every card,
+ * input and button in the design system 4px rounder than the product. No ui/
+ * component reads `var(--radius)` directly, so dropping this one declaration
+ * costs nothing and keeps the two identical.
+ */
+const NO_PROMOTE = new Set(['--radius']);
+
+const dropUnpromotable = (body) =>
+    body
+        .split('\n')
+        .filter((line) => {
+            const name = /^\s*(--[\w-]+)\s*:/.exec(line)?.[1];
+            return !name || !NO_PROMOTE.has(name);
+        })
+        .join('\n');
+
 const appCss = readFileSync(APP_CSS, 'utf8');
-const light = ruleBody(appCss, '.product-shell');
-const dark = ruleBody(appCss, '.dark .product-shell');
+const light = dropUnpromotable(ruleBody(appCss, '.product-shell'));
+const dark = dropUnpromotable(ruleBody(appCss, '.dark .product-shell'));
 const button = ruleBody(appCss, ".product-shell [data-slot='button']");
 
 // Tailwind errors on a @source path that does not exist.
@@ -96,8 +123,21 @@ ${light}
 ${dark}
 }
 
-[data-slot='button'] {
+/*
+ * The button rule keeps its layer.
+ *
+ * \`:root\` and \`.dark\` above are unlayered because that is where app.css puts
+ * them. This one is different: its source lives in \`@layer components\`, and in
+ * Tailwind's layer order utilities beat components — which is why a Button
+ * carrying \`rounded-md\` renders at 10px in the real app and the pill rule never
+ * actually applies. Promoting it unlayered would invert that, making every
+ * button a pill that no radius utility could override, and the design system
+ * would render buttons the product does not have.
+ */
+@layer components {
+    [data-slot='button'] {
 ${button}
+    }
 }
 `,
     'utf8',
@@ -105,8 +145,43 @@ ${button}
 
 console.error(`» wrote ${SOURCE} (${tokenCount} promoted tokens)`);
 
-const cli = join(REPO, '.ds-sync', 'node_modules', '.bin', 'tailwindcss');
-execFileSync(cli, ['-i', SOURCE, '-o', OUT, '--cwd', join(REPO, 'app')], {
+/*
+ * Find a Tailwind CLI.
+ *
+ * The obvious place is `.ds-sync/node_modules`, where the sync run installs its
+ * converter dependencies — but `.ds-sync/` is gitignored, so on a fresh clone
+ * it does not exist and hardcoding that path fails with a bare ENOENT before
+ * anything is written. The app does not help either: Tailwind v4 splits the CLI
+ * out of the `tailwindcss` package into `@tailwindcss/cli`, and the app only
+ * depends on `@tailwindcss/vite`.
+ *
+ * So: prefer a local install if one is there, otherwise let npx fetch the CLI
+ * pinned to whatever Tailwind version the app itself resolves — matching
+ * versions matters, since `@source inline(...)` needs >= 4.1.
+ */
+function tailwindCli() {
+    for (const dir of ['.ds-sync', 'app']) {
+        const bin = join(REPO, dir, 'node_modules', '.bin', 'tailwindcss');
+        if (existsSync(bin)) return { cmd: bin, args: [] };
+    }
+
+    let version = 'latest';
+    try {
+        const pkg = join(APP, 'node_modules', 'tailwindcss', 'package.json');
+        version = JSON.parse(readFileSync(pkg, 'utf8')).version || 'latest';
+    } catch {
+        throw new Error(
+            'build-css: no Tailwind CLI and no app/node_modules/tailwindcss to read a version from.\n' +
+                "  Run the app's install first (cd app && npm ci), then re-run this script.",
+        );
+    }
+
+    console.error(`» no local Tailwind CLI — falling back to npx @tailwindcss/cli@${version}`);
+    return { cmd: 'npx', args: ['--yes', `@tailwindcss/cli@${version}`] };
+}
+
+const { cmd, args } = tailwindCli();
+execFileSync(cmd, [...args, '-i', SOURCE, '-o', OUT, '--cwd', join(REPO, 'app')], {
     stdio: 'inherit',
 });
 

@@ -29,7 +29,7 @@
    is not a rule anyone will write, and the cross-product is what turns a
    300 KB stylesheet into a 2 MB one. */
 @source inline(
-    "{,hover:,focus-visible:,active:,disabled:,group-hover:,dark:,md:}{bg,text,border,ring}-{background,foreground,card,card-foreground,popover,popover-foreground,primary,primary-foreground,secondary,secondary-foreground,muted,muted-foreground,accent,accent-foreground,destructive,destructive-foreground,border,input,ring,sidebar,sidebar-foreground,sidebar-primary,sidebar-primary-foreground,sidebar-accent,sidebar-accent-foreground,sidebar-border,sidebar-ring,chart-1,chart-2,chart-3,chart-4,chart-5,transparent,current,inherit,white,black}"
+    "{,hover:,focus-visible:,active:,disabled:,group-hover:,dark:,sm:,md:,lg:}{bg,text,border,ring}-{background,foreground,card,card-foreground,popover,popover-foreground,primary,primary-foreground,secondary,secondary-foreground,muted,muted-foreground,accent,accent-foreground,destructive,destructive-foreground,border,input,ring,sidebar,sidebar-foreground,sidebar-primary,sidebar-primary-foreground,sidebar-accent,sidebar-accent-foreground,sidebar-border,sidebar-ring,chart-1,chart-2,chart-3,chart-4,chart-5,transparent,current,inherit,white,black}"
 );
 @source inline(
     "{,hover:}{fill,stroke,outline,divide,decoration,caret,accent,shadow}-{background,foreground,card,primary,primary-foreground,secondary,muted,muted-foreground,accent,accent-foreground,destructive,border,input,ring,sidebar,sidebar-accent,chart-1,chart-2,chart-3,chart-4,chart-5,transparent,current,white,black}"

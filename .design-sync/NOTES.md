@@ -21,6 +21,19 @@ built to present it to the converter, and all three live in `.design-sync/`:
 **The one command before the converter is `node .design-sync/prepare-pkg.mjs`.**
 It runs the other two.
 
+It needs two things present, neither of them committed:
+
+1. **`app/node_modules`** — `cd app && npm ci`. The shim symlinks into it and
+   `tsc` runs from it.
+2. **A Tailwind CLI.** `build-css.mjs` looks in `.ds-sync/node_modules/.bin`
+   then `app/node_modules/.bin`, and falls back to
+   `npx @tailwindcss/cli@<app's tailwind version>` when neither exists — which
+   is the normal case on a fresh clone, since `.ds-sync/` is gitignored and
+   Tailwind v4 ships its CLI as a separate `@tailwindcss/cli` package the app
+   does not depend on. That fallback needs network (or an npx cache) the first
+   time. To avoid it, install the converter deps first:
+   `mkdir -p .ds-sync && cd .ds-sync && npm i esbuild ts-morph @types/react @tailwindcss/cli tailwindcss playwright`.
+
 ## Why the shim exists
 
 `app/node_modules/avyo` is generated, gitignored, and rebuilt from scratch each
@@ -54,9 +67,26 @@ own contrast decisions.
 
 A design system that renders grey unless you remember a wrapper class is a
 design system that renders grey. So `build-css.mjs` **copies the
-`.product-shell` declarations up to `:root`** at build time (38 tokens), plus
-`.dark .product-shell` → `.dark` and the pill-button rule
+`.product-shell` declarations up to `:root`** at build time, plus
+`.dark .product-shell` → `.dark` and the button rule
 `.product-shell [data-slot='button']` → `[data-slot='button']`.
+
+**Two things are deliberately preserved rather than promoted flat**, both found
+by review after the first upload shipped them wrong:
+
+- **`--radius` is excluded from the promotion** (`NO_PROMOTE` in
+  `build-css.mjs`). The `@theme` block derives the scale with
+  `--radius-md: calc(var(--radius) - 2px)`, and a custom property is
+  substituted where it is *declared* — so those `calc()`s resolve once at
+  `:root` against the stock `0.75rem`. `.product-shell` raising it to `1rem`
+  never reaches them. The app's real scale is **8 / 10 / 12px**; promoting
+  `--radius` silently made the design system 12 / 14 / 16px, every surface 4px
+  rounder than the product. No `ui/` component reads `var(--radius)` directly,
+  so dropping the one declaration costs nothing.
+- **The button rule keeps its `@layer components`.** Unlayered styles beat every
+  cascade layer, so promoting it flat made `border-radius: 9999px` unbeatable —
+  pill buttons that no `rounded-*` utility could override. Inside
+  `@layer components` it behaves exactly as it does in the app.
 
 It copies rather than restates them: a hand-written second copy of 38 colour
 tokens goes stale the first time someone retunes the palette, and nothing
@@ -100,6 +130,16 @@ compiled CSS before assuming a bundle problem:
 - **`Select` sm and default triggers look identical.** The source sets
   `data-[size=default]:h-11` *and* `data-[size=sm]:h-11`. Faithful, not a
   preview fault. Worth raising with the app team separately.
+- **Two app-side rules in `app.css` are inert, and the sync reproduces them
+  faithfully rather than fixing them.** Both were found while getting the
+  radius scale to match, and both are worth a separate look by whoever owns
+  the theme:
+  - `.product-shell [data-slot='button'] { border-radius: 9999px }` sits in
+    `@layer components`, so the `rounded-md` in the Button's own cva — an
+    `@layer utilities` class — wins. **Buttons are 10px, never pills.**
+  - `.product-shell { --radius: 1rem }` cannot reach `--radius-sm/md/lg`,
+    which are `calc()`-derived at `:root` from the stock `0.75rem`. **The
+    intended rounder scale never applies anywhere in the product.**
 - **`SidebarMenuSkeleton` is very low contrast.** Skeleton tone sits close to
   `--sidebar` in the dark forest column. That is how it looks in the app.
 

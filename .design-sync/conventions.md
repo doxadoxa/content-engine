@@ -44,9 +44,10 @@ Raw brand values exist as plain CSS variables for the rare case a token does not
 fit — `var(--brand-ink)`, `--brand-canvas`, `--brand-surface`, `--brand-violet`,
 `--brand-coral`, `--brand-violet-wash`, `--brand-border`. Prefer the tokens.
 
-Radius is generous here (`--radius: 1rem`): `rounded-lg` / `rounded-xl` on
-containers, and buttons are fully pill-shaped automatically. Type is Instrument
-Sans via `font-sans`; `tabular-nums` for figures in tables.
+Radius: `rounded-sm` 8px, `rounded-md` 10px, `rounded-lg` / `rounded-xl` 12px —
+`rounded-lg` or `rounded-xl` on containers, `rounded-full` for pills and
+avatars. Type is Instrument Sans via `font-sans`; `tabular-nums` for figures in
+tables.
 
 **One constraint:** arbitrary values (`bg-[#abc]`, `w-[37px]`) do not resolve —
 the stylesheet is pre-generated. Use the scale (`gap-6`, `max-w-3xl`, `p-8`,
