@@ -6,6 +6,7 @@ namespace App\ContentStudio;
 
 use App\Ai\Contracts\ModelSession;
 use App\Ai\ModelRequest;
+use App\Enums\AssetRole;
 use App\Enums\ChannelType;
 use App\Enums\ContentItemType;
 use App\Enums\PostKind;
@@ -377,6 +378,17 @@ class ContentStudioAssistant
     {
         if ((string) $variant->content_item_id !== (string) $item->getKey()) {
             throw new ContentStudioException('That picture belongs to a different draft.');
+        }
+
+        // Ownership was the only check, and it is not enough. A carousel's
+        // panels belong to the same draft, so posting a slide's id promoted it
+        // to hero: the post lost the picture it shipped, the carousel lost a
+        // step out of the middle of its sequence, and both roles ended up
+        // describing something they are not. The hero itself is allowed through
+        // so that choosing what is already chosen is a no-op rather than an
+        // error — a double click is not a malformed request.
+        if (! in_array($variant->role, [AssetRole::Variant, AssetRole::Hero], true)) {
+            throw new ContentStudioException('That picture is part of the post rather than a choice for it.');
         }
 
         $chosen = $this->images->choose($item, $variant);
@@ -1521,45 +1533,84 @@ class ContentStudioAssistant
      */
     private function illustrateDrafts(array $itemIds, ?BrandBrief $brief, ?ModelSession $models = null): void
     {
-        if ($itemIds === [] || ! $this->images->isConfigured()) {
+        if ($itemIds === []) {
             return;
         }
 
         foreach (ContentItem::query()->whereKey($itemIds)->with('contentIdea')->get() as $item) {
             $payload = $item->channel_payload ?? [];
-            $playbook = ChannelPlaybook::for(ChannelType::from((string) $item->channel_type));
+            $channel = ChannelType::tryFrom((string) $item->channel_type);
 
-            $prompt = is_array($payload['visual'] ?? null) && $payload['visual'] !== []
-                ? SocialImagePrompt::fromFields($payload['visual'], $this->imageSubject($item))
-                : SocialImagePrompt::fromBrief(null, $this->imageSubject($item));
-
-            try {
-                $made = $this->images->for($item, $playbook, $prompt, $brief, $item->contentIdea?->kind->shot());
-            } catch (TerminalStepFailure) {
-                // A provider that will not draw must not lose a post that is
-                // already written and paid for. An unillustrated draft is a
-                // weaker draft; a failed batch is no drafts at all.
+            if ($channel === null) {
                 continue;
             }
 
-            if ($made === null) {
-                continue;
-            }
+            $playbook = ChannelPlaybook::for($channel);
 
-            if (isset($payload['segments'][0]) && is_array($payload['segments'][0])) {
-                $payload['segments'][0]['asset_id'] = (string) $made['asset']->getKey();
-            }
-
-            $payload['asset_id'] = (string) $made['asset']->getKey();
-            $item->forceFill(['channel_payload' => $payload])->save();
-
-            // Per picture rather than per token, and only when one was actually
-            // bought — a hero already on the unit reports no provider. Without
-            // this the Studio's images never reached §6's cost rows at all.
-            $models?->spend($made['cost'], $made['provider'], $made['model']);
+            // Two capabilities, configured separately and failing separately.
+            // The photograph came first only in the order they were built, and
+            // nesting the panels inside it made them depend on it: a deployment
+            // with a renderer and no image provider — which the renderer's own
+            // docblock calls supported — drew no slides at all, and a provider
+            // that refused one post took that post's slides with it. A
+            // carousel's steps have nothing to do with whether a photograph of
+            // a kitchen was available.
+            $payload = $this->illustrate($item, $playbook, $payload, $brief, $models);
 
             $this->drawPanels($item, $playbook, $payload, $brief);
         }
+    }
+
+    /**
+     * This draft's photograph, if there is a provider willing to draw one.
+     *
+     * Returns the payload it stored, so the caller reads what is on the row
+     * rather than what it hoped would be.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function illustrate(
+        ContentItem $item,
+        ChannelPlaybook $playbook,
+        array $payload,
+        ?BrandBrief $brief,
+        ?ModelSession $models,
+    ): array {
+        if (! $this->images->isConfigured()) {
+            return $payload;
+        }
+
+        $prompt = is_array($payload['visual'] ?? null) && $payload['visual'] !== []
+            ? SocialImagePrompt::fromFields($payload['visual'], $this->imageSubject($item))
+            : SocialImagePrompt::fromBrief(null, $this->imageSubject($item));
+
+        try {
+            $made = $this->images->for($item, $playbook, $prompt, $brief, $item->contentIdea?->kind->shot());
+        } catch (TerminalStepFailure) {
+            // A provider that will not draw must not lose a post that is
+            // already written and paid for. An unillustrated draft is a weaker
+            // draft; a failed batch is no drafts at all.
+            return $payload;
+        }
+
+        if ($made === null) {
+            return $payload;
+        }
+
+        if (isset($payload['segments'][0]) && is_array($payload['segments'][0])) {
+            $payload['segments'][0]['asset_id'] = (string) $made['asset']->getKey();
+        }
+
+        $payload['asset_id'] = (string) $made['asset']->getKey();
+        $item->forceFill(['channel_payload' => $payload])->save();
+
+        // Per picture rather than per token, and only when one was actually
+        // bought — a hero already on the unit reports no provider. Without this
+        // the Studio's images never reached §6's cost rows at all.
+        $models?->spend($made['cost'], $made['provider'], $made['model']);
+
+        return $payload;
     }
 
     /**

@@ -1562,6 +1562,124 @@ final class ContentStudioTest extends TestCase
     }
 
     #[Test]
+    public function the_screen_keeps_watching_while_any_idea_of_the_week_is_still_drafting(): void
+    {
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        // Two children finished; leave one of them running to stand for a
+        // sibling that has not settled. The screen stops polling when what it
+        // is watching settles, and watching the newest run only works while the
+        // expensive queue happens to run one process in creation order.
+        app(CurrentProject::class)->run($this->project, function (): void {
+            PipelineRun::query()
+                ->where('input->action', 'generate_idea')
+                ->oldest()
+                ->firstOrFail()
+                ->forceFill(['status' => PipelineRunStatus::Running, 'finished_at' => null])
+                ->save();
+        });
+
+        $operation = $this->get('/studio?month=2026-08')
+            ->assertOk()
+            ->viewData('page')['props']['operation'];
+
+        $this->assertSame('running', $operation['status']);
+        $this->assertSame('generate_idea', $operation['action']);
+    }
+
+    #[Test]
+    public function a_carousel_gets_its_panels_even_where_no_image_provider_is_configured(): void
+    {
+        // A renderer and no image model is a supported deployment: the panels
+        // are the part that costs nothing. Nesting them inside the photograph
+        // meant such a deployment drew no slides at all.
+        $this->app->instance(ImageGenerationProvider::class, new class extends FakeImageGeneration
+        {
+            public function isConfigured(): bool
+            {
+                return false;
+            }
+        });
+
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => Http::response($this->png(), 200, ['Content-Type' => 'image/png'])]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $carousel = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            $this->assertSame(
+                0,
+                $carousel->assets()->where('role', AssetRole::Hero)->count(),
+                'No provider, so no photograph — which is the point of the test.',
+            );
+            $this->assertSame(2, $carousel->assets()->where('role', AssetRole::Inline)->count());
+        });
+    }
+
+    #[Test]
+    public function a_carousel_panel_cannot_be_promoted_to_the_post_s_picture(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => Http::response($this->png(), 200, ['Content-Type' => 'image/png'])]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        [$draft, $panel, $hero] = app(CurrentProject::class)->run($this->project, static function (): array {
+            $item = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            return [
+                (string) $item->getKey(),
+                (string) $item->assets()->where('role', AssetRole::Inline)->firstOrFail()->getKey(),
+                (string) $item->assets()->where('role', AssetRole::Hero)->firstOrFail()->getKey(),
+            ];
+        });
+
+        // A panel belongs to the same draft, so ownership alone let it through:
+        // the post lost the picture it ships and the carousel lost a step out
+        // of the middle of its sequence.
+        $this->postJson("/studio/drafts/{$draft}/image/{$panel}")
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'That picture is part of the post rather than a choice for it.');
+
+        app(CurrentProject::class)->run($this->project, function () use ($draft, $panel, $hero): void {
+            $item = ContentItem::query()->whereKey($draft)->firstOrFail();
+
+            $this->assertSame($hero, (string) $item->assets()->where('role', AssetRole::Hero)->firstOrFail()->getKey());
+            $this->assertSame(2, $item->assets()->where('role', AssetRole::Inline)->count());
+            $this->assertSame(
+                AssetRole::Inline,
+                Asset::query()->whereKey($panel)->firstOrFail()->role,
+            );
+        });
+    }
+
+    #[Test]
     public function every_channel_gets_a_directed_picture_at_its_own_crop(): void
     {
         $this->fakeStudio();

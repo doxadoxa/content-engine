@@ -248,14 +248,35 @@ class ContentStudioController extends Controller
         ], 202);
     }
 
+    /**
+     * The operation the screen should be watching.
+     *
+     * An active one if there is one, and only otherwise the newest.
+     *
+     * The newest alone was wrong from the moment drafting became a run per
+     * idea. The screen stops polling when what it is watching settles, and the
+     * newest child is only the last to finish while the expensive queue runs
+     * one process in creation order — which is a default, not a guarantee, and
+     * stops being true the moment a child is retried or the pool is scaled.
+     * Then the screen goes quiet with siblings still drafting, and their posts
+     * and their failures appear on a manual reload or not at all.
+     *
+     * Which active run it returns does not matter: the screen reads a status to
+     * decide whether to keep asking. What matters is that "anything still
+     * running" is answerable, and one row can answer it.
+     */
     private function latestOperation(ContentPlan $plan): ?PipelineRun
     {
-        return PipelineRun::query()
+        $runs = PipelineRun::query()
             ->where('pipeline', ContentStudioPipeline::key())
             ->where('input->content_plan_id', $plan->getKey())
-            ->whereNotNull('input->action')
-            ->latest()
-            ->first();
+            ->whereNotNull('input->action');
+
+        return (clone $runs)
+            ->whereIn('status', [PipelineRunStatus::Pending, PipelineRunStatus::Running])
+            ->oldest()
+            ->first()
+            ?? $runs->latest()->first();
     }
 
     /** @return array<string, mixed>|null */
