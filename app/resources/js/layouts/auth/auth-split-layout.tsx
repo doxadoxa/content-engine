@@ -43,7 +43,7 @@ export default function AuthSplitLayout({
                     className="relative z-20 flex items-center text-lg font-medium"
                 >
                     <AppLogoIcon className="mr-2 size-8 fill-current text-white" />
-                    Content Engine
+                    Avyo
                 </Link>
 
                 <div className="relative z-20 max-w-sm">
@@ -81,7 +81,7 @@ export default function AuthSplitLayout({
                         <span className="flex size-8 items-center justify-center rounded-md bg-primary">
                             <AppLogoIcon className="size-5 fill-current text-primary-foreground" />
                         </span>
-                        Content Engine
+                        Avyo
                     </Link>
 
                     <div className="flex flex-col items-start gap-2 text-left sm:items-center sm:text-center">

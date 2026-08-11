@@ -59,19 +59,19 @@ export function AppSidebar() {
 
     return (
         <Sidebar collapsible="icon" variant="inset">
-            <SidebarHeader>
+            <SidebarHeader className="gap-3 border-b border-sidebar-border/70 p-3">
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
                             <Link href={dashboard()} prefetch>
-                                <div className="flex aspect-square size-8 items-center justify-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground">
-                                    <CalendarDays
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
+                                <div className="relative flex aspect-square size-8 items-center justify-center overflow-hidden rounded-[10px] bg-sidebar-primary text-sidebar-primary-foreground">
+                                    <span className="font-serif text-lg leading-none font-semibold tracking-[-0.12em]">
+                                        a
+                                    </span>
+                                    <span className="absolute right-[5px] bottom-[5px] size-1.5 rounded-full bg-[#d6533c]" />
                                 </div>
-                                <span className="text-base font-semibold">
-                                    Content Engine
+                                <span className="text-base font-semibold tracking-[-0.04em]">
+                                    Avyo
                                 </span>
                             </Link>
                         </SidebarMenuButton>
@@ -82,7 +82,7 @@ export function AppSidebar() {
             </SidebarHeader>
 
             <SidebarContent>
-                <SidebarGroup>
+                <SidebarGroup className="px-3 py-2">
                     <SidebarGroupContent>
                         <SidebarMenu>
                             {/* Above the dashboard, deliberately. §7 says the
@@ -112,8 +112,10 @@ export function AppSidebar() {
                     </SidebarGroupContent>
                 </SidebarGroup>
 
-                <SidebarGroup>
-                    <SidebarGroupLabel>Workflow</SidebarGroupLabel>
+                <SidebarGroup className="px-3 py-2">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                        Workflow
+                    </SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
                             <NavLink
@@ -163,8 +165,10 @@ export function AppSidebar() {
                     </SidebarGroupContent>
                 </SidebarGroup>
 
-                <SidebarGroup>
-                    <SidebarGroupLabel>Insights</SidebarGroupLabel>
+                <SidebarGroup className="px-3 py-2">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                        Insights
+                    </SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
                             <NavLink
@@ -183,8 +187,10 @@ export function AppSidebar() {
                     </SidebarGroupContent>
                 </SidebarGroup>
 
-                <SidebarGroup>
-                    <SidebarGroupLabel>Project</SidebarGroupLabel>
+                <SidebarGroup className="px-3 py-2">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                        Project
+                    </SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
                             <NavLink
@@ -233,7 +239,12 @@ function NavLink({
 
     return (
         <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={isActive} tooltip={label}>
+            <SidebarMenuButton
+                asChild
+                isActive={isActive}
+                tooltip={label}
+                className="relative rounded-xl data-[active=true]:before:absolute data-[active=true]:before:top-1/2 data-[active=true]:before:left-0 data-[active=true]:before:h-4 data-[active=true]:before:w-0.5 data-[active=true]:before:-translate-y-1/2 data-[active=true]:before:rounded-full data-[active=true]:before:bg-[#f3cf6a]"
+            >
                 {/* `isActive` styles the row and nothing more, so without
                     `aria-current` the section you are standing in is marked
                     for people who can see the highlight and nobody else. */}
@@ -242,7 +253,10 @@ function NavLink({
                     prefetch
                     aria-current={isActive ? 'page' : undefined}
                 >
-                    <Icon aria-hidden="true" />
+                    <Icon
+                        aria-hidden="true"
+                        className={isActive ? 'text-[#f3cf6a]' : undefined}
+                    />
                     <span>{label}</span>
                 </Link>
             </SidebarMenuButton>

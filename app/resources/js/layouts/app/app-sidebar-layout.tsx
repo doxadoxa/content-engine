@@ -16,7 +16,7 @@ export default function AppSidebarLayout({
     breadcrumbs,
 }: AppLayoutProps) {
     return (
-        <SidebarProvider defaultOpen={wasOpen()}>
+        <SidebarProvider defaultOpen={wasOpen()} className="product-shell">
             <a
                 href="#main-content"
                 onClick={() => document.getElementById('main-content')?.focus()}

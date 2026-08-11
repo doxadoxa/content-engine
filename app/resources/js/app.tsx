@@ -4,14 +4,17 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { initializeTheme } from '@/hooks/use-appearance';
 import AppLayout from '@/layouts/app-layout';
 import AuthLayout from '@/layouts/auth-layout';
+import MarketingLayout from '@/layouts/marketing-layout';
 import SettingsLayout from '@/layouts/settings/layout';
 
-const appName = import.meta.env.VITE_APP_NAME || 'Content Engine';
+const appName = import.meta.env.VITE_APP_NAME || 'Avyo';
 
 createInertiaApp({
     title: (title) => (title ? `${title} - ${appName}` : appName),
     layout: (name) => {
         switch (true) {
+            case name === 'marketing':
+                return MarketingLayout;
             // Seen by people who are not signed in, so no signed-in frame: a
             // project switcher listing projects they cannot reach, above a
             // navigation column of sections they cannot open.

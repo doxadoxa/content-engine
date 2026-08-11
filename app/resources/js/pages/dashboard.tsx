@@ -6,13 +6,6 @@ import {
     CalendarDays,
     CheckCircle2,
     ExternalLink,
-    Eye,
-    FileText,
-    Layers,
-    Quote,
-    Search,
-    Sparkles,
-    Users,
 } from 'lucide-react';
 import { useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +20,7 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
+import { WorkspaceHeader, WorkspacePage } from '@/components/workspace-page';
 import { index as approvalsIndex } from '@/routes/approvals';
 import { index as calendarIndex } from '@/routes/calendar';
 import { show as showContent } from '@/routes/content';
@@ -224,49 +218,32 @@ export default function Dashboard({
         <>
             <Head title={project.name} />
 
-            <div className="relative isolate min-h-full overflow-hidden">
-                <div
-                    className="pointer-events-none absolute -top-40 right-0 -z-10 size-[32rem] rounded-full bg-violet-500/8 blur-3xl dark:bg-violet-500/5"
-                    aria-hidden="true"
-                />
-                <div
-                    className="pointer-events-none absolute top-[38rem] -left-52 -z-10 size-[28rem] rounded-full bg-orange-400/7 blur-3xl dark:bg-orange-400/4"
-                    aria-hidden="true"
-                />
-
-                <div className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-5 p-4 sm:gap-6 sm:p-6 lg:p-8">
-                    <header className="flex flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:items-end sm:justify-between">
-                        <div className="min-w-0">
-                            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
-                                <span>Project overview</span>
-                                <span className="size-1 rounded-full bg-violet-500" />
-                                <span className="tracking-normal text-foreground/70 normal-case">
-                                    {project.onboarding_status === 'active'
-                                        ? 'Engine active'
-                                        : project.onboarding_status}
-                                </span>
-                            </div>
-                            <h1 className="truncate text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
-                                {project.name}
-                            </h1>
-                            <p className="mt-2 truncate text-sm text-muted-foreground">
-                                {project.website_url ??
-                                    'Content performance and publishing operations.'}
-                            </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
+            <WorkspacePage>
+                <WorkspaceHeader
+                    eyebrow="Project overview"
+                    context={
+                        project.onboarding_status === 'active'
+                            ? 'Engine active'
+                            : project.onboarding_status
+                    }
+                    title={project.name}
+                    description={
+                        project.website_url ??
+                        'Content performance and publishing operations'
+                    }
+                    actions={
+                        <>
                             {project.is_ymyl && (
                                 <Badge
                                     variant="outline"
-                                    className="h-9 rounded-full bg-background/70 px-3"
+                                    className="h-9 rounded-full border-[#d6533c]/25 bg-[#f2d9d0]/60 px-3 text-[#9c3427] dark:text-[#f1a99f]"
                                 >
-                                    <CheckCircle2 className="size-3.5 text-emerald-600" />
                                     Review required
                                 </Badge>
                             )}
                             <Button
                                 variant="outline"
-                                className="rounded-full bg-background/70 shadow-sm"
+                                className="bg-card/75 shadow-sm"
                                 asChild
                             >
                                 <Link href={calendarIndex()}>
@@ -277,41 +254,37 @@ export default function Dashboard({
                                     Content calendar
                                 </Link>
                             </Button>
-                        </div>
-                    </header>
+                        </>
+                    }
+                />
 
-                    <StoppedNotice health={health} />
+                <StoppedNotice health={health} />
 
-                    {work && <WorkInProgress work={work} project={project} />}
+                {work && <WorkInProgress work={work} project={project} />}
 
-                    {auth.project?.role === 'owner' && (
-                        <ConnectGoogle
-                            projectId={project.id}
-                            connected={connected}
-                        />
-                    )}
+                {auth.project?.role === 'owner' && (
+                    <ConnectGoogle
+                        projectId={project.id}
+                        connected={connected}
+                    />
+                )}
 
-                    <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)] [&>*]:min-w-0">
-                        <Deferred
-                            data="visibility"
-                            fallback={() => <LlmVisibilityCard />}
-                        >
-                            <LlmVisibilityCard visibility={visibility} />
-                        </Deferred>
+                <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)] [&>*]:min-w-0">
+                    <Deferred
+                        data="visibility"
+                        fallback={() => <LlmVisibilityCard />}
+                    >
+                        <LlmVisibilityCard visibility={visibility} />
+                    </Deferred>
 
-                        <Stats
-                            stats={stats}
-                            connected={connected}
-                            busy={busy}
-                        />
-                    </div>
-
-                    <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] [&>*]:min-w-0">
-                        <Upcoming items={upcoming} busy={busy} />
-                        <Recent items={recent} busy={busy} />
-                    </div>
+                    <Stats stats={stats} connected={connected} busy={busy} />
                 </div>
-            </div>
+
+                <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] [&>*]:min-w-0">
+                    <Upcoming items={upcoming} busy={busy} />
+                    <Recent items={recent} busy={busy} />
+                </div>
+            </WorkspacePage>
         </>
     );
 }
@@ -332,11 +305,11 @@ function WorkInProgress({ work, project }: { work: Work; project: Project }) {
     return (
         <div className="flex flex-col gap-3">
             {work.active.length > 0 && (
-                <Card className="gap-5 overflow-hidden rounded-[1.5rem] border-violet-500/20 bg-violet-500/[0.045] shadow-none">
+                <Card className="gap-5 overflow-hidden rounded-[1.5rem] border-[#d6533c]/20 bg-[#f2d9d0]/45 shadow-none dark:bg-[#d6533c]/10">
                     <CardHeader className="sm:flex-row sm:items-start sm:justify-between">
                         <div>
                             <CardTitle className="flex items-center gap-2 text-base">
-                                <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                                <span className="flex size-8 items-center justify-center rounded-full bg-[#d6533c]/10 text-[#d6533c] dark:bg-[#d6533c]/20 dark:text-[#f1a99f]">
                                     <Spinner className="size-4" />
                                 </span>
                                 {work.launching
@@ -351,7 +324,7 @@ function WorkInProgress({ work, project }: { work: Work; project: Project }) {
                         </div>
                         <Badge
                             variant="outline"
-                            className="w-fit rounded-full border-violet-500/20 bg-background/60 text-violet-700 dark:text-violet-200"
+                            className="w-fit rounded-full border-[#d6533c]/20 bg-card/60 text-[#9c3427] dark:text-[#f1a99f]"
                         >
                             Live
                         </Badge>
@@ -424,6 +397,7 @@ function RunProgress({ run }: { run: ActiveRun }) {
             <Progress
                 value={percent}
                 className="h-1.5"
+                indicatorClassName="bg-[#d6533c]"
                 aria-label={`${label} progress`}
                 aria-valuetext={
                     run.total_steps === 0
@@ -461,8 +435,8 @@ function Stats({
     busy: boolean;
 }) {
     return (
-        <section className="overflow-hidden rounded-[1.5rem] border bg-card/85 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.05)] backdrop-blur-sm">
-            <div className="flex items-center justify-between border-b px-5 py-4 sm:px-6">
+        <section className="overflow-hidden rounded-[1.5rem] border border-border/90 bg-card/90 shadow-[0_1px_2px_rgba(23,53,47,0.03),0_18px_48px_rgba(23,53,47,0.06)] backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b bg-[#f3cf6a]/15 px-5 py-4 sm:px-6 dark:bg-[#f3cf6a]/5">
                 <div>
                     <h2 className="font-semibold tracking-tight">
                         Content pulse
@@ -492,7 +466,7 @@ function Stats({
                     {stats && (
                         <>
                             <Stat
-                                icon={FileText}
+                                index="01"
                                 label="Published"
                                 value={stats.published}
                                 hint={
@@ -508,13 +482,13 @@ function Stats({
                                 featured
                             />
                             <Stat
-                                icon={Search}
+                                index="02"
                                 label="Targeted search volume"
                                 value={stats.targeted_volume.toLocaleString()}
                                 hint={`Across ${stats.planned} planned topics`}
                             />
                             <Stat
-                                icon={Quote}
+                                index="03"
                                 label="Cited by assistants"
                                 value={
                                     stats.citations.checked === 0
@@ -528,7 +502,7 @@ function Stats({
                                 }
                             />
                             <Stat
-                                icon={Eye}
+                                index="04"
                                 label="Search impressions"
                                 value={
                                     connected?.search_console === false
@@ -542,7 +516,7 @@ function Stats({
                                 }
                             />
                             <Stat
-                                icon={Users}
+                                index="05"
                                 label="Engaged visits"
                                 value={
                                     connected?.analytics === false
@@ -602,7 +576,7 @@ function ConnectGoogle({
               : 'Analytics';
 
     return (
-        <Card className="gap-0 rounded-[1.5rem] border-dashed bg-card/60 py-0 shadow-none">
+        <Card className="gap-0 rounded-[1.5rem] border-dashed border-[#3155a5]/35 bg-[#d7e0f6]/35 py-0 shadow-none dark:bg-[#3155a5]/10">
             <CardHeader className="flex-col items-start gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 py-5">
                     <CardTitle className="text-base">
@@ -629,31 +603,34 @@ function ConnectGoogle({
 }
 
 function Stat({
-    icon: Icon,
+    index,
     label,
     value,
     hint,
     href,
     featured = false,
 }: {
-    icon: typeof FileText;
+    index: string;
     label: string;
     value: number | string;
     hint: string;
     href?: { url: string; method: 'get' };
     featured?: boolean;
 }) {
-    const className = `group relative flex h-full min-h-32 flex-col justify-between border-b p-5 transition-colors hover:bg-muted/45 focus-visible:z-10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:p-6 ${
-        featured ? 'col-span-2 min-h-40' : 'even:border-r'
+    const className = `group relative flex h-full min-h-32 flex-col justify-between border-b p-5 transition-colors hover:bg-[#f3cf6a]/10 focus-visible:z-10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:p-6 ${
+        featured
+            ? 'col-span-2 min-h-40 bg-[#f2d9d0]/32 dark:bg-[#d6533c]/7'
+            : 'even:border-r'
     }`;
 
     const body = (
         <>
             <div className="flex items-center justify-between gap-3 text-xs font-medium text-muted-foreground">
-                <span className="flex items-center gap-2">
-                    <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-foreground">
-                        <Icon className="size-3.5" aria-hidden="true" />
+                <span className="flex items-center gap-2.5">
+                    <span className="font-serif text-sm text-[#d6533c] italic">
+                        {index}
                     </span>
+                    <span className="h-px w-5 bg-border" />
                     {label}
                 </span>
                 {href && (
@@ -665,7 +642,7 @@ function Stat({
             </div>
             <div className="mt-5">
                 <div
-                    className={`font-semibold tracking-[-0.04em] tabular-nums ${featured ? 'text-5xl' : 'text-2xl'}`}
+                    className={`font-serif font-normal tracking-[-0.045em] tabular-nums ${featured ? 'text-6xl' : 'text-3xl'}`}
                 >
                     {value}
                 </div>
@@ -701,8 +678,8 @@ function StatSkeleton({ featured = false }: { featured?: boolean }) {
 
 function Upcoming({ items, busy }: { items?: Upcoming[]; busy: boolean }) {
     return (
-        <Card className="gap-0 overflow-hidden rounded-[1.5rem] bg-card/85 py-0 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.04)] backdrop-blur-sm">
-            <CardHeader className="flex-row items-start justify-between gap-4 border-b px-5 py-5 sm:px-6">
+        <Card className="gap-0 overflow-hidden rounded-[1.5rem] border-border/90 bg-card/90 py-0 shadow-[0_1px_2px_rgba(23,53,47,0.03),0_18px_48px_rgba(23,53,47,0.05)] backdrop-blur-sm">
+            <CardHeader className="flex-row items-start justify-between gap-4 border-b bg-[#f3cf6a]/10 px-5 py-5 sm:px-6 dark:bg-[#f3cf6a]/5">
                 <div>
                     <CardTitle className="text-base tracking-tight">
                         Coming up
@@ -740,7 +717,7 @@ function Upcoming({ items, busy }: { items?: Upcoming[]; busy: boolean }) {
                                         className="group flex min-w-0 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/45 sm:px-6"
                                     >
                                         <span className="flex min-w-0 items-start gap-3">
-                                            <span className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/8 text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                                            <span className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg bg-[#f2d9d0] font-serif text-[11px] font-semibold text-[#9c3427] italic dark:bg-[#d6533c]/15 dark:text-[#f1a99f]">
                                                 {item.scheduled_for
                                                     ? new Date(
                                                           `${item.scheduled_for}T00:00:00`,
@@ -790,8 +767,8 @@ function Upcoming({ items, busy }: { items?: Upcoming[]; busy: boolean }) {
 
 function Recent({ items, busy }: { items?: Recent[]; busy: boolean }) {
     return (
-        <Card className="min-w-0 gap-0 overflow-hidden rounded-[1.5rem] bg-card/85 py-0 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.04)] backdrop-blur-sm">
-            <CardHeader className="border-b px-5 py-5 sm:px-6">
+        <Card className="min-w-0 gap-0 overflow-hidden rounded-[1.5rem] border-border/90 bg-card/90 py-0 shadow-[0_1px_2px_rgba(23,53,47,0.03),0_18px_48px_rgba(23,53,47,0.05)] backdrop-blur-sm">
+            <CardHeader className="border-b bg-[#3155a5]/6 px-5 py-5 sm:px-6 dark:bg-[#3155a5]/10">
                 <CardTitle className="text-base tracking-tight">
                     Latest work
                 </CardTitle>
@@ -933,21 +910,13 @@ function NoProject({ hasProjects }: { hasProjects: boolean }) {
         <>
             <Head title="Dashboard" />
             <div className="flex min-h-[65vh] flex-col justify-center p-6">
-                <Card className="mx-auto max-w-lg rounded-[1.75rem] border-border/70 px-4 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+                <Card className="mx-auto max-w-lg overflow-hidden rounded-[1.75rem] border-border/80 bg-card/90 px-4 py-10 text-center shadow-[0_24px_80px_rgba(23,53,47,0.1)]">
                     <CardHeader className="items-center text-center">
-                        {hasProjects ? (
-                            <span className="mb-2 flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600">
-                                <Layers className="size-6" aria-hidden="true" />
-                            </span>
-                        ) : (
-                            <span className="mb-2 flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600">
-                                <Sparkles
-                                    className="size-6"
-                                    aria-hidden="true"
-                                />
-                            </span>
-                        )}
-                        <CardTitle>
+                        <span className="mb-3 font-serif text-5xl leading-none text-[#d6533c] italic">
+                            {hasProjects ? '02' : '01'}
+                        </span>
+                        <span className="mb-3 h-px w-12 bg-border" />
+                        <CardTitle className="text-xl tracking-[-0.03em]">
                             {hasProjects
                                 ? 'Pick a project'
                                 : 'Set up your first project'}
@@ -989,21 +958,20 @@ function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
     const measured = visibility !== undefined && visibility.score !== null;
 
     return (
-        <section className="relative isolate min-h-[34rem] overflow-hidden rounded-[1.75rem] border border-white/8 bg-[#17141f] text-white shadow-[0_24px_80px_rgba(26,20,43,0.22)] xl:min-h-full">
+        <section className="relative isolate min-h-[34rem] overflow-hidden rounded-[1.75rem] border border-[#36544e] bg-[#17352f] text-[#fffaf0] shadow-[0_24px_80px_rgba(23,53,47,0.2)] xl:min-h-full">
             <div
-                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-violet-500/30 blur-3xl"
+                className="pointer-events-none absolute -top-32 -right-28 -z-10 size-80 rounded-full border-[3.25rem] border-[#d6533c]/55"
                 aria-hidden="true"
             />
             <div
-                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-orange-500/15 blur-3xl"
+                className="pointer-events-none absolute -bottom-28 left-[36%] -z-10 h-48 w-72 rotate-[-12deg] bg-[#3155a5]/35"
                 aria-hidden="true"
             />
 
             <div className="flex h-full flex-col p-6 sm:p-8">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <div className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-violet-200 uppercase">
-                            <Sparkles className="size-3.5" />
+                        <div className="text-xs font-medium tracking-[0.14em] text-[#f3cf6a] uppercase">
                             AI visibility
                         </div>
                         <p className="mt-2 text-sm text-white/50">
@@ -1029,12 +997,12 @@ function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
 
                 <div className="my-auto grid gap-10 py-10 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] md:items-end">
                     <div>
-                        <div className="flex items-start font-semibold tracking-[-0.075em] tabular-nums">
+                        <div className="flex items-start font-serif font-normal tracking-[-0.075em] tabular-nums">
                             <span className="text-[5.5rem] leading-[0.82] sm:text-[7rem]">
                                 {measured ? visibility?.score : '—'}
                             </span>
                             {measured && (
-                                <span className="ml-2 text-2xl text-violet-300">
+                                <span className="ml-2 text-2xl text-[#f3cf6a]">
                                     %
                                 </span>
                             )}
@@ -1055,7 +1023,7 @@ function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
                             </div>
                         ) : (
                             <div className="space-y-4">
-                                {visibility?.by_locale.map((row) => (
+                                {visibility?.by_locale.map((row, index) => (
                                     <div key={row.locale}>
                                         <div className="mb-2 flex items-center justify-between gap-3 text-sm">
                                             <span className="font-medium text-white/75">
@@ -1069,7 +1037,7 @@ function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
                                         </div>
                                         <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
                                             <div
-                                                className="h-full rounded-full bg-gradient-to-r from-violet-400 to-orange-300"
+                                                className={`h-full rounded-full ${index % 2 === 0 ? 'bg-[#d6533c]' : 'bg-[#3155a5]'}`}
                                                 style={{
                                                     width: `${Math.max(0, Math.min(100, row.score ?? 0))}%`,
                                                 }}
@@ -1087,7 +1055,7 @@ function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
                         <p className="text-[11px] tracking-wide text-white/40 uppercase">
                             Monitored prompts
                         </p>
-                        <p className="mt-1.5 text-xl font-semibold tabular-nums">
+                        <p className="mt-1.5 font-serif text-2xl tabular-nums">
                             {visibility?.monitored_prompts ?? '—'}
                         </p>
                     </div>
@@ -1095,7 +1063,7 @@ function LlmVisibilityCard({ visibility }: { visibility?: Visibility }) {
                         <p className="text-[11px] tracking-wide text-white/40 uppercase">
                             Brand mentions
                         </p>
-                        <p className="mt-1.5 text-xl font-semibold tabular-nums">
+                        <p className="mt-1.5 font-serif text-2xl tabular-nums">
                             {visibility === undefined
                                 ? '—'
                                 : `${visibility.mentions} / ${visibility.answered}`}

@@ -25,10 +25,9 @@ use App\Http\Controllers\VisibilityController;
 use App\Http\Middleware\AuthenticatePullApi;
 use App\Http\Middleware\VerifyThreadsSignature;
 use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
 
-// The engine has no public face. Signed in you land on the dashboard; signed
-// out, Fortify's login screen is what /dashboard redirects to.
-Route::redirect('/', '/dashboard')->name('home');
+Route::get('/', fn () => Inertia::render('marketing'))->name('home');
 
 /*
  * Whether this deployment has a social presence at all (config/social.php).

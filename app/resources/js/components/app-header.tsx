@@ -26,8 +26,8 @@ export function AppTopBar({ breadcrumbs = [] }: Props) {
     const getInitials = useInitials();
 
     return (
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-sidebar-border/70 px-4">
-            <SidebarTrigger className="-ml-1" />
+        <header className="flex h-[4.5rem] shrink-0 items-center gap-2 border-b border-border/80 bg-background/88 px-4 backdrop-blur-xl sm:px-6">
+            <SidebarTrigger className="-ml-1 border border-border/70 bg-card/70 shadow-sm" />
 
             {breadcrumbs.length > 0 && (
                 <>
@@ -44,11 +44,11 @@ export function AppTopBar({ breadcrumbs = [] }: Props) {
                     <DropdownMenuTrigger asChild>
                         <Button
                             variant="ghost"
-                            className="size-10 rounded-full p-1"
+                            className="size-10 border border-border/70 bg-card/70 p-1 shadow-sm"
                             aria-label="Account menu"
                         >
                             <Avatar className="size-8 overflow-hidden rounded-full">
-                                <AvatarFallback className="rounded-lg bg-neutral-200 text-black dark:bg-neutral-700 dark:text-white">
+                                <AvatarFallback className="rounded-full bg-[#f2d9d0] font-serif text-sm font-semibold text-[#17352f] italic dark:bg-[#f3cf6a]">
                                     {getInitials(auth.user?.name ?? '')}
                                 </AvatarFallback>
                             </Avatar>

@@ -20,11 +20,11 @@ export function WorkspacePage({
     return (
         <div className="relative isolate min-h-full overflow-hidden">
             <div
-                className="pointer-events-none absolute -top-40 right-0 -z-10 size-[32rem] rounded-full bg-violet-500/8 blur-3xl dark:bg-violet-500/5"
+                className="pointer-events-none absolute -top-52 -right-32 -z-10 size-[30rem] rounded-full border-[4rem] border-[#d6533c]/7 dark:border-[#d6533c]/10"
                 aria-hidden="true"
             />
             <div
-                className="pointer-events-none absolute top-[38rem] -left-52 -z-10 size-[28rem] rounded-full bg-orange-400/7 blur-3xl dark:bg-orange-400/4"
+                className="pointer-events-none absolute top-[36rem] -left-44 -z-10 size-[24rem] rounded-full bg-[#3155a5]/5 dark:bg-[#3155a5]/10"
                 aria-hidden="true"
             />
 
@@ -64,14 +64,14 @@ export function WorkspaceHeader({
                     <span>{eyebrow}</span>
                     {context && (
                         <>
-                            <span className="size-1 rounded-full bg-violet-500" />
+                            <span className="h-px w-5 bg-[#d6533c]" />
                             <span className="tracking-normal text-foreground/70 normal-case">
                                 {context}
                             </span>
                         </>
                     )}
                 </div>
-                <h1 className="text-3xl font-semibold tracking-[-0.04em] break-words sm:text-4xl">
+                <h1 className="text-3xl font-semibold tracking-[-0.055em] break-words sm:text-4xl">
                     {title}
                 </h1>
                 {description && (
@@ -91,4 +91,4 @@ export function WorkspaceHeader({
 
 /** Dashboard-aligned surface for substantial page sections. */
 export const workspacePanelClass =
-    'rounded-[1.5rem] border bg-card/85 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_44px_rgba(15,23,42,0.05)] backdrop-blur-sm';
+    'rounded-[1.5rem] border border-border/90 bg-card/90 shadow-[0_1px_2px_rgba(23,53,47,0.03),0_18px_48px_rgba(23,53,47,0.06)] backdrop-blur-sm';

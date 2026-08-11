@@ -186,15 +186,98 @@
      * user's appearance setting.
      */
     .marketing-page {
-        --brand-ink: #151419;
-        --brand-canvas: #f7f5f2;
-        --brand-surface: #ffffff;
-        --brand-violet: #5c3fe6;
-        --brand-coral: #ff6b4a;
-        --brand-violet-wash: #eeeafe;
-        --brand-border: #ddd9d3;
+        --brand-ink: #17352f;
+        --brand-canvas: #f3ecdd;
+        --brand-surface: #fffaf0;
+        --brand-violet: #d6533c;
+        --brand-coral: #3155a5;
+        --brand-violet-wash: #f2d9d0;
+        --brand-border: #d8cebd;
 
         color-scheme: light;
+    }
+
+    /*
+     * The signed-in product carries the same Avyo system as the public site:
+     * warm paper, dark forest, editorial tomato and cobalt accents. Scoping
+     * the tokens to the shell keeps emails and the public auth screens free to
+     * make their own contrast decisions while every workspace screen inherits
+     * one coherent component palette.
+     */
+    .product-shell {
+        --brand-ink: #17352f;
+        --brand-canvas: #f3ecdd;
+        --brand-surface: #fffaf0;
+        --brand-violet: #d6533c;
+        --brand-coral: #3155a5;
+        --brand-violet-wash: #f2d9d0;
+        --brand-border: #d8cebd;
+        --background: #f3ecdd;
+        --foreground: #17352f;
+        --card: #fffaf0;
+        --card-foreground: #17352f;
+        --popover: #fffaf0;
+        --popover-foreground: #17352f;
+        --primary: #17352f;
+        --primary-foreground: #fffaf0;
+        --secondary: #e9dfcd;
+        --secondary-foreground: #17352f;
+        --muted: #ece2d1;
+        --muted-foreground: #71695f;
+        --accent: #f2d9d0;
+        --accent-foreground: #17352f;
+        --border: #d8cebd;
+        --input: #cfc1ac;
+        --ring: #d6533c;
+        --chart-1: #d6533c;
+        --chart-2: #3155a5;
+        --chart-3: #f3cf6a;
+        --chart-4: #6c8f78;
+        --chart-5: #9f6558;
+        --radius: 1rem;
+        --sidebar: #17352f;
+        --sidebar-foreground: #f3ecdd;
+        --sidebar-primary: #f3cf6a;
+        --sidebar-primary-foreground: #17352f;
+        --sidebar-accent: #2a4943;
+        --sidebar-accent-foreground: #fffaf0;
+        --sidebar-border: #36544e;
+        --sidebar-ring: #f3cf6a;
+    }
+
+    .dark .product-shell {
+        --brand-canvas: #10241f;
+        --brand-surface: #18342e;
+        --brand-border: #36544e;
+        --background: #10241f;
+        --foreground: #f3ecdd;
+        --card: #18342e;
+        --card-foreground: #fffaf0;
+        --popover: #18342e;
+        --popover-foreground: #fffaf0;
+        --primary: #f3cf6a;
+        --primary-foreground: #17352f;
+        --secondary: #284740;
+        --secondary-foreground: #f3ecdd;
+        --muted: #24413b;
+        --muted-foreground: #b9ad99;
+        --accent: #563b35;
+        --accent-foreground: #fffaf0;
+        --border: #36544e;
+        --input: #46645d;
+        --ring: #f3cf6a;
+        --sidebar: #0c1d19;
+        --sidebar-foreground: #f3ecdd;
+        --sidebar-primary: #f3cf6a;
+        --sidebar-primary-foreground: #17352f;
+        --sidebar-accent: #234039;
+        --sidebar-accent-foreground: #fffaf0;
+        --sidebar-border: #2e4b45;
+        --sidebar-ring: #f3cf6a;
+    }
+
+    .product-shell [data-slot='button'] {
+        border-radius: 9999px;
     }
 }
 

@@ -4,7 +4,18 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#151419">
-        <meta name="description" content="Content Engine researches, writes, reviews, and publishes dependable content.">
+        <meta name="description" content="Avyo turns brand strategy into search content, social posts, and measurable organic growth.">
+        <meta property="og:site_name" content="Avyo">
+        <meta property="og:type" content="website">
+        <meta property="og:title" content="Avyo — One engine for staying visible">
+        <meta property="og:description" content="Turn brand strategy into search content, social posts, and measurable organic growth.">
+        <meta property="og:image" content="{{ url('/og.png') }}">
+        <meta property="og:image:width" content="1731">
+        <meta property="og:image:height" content="909">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="Avyo — One engine for staying visible">
+        <meta name="twitter:description" content="Turn brand strategy into search content, social posts, and measurable organic growth.">
+        <meta name="twitter:image" content="{{ url('/og.png') }}">
 
         {{-- Inline script to detect system dark mode preference and apply it immediately --}}
         <script nonce="{{ app(\Illuminate\Foundation\Vite::class)->cspNonce() }}">
@@ -38,7 +49,7 @@
         @viteReactRefresh
         @vite(['resources/css/app.css', 'resources/js/app.tsx', "resources/js/pages/{$page['component']}.tsx"])
         <x-inertia::head>
-            <title>{{ config('app.name', 'Content Engine') }}</title>
+            <title>{{ config('app.name', 'Avyo') }}</title>
         </x-inertia::head>
     </head>
     <body class="font-sans antialiased">

@@ -53,17 +53,17 @@ export function ProjectSwitcher() {
                     <DropdownMenuTrigger asChild>
                         <SidebarMenuButton
                             size="lg"
-                            className="data-[state=open]:bg-sidebar-accent"
+                            className="rounded-xl border border-sidebar-border/70 bg-white/[0.035] data-[state=open]:bg-sidebar-accent"
                             aria-label={`Project: ${current.name}. Switch project`}
                         >
-                            <div className="flex aspect-square size-8 items-center justify-center rounded-lg border bg-sidebar-accent/40 text-xs font-semibold uppercase">
+                            <div className="flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border bg-[#f3cf6a] font-serif text-xs font-semibold text-[#17352f] uppercase italic">
                                 {current.name.slice(0, 2)}
                             </div>
                             <div className="grid flex-1 text-left leading-tight">
                                 <span className="truncate text-sm font-medium">
                                     {current.name}
                                 </span>
-                                <span className="truncate text-xs text-muted-foreground">
+                                <span className="truncate text-xs text-sidebar-foreground/55">
                                     {current.default_locale}
                                     {current.status === 'paused' && ' · paused'}
                                 </span>
