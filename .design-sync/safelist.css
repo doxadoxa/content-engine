@@ -1,0 +1,160 @@
+/*
+ * Safelist for the design-system stylesheet.
+ *
+ * Tailwind v4 is JIT: it only emits a utility it has literally seen in a
+ * scanned source file. That is exactly right for the app — and exactly wrong
+ * for a design system, whose whole job is to be built with by someone whose
+ * markup does not exist yet. Without this file the claude.ai/design agent can
+ * compose our real components fine, but every class it writes for its own
+ * layout glue (`gap-6`, `md:grid-cols-3`, `text-muted-foreground`) resolves to
+ * nothing and the design renders unstyled.
+ *
+ * So we generate the vocabulary up front. Scope is deliberate: the semantic
+ * theme colors (the on-brand palette) rather than Tailwind's full default
+ * ramp, and the layout/type/spacing families a page actually needs. Arbitrary
+ * values (`bg-[#abc]`, `w-[37px]`) are compiled on demand from scanned sources
+ * and can never be safelisted — which is another reason conventions.md points
+ * the agent at the token names instead.
+ *
+ * This file is inlined into the generated `.ds-source.css` by
+ * `.design-sync/build-css.mjs`; it is never imported by the app itself.
+ */
+
+/* ── Semantic color vocabulary ─────────────────────────────────────────────
+   The @theme colors in resources/css/app.css. These are the names the agent
+   should reach for; `--brand-*` are raw CSS vars, used as `bg-[var(--brand-…)]`
+   and therefore not safelistable. */
+/* The four families that carry almost all colour work get the full variant
+   set. Everything else gets the bare utility — a `group-hover:caret-sidebar-ring`
+   is not a rule anyone will write, and the cross-product is what turns a
+   300 KB stylesheet into a 2 MB one. */
+@source inline(
+    "{,hover:,focus-visible:,active:,disabled:,group-hover:,dark:,md:}{bg,text,border,ring}-{background,foreground,card,card-foreground,popover,popover-foreground,primary,primary-foreground,secondary,secondary-foreground,muted,muted-foreground,accent,accent-foreground,destructive,destructive-foreground,border,input,ring,sidebar,sidebar-foreground,sidebar-primary,sidebar-primary-foreground,sidebar-accent,sidebar-accent-foreground,sidebar-border,sidebar-ring,chart-1,chart-2,chart-3,chart-4,chart-5,transparent,current,inherit,white,black}"
+);
+@source inline(
+    "{,hover:}{fill,stroke,outline,divide,decoration,caret,accent,shadow}-{background,foreground,card,primary,primary-foreground,secondary,muted,muted-foreground,accent,accent-foreground,destructive,border,input,ring,sidebar,sidebar-accent,chart-1,chart-2,chart-3,chart-4,chart-5,transparent,current,white,black}"
+);
+
+/* Gradients over the same palette. */
+@source inline(
+    "{,dark:}{from,via,to}-{background,foreground,card,primary,secondary,muted,accent,destructive,sidebar,chart-1,chart-2,chart-3,chart-4,chart-5,transparent,white,black}"
+);
+@source inline("bg-gradient-to-{t,tr,r,br,b,bl,l,tl}");
+@source inline("bg-linear-to-{t,tr,r,br,b,bl,l,tl}");
+
+/* Colour opacity modifiers — the common steps only. */
+@source inline(
+    "{,hover:}{bg,text,border}-{background,foreground,card,primary,secondary,muted,muted-foreground,accent,destructive,border,sidebar,chart-1,chart-2,chart-3,chart-4,chart-5,white,black}/{5,10,20,30,40,50,60,70,80,90}"
+);
+
+/* …and on stroke/fill, which SVG-based components style through. Learned the
+   hard way: PlaceholderPattern is a hatch whose only colour comes from a
+   `stroke-*` utility, and `stroke-border/70` silently rendered nothing until
+   this line existed. */
+@source inline(
+    "{stroke,fill}-{border,foreground,muted,muted-foreground,primary,accent,destructive,chart-1,chart-2,chart-3,chart-4,chart-5,white,black}/{5,10,20,30,40,50,60,70,80,90}"
+);
+
+/* ── Spacing ───────────────────────────────────────────────────────────────
+   The default spacing scale, across every family that consumes it. */
+/* The families a layout actually reaches for, across the breakpoints that
+   matter. Rarely-responsive families are listed separately below. */
+@source inline(
+    "{,sm:,md:,lg:}{p,px,py,pt,pr,pb,pl,m,mx,my,mt,mb,gap,gap-x,gap-y,size,w,h,min-h,max-w}-{0,px,0.5,1,1.5,2,2.5,3,3.5,4,5,6,7,8,9,10,11,12,14,16,20,24,28,32,36,40,48,56,64,72,80,96}"
+);
+@source inline(
+    "{ml,mr,ms,me,ps,pe,space-x,space-y,min-w,max-h,top,right,bottom,left,inset,inset-x,inset-y,translate-x,translate-y,scroll-m,scroll-p,basis,indent}-{0,px,0.5,1,1.5,2,2.5,3,3.5,4,5,6,8,10,12,14,16,20,24,32,40,48,56,64,80,96}"
+);
+@source inline("{,sm:,md:,lg:}-{m,mx,my,mt,mr,mb,ml,translate-x,translate-y}-{1,2,3,4,5,6,8,10,12,16,20,24}");
+
+/* Sizing keywords, which do not live on the numeric scale. */
+@source inline(
+    "{,sm:,md:,lg:,xl:}{w,h,size,min-w,min-h,max-w,max-h}-{auto,full,screen,svh,dvh,lvh,svw,dvw,min,max,fit,px,prose,none}"
+);
+@source inline("{,sm:,md:,lg:}{w,h}-{1,2,3,4,5,6,7,8,9,10,11}/{2,3,4,5,6,12}");
+@source inline("{,sm:,md:,lg:}max-w-{3xs,2xs,xs,sm,md,lg,xl,2xl,3xl,4xl,5xl,6xl,7xl,container}");
+@source inline("{,sm:,md:,lg:}{mx,my}-auto");
+@source inline("aspect-{auto,square,video}");
+
+/* ── Typography ────────────────────────────────────────────────────────────*/
+@source inline("{,sm:,md:,lg:}text-{xs,sm,base,lg,xl,2xl,3xl,4xl,5xl,6xl,7xl,8xl,9xl}");
+@source inline("{,sm:,md:,lg:}text-{left,center,right,justify,start,end}");
+@source inline("font-{thin,extralight,light,normal,medium,semibold,bold,extrabold,black,sans,serif,mono}");
+@source inline("{,sm:,md:,lg:}leading-{none,tight,snug,normal,relaxed,loose,3,4,5,6,7,8,9,10}");
+@source inline("tracking-{tighter,tight,normal,wide,wider,widest}");
+@source inline("{,hover:,group-hover:}{underline,overline,line-through,no-underline}");
+@source inline("underline-offset-{0,1,2,4,8}");
+@source inline("decoration-{0,1,2,4,8}");
+@source inline("{uppercase,lowercase,capitalize,normal-case,italic,not-italic,antialiased,subpixel-antialiased,truncate}");
+@source inline("line-clamp-{none,1,2,3,4,5,6}");
+@source inline("whitespace-{normal,nowrap,pre,pre-line,pre-wrap,break-spaces}");
+@source inline("{break-normal,break-words,break-all,break-keep,text-wrap,text-nowrap,text-balance,text-pretty,tabular-nums,slashed-zero}");
+@source inline("{,sm:,md:,lg:}{list-none,list-disc,list-decimal,list-inside,list-outside}");
+@source inline("align-{baseline,top,middle,bottom,text-top,text-bottom,sub,super}");
+@source inline("prose{,-sm,-base,-lg,-xl,-2xl,-invert,-neutral}");
+
+/* ── Layout ────────────────────────────────────────────────────────────────*/
+@source inline("{,sm:,md:,lg:,xl:}{block,inline-block,inline,flex,inline-flex,grid,inline-grid,table,table-cell,table-row,flow-root,contents,list-item,hidden}");
+@source inline("{,sm:,md:,lg:,xl:}flex-{row,row-reverse,col,col-reverse,wrap,wrap-reverse,nowrap,1,auto,initial,none}");
+@source inline("{,sm:,md:,lg:}{grow,shrink}{,-0}");
+@source inline("{,sm:,md:,lg:,xl:}items-{start,end,center,baseline,stretch}");
+@source inline("{,sm:,md:,lg:,xl:}justify-{start,end,center,between,around,evenly,stretch}");
+@source inline("{,sm:,md:,lg:}{content,self,place-items,place-content,place-self,justify-items,justify-self}-{start,end,center,between,around,evenly,stretch,baseline,auto}");
+@source inline("{,sm:,md:,lg:,xl:}grid-cols-{1,2,3,4,5,6,7,8,9,10,11,12,none,subgrid}");
+@source inline("{,sm:,md:,lg:,xl:}grid-rows-{1,2,3,4,5,6,7,8,9,10,11,12,none,subgrid}");
+@source inline("{,sm:,md:,lg:,xl:}{col,row}-span-{1,2,3,4,5,6,7,8,9,10,11,12,full}");
+@source inline("{,sm:,md:,lg:}{col,row}-start-{1,2,3,4,5,6,7,8,9,10,11,12,13,auto}");
+@source inline("{,sm:,md:,lg:}{col,row}-end-{1,2,3,4,5,6,7,8,9,10,11,12,13,auto}");
+@source inline("{,sm:,md:,lg:}grid-flow-{row,col,dense,row-dense,col-dense}");
+@source inline("{,sm:,md:,lg:}order-{first,last,none,1,2,3,4,5,6,7,8,9,10,11,12}");
+@source inline("{,sm:,md:,lg:}{static,fixed,absolute,relative,sticky}");
+@source inline("{,sm:,md:,lg:}z-{0,10,20,30,40,50,auto}");
+@source inline("{,sm:,md:,lg:}overflow-{auto,hidden,clip,visible,scroll}");
+@source inline("{,sm:,md:,lg:}overflow-{x,y}-{auto,hidden,clip,visible,scroll}");
+@source inline("{,sm:,md:,lg:}{container,box-border,box-content,isolate,float-left,float-right,float-none,clear-both}");
+@source inline("object-{contain,cover,fill,none,scale-down,top,bottom,center,left,right}");
+@source inline("{,sm:,md:,lg:}columns-{1,2,3,4,5,6,auto}");
+
+/* ── Borders, radii, effects ───────────────────────────────────────────────*/
+@source inline("{,sm:,md:,lg:}rounded{,-t,-r,-b,-l,-tl,-tr,-br,-bl,-s,-e,-ss,-se,-es,-ee}{,-none,-xs,-sm,-md,-lg,-xl,-2xl,-3xl,-4xl,-full}");
+@source inline("{,hover:,focus:,dark:}border{,-t,-r,-b,-l,-x,-y,-s,-e}{,-0,-2,-4,-8}");
+@source inline("border-{solid,dashed,dotted,double,hidden,none}");
+@source inline("divide-{x,y}{,-0,-2,-4,-8}");
+@source inline("{,hover:,dark:}shadow-{2xs,xs,sm,md,lg,xl,2xl,none,inner}");
+@source inline("{,hover:,dark:}{inset-shadow,drop-shadow}-{xs,sm,md,lg,xl,2xl,none}");
+@source inline("{,hover:,focus:,focus-visible:}ring{,-0,-1,-2,-4,-8,-inset}");
+@source inline("ring-offset-{0,1,2,4,8}");
+@source inline("outline{,-0,-1,-2,-4,-8,-none,-hidden,-offset-0,-offset-1,-offset-2,-offset-4}");
+@source inline("{,hover:,group-hover:,dark:}opacity-{0,5,10,15,20,25,30,40,50,60,70,75,80,90,95,100}");
+@source inline("{,dark:}{blur,backdrop-blur}-{none,xs,sm,md,lg,xl,2xl,3xl}");
+@source inline("{,dark:}{brightness,contrast,saturate}-{0,50,75,90,95,100,105,110,125,150,200}");
+@source inline("{grayscale,invert,sepia}{,-0}");
+@source inline("mix-blend-{normal,multiply,screen,overlay,darken,lighten,difference,exclusion}");
+@source inline("bg-{cover,contain,auto,center,top,bottom,left,right,no-repeat,repeat,fixed,local,scroll,clip-border,clip-padding,clip-text,origin-border}");
+
+/* ── Motion & interaction ──────────────────────────────────────────────────*/
+@source inline("transition{,-all,-colors,-opacity,-shadow,-transform,-none}");
+@source inline("duration-{0,75,100,150,200,300,500,700,1000}");
+@source inline("delay-{0,75,100,150,200,300,500,700,1000}");
+@source inline("ease-{linear,in,out,in-out,initial}");
+@source inline("animate-{none,spin,ping,pulse,bounce}");
+@source inline("{,hover:,focus:,active:,group-hover:}{scale,rotate}-{0,50,75,90,95,100,105,110,125,150,1,2,3,6,12,45,90,180}");
+@source inline("origin-{center,top,top-right,right,bottom-right,bottom,bottom-left,left,top-left}");
+@source inline("cursor-{auto,default,pointer,wait,text,move,help,not-allowed,grab,grabbing,none}");
+@source inline("{select-none,select-text,select-all,select-auto,pointer-events-none,pointer-events-auto,resize,resize-none,resize-x,resize-y}");
+@source inline("{,focus:,focus-visible:,focus-within:}{sr-only,not-sr-only}");
+@source inline("{,sm:,md:,lg:}scroll-{auto,smooth}");
+@source inline("appearance-{none,auto}");
+@source inline("{,hover:,dark:}backdrop-{brightness,opacity}-{0,25,50,75,90,100}");
+
+/* Data-attribute variants the Radix-backed components expose, so the agent can
+   style open/closed and selected states on its own compositions too. */
+@source inline(
+    "data-[state=open]:{bg,text,border}-{primary,secondary,muted,accent,card,sidebar-accent}"
+);
+@source inline(
+    "data-[state=closed]:{opacity-0,opacity-100,hidden}"
+);
+@source inline(
+    "{data-[state=active]:,data-[state=checked]:,data-[disabled]:,aria-selected:,aria-expanded:}{bg,text,border}-{primary,primary-foreground,secondary,muted,muted-foreground,accent,accent-foreground,background,foreground}"
+);
