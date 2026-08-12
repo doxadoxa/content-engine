@@ -273,6 +273,70 @@ final class ProjectLaunchTest extends TestCase
     }
 
     #[Test]
+    public function launching_a_project_also_reads_the_website_it_was_given(): void
+    {
+        Queue::fake();
+
+        $project = Project::factory()->onboarding()->create(['website_url' => 'https://example.test']);
+
+        app(ProjectLaunch::class)->begin($project);
+
+        // The wizard has just handed us a website, which is the only moment the
+        // audit knows one exists. A third independent contour beside research
+        // and the Studio: none of the three needs the others, and one provider
+        // failing must not silently cancel the other two.
+        $this->assertSame(
+            1,
+            PipelineRun::acrossProjects()->where('pipeline', 'site_audit')->count(),
+        );
+    }
+
+    #[Test]
+    public function a_project_with_no_website_launches_without_an_audit(): void
+    {
+        Queue::fake();
+
+        $project = Project::factory()->onboarding()->create(['website_url' => null]);
+
+        app(ProjectLaunch::class)->begin($project);
+
+        // Refused where the caller is standing rather than as a failed run on
+        // the operator's very first screen.
+        $this->assertSame(
+            0,
+            PipelineRun::acrossProjects()->where('pipeline', 'site_audit')->count(),
+        );
+    }
+
+    #[Test]
+    public function a_crawl_still_running_does_not_hold_the_launch_spinner_on(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->create(['website_url' => 'https://example.test']);
+        $operator->projects()->attach($project);
+
+        app(ProjectLaunch::class)->begin($project);
+
+        // Everything the launch is actually waiting for has finished; only the
+        // site audit is still going. A crawl of a hundred pages is ten minutes
+        // of waiting on somebody else's server, and its result appears on a
+        // different screen — so the dashboard must stop saying "setting up".
+        PipelineRun::acrossProjects()
+            ->whereNot('pipeline', 'site_audit')
+            ->update(['status' => PipelineRunStatus::Completed, 'finished_at' => now()]);
+
+        $this->actingAs($operator)->get('/dashboard')->assertOk();
+
+        $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
+        $this->assertTrue(
+            PipelineRun::acrossProjects()->where('pipeline', 'site_audit')->exists(),
+            'And the audit is still there, running.',
+        );
+    }
+
+    #[Test]
     public function a_project_that_is_not_launching_is_left_alone(): void
     {
         Queue::fake();

@@ -82,6 +82,10 @@ generation skip when they are not configured.
   repurpose, and feedback work that is due.
 - `publish:approved` every 30 minutes to send approved content to verified
   automatic webhook destinations.
+- `audit:sweep` daily, which starts a site audit only for projects whose last
+  reading has gone stale (`AUDIT_REFRESH_AFTER_DAYS`, a week by default). The
+  audit is deliberately outside `engine:tick`'s contour: it feeds none of the
+  pipelines the tick runs, so neither waits for the other.
 
 Useful manual commands:
 
@@ -92,7 +96,13 @@ php artisan pipeline:run <pipeline> <project>
 php artisan publish:approved <project>
 php artisan publish:replay <delivery-uuid>
 php artisan pipeline:cost <project> --days=30
+php artisan audit:sweep --project=<slug> --force
 ```
+
+Horizon runs four worker pools. `pipeline` and `pipeline-expensive` keep quick
+steps away from model calls (§3.2); `pipeline-audit` is a third kind of work —
+slow at the network and cheap everywhere else — so a hundred sequential requests
+to a customer's server never sit in front of an article that is due.
 
 A pipeline is a dependency graph of step classes configured in
 [`config/pipeline.php`](config/pipeline.php). Run and step state is persisted;
@@ -223,6 +233,7 @@ php artisan wayfinder:generate --with-form
 ```text
 app/Pipelines/Core/              durable pipeline orchestration
 app/Pipelines/Definitions/       pipeline graphs
+app/Audit/                       site audit checks, crawler, and scoring
 app/Publishing/                  webhook/pull contracts and delivery
 app/Support/Http/                outbound network and URL safety
 app/Support/Tenancy/             current-project context and scope

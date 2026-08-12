@@ -3,6 +3,7 @@ import {
     Activity,
     BookMarked,
     CalendarDays,
+    Gauge,
     Inbox,
     LayoutDashboard,
     MessageSquareText,
@@ -27,6 +28,7 @@ import {
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
 import { index as approvalsIndex } from '@/routes/approvals';
+import { index as auditIndex } from '@/routes/audit';
 import { edit as briefEdit } from '@/routes/brief';
 import { index as calendarIndex } from '@/routes/calendar';
 import { index as channelsIndex } from '@/routes/channels';
@@ -181,6 +183,17 @@ export function AppSidebar() {
                                 href={visibilityIndex().url}
                                 icon={Sparkles}
                                 label="Prompt analysis"
+                                current={url}
+                            />
+                            {/* Last of the three, and deliberately: the other
+                                two are about what the writing achieved, and
+                                this is about whether the site it lands on can
+                                be read at all. An operator reaches for it when
+                                one of the two above is disappointing. */}
+                            <NavLink
+                                href={auditIndex().url}
+                                icon={Gauge}
+                                label="Site audit"
                                 current={url}
                             />
                         </SidebarMenu>

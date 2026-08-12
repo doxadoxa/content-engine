@@ -68,6 +68,33 @@ Schedule::command('pipeline:reap')
 
 /*
 |--------------------------------------------------------------------------
+| The site the engine writes for
+|--------------------------------------------------------------------------
+|
+| Its own entry rather than a branch of the tick, by the same rule that gives
+| `social:listen` one: `EngineTickCommand` waits while the article contour is
+| working, and a site audit feeds none of those six pipelines. A project halfway
+| through drafting has more reason to know its sitemap is broken than an idle
+| one, not less — the article is about to be published into that sitemap.
+|
+| Daily, and it starts almost nothing. `audit:sweep` asks per project whether
+| the last reading is older than `audit.refresh_after_days`, so this produces a
+| weekly crawl per project, spread across the week by when each one last had one.
+| A weekly schedule entry would instead point every project's crawl at the same
+| minute, which is a thundering herd aimed at customers' servers.
+|
+| Early, and before the working day in every timezone this runs projects in: a
+| crawl is the most visible thing this engine does to somebody else's site, and
+| it should happen while their traffic is at its lowest.
+|
+*/
+Schedule::command('audit:sweep')
+    ->dailyAt('03:40')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+/*
+|--------------------------------------------------------------------------
 | Everything below this line is the social presence
 |--------------------------------------------------------------------------
 |

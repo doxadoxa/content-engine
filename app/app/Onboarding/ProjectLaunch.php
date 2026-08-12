@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Onboarding;
 
+use App\Audit\SiteAuditStarter;
+use App\Console\Commands\EngineTickCommand;
 use App\ContentStudio\ContentStudioAction;
 use App\ContentStudio\ContentStudioOperations;
 use App\Enums\ContentItemState;
@@ -41,10 +43,39 @@ class ProjectLaunch
      */
     private const int FIRST_DRAFTS = 3;
 
+    /**
+     * The pipelines a launch is waiting for.
+     *
+     * Named rather than "anything in flight", which is what the two settling
+     * checks below used to ask. The site audit is started by the launch and is
+     * not part of it: a crawl of a hundred pages takes ten minutes of waiting on
+     * somebody else's server, and counting it would keep the dashboard showing
+     * "setting up" long after the articles it is really waiting for were
+     * written. The operator would be looking at a spinner for a job whose
+     * result appears on a different screen.
+     *
+     * The same shape and the same reasoning as
+     * {@see EngineTickCommand::CONTOUR}: a list, because
+     * it is a rule about which work feeds which, and a derived set would grow
+     * silently the day another pipeline is started from here.
+     *
+     * @var list<string>
+     */
+    private const array LAUNCH_PIPELINES = [
+        'research',
+        'planning',
+        'generation',
+        // Spelled out rather than ContentStudioPipeline::key(), which a class
+        // constant cannot call. The keys are database values and the other
+        // three are literals here for the same reason.
+        'content_studio',
+    ];
+
     public function __construct(
         private readonly PipelineRunner $runner,
         private readonly CurrentProject $current,
         private readonly ContentStudioOperations $studio,
+        private readonly SiteAuditStarter $audits,
     ) {}
 
     /** The first step: find out what this business could write about. */
@@ -54,6 +85,15 @@ class ProjectLaunch
 
         $research = $this->runner->start('research', $project);
         $this->startContentStudio($project);
+
+        // The site the engine is about to write *for*, read once at the start.
+        // Beside research rather than after it, and a third independent contour
+        // rather than a link in the chain: it needs nothing research produces,
+        // nothing downstream needs its result, and a site whose sitemap is
+        // unreachable must not stop a project from being planned. It is also
+        // the moment the operator has just handed us a website, which is the
+        // whole reason the audit knows one exists.
+        $this->audits->start($project);
 
         return $research;
     }
@@ -148,6 +188,7 @@ class ProjectLaunch
 
         $live = PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
+            ->whereIn('pipeline', self::LAUNCH_PIPELINES)
             ->inFlight()
             ->exists();
 
@@ -247,6 +288,7 @@ class ProjectLaunch
     {
         $stillRunning = PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
+            ->whereIn('pipeline', self::LAUNCH_PIPELINES)
             ->whereIn('status', [PipelineRunStatus::Pending->value, PipelineRunStatus::Running->value])
             ->exists();
 
