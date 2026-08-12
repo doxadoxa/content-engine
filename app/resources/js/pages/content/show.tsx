@@ -3,7 +3,6 @@ import {
     AlertTriangle,
     ArrowLeft,
     ExternalLink,
-    FileText,
     Send,
     Undo2,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
+import { cn } from '@/lib/utils';
 import { index, publish } from '@/routes/content';
 import type { ArticleData, ScoreCheck } from './score-panel';
 import { ArticleDataPanel, ScorePanel } from './score-panel';
@@ -38,6 +38,14 @@ type Delivery = {
     attempts: number;
     error: string | null;
     created_at: string | null;
+};
+
+type LocaleVersion = {
+    id: string;
+    locale: string;
+    state: string;
+    state_label: string;
+    is_self: boolean;
 };
 
 type Props = {
@@ -80,7 +88,7 @@ type Props = {
         is_active: boolean;
         tone: string;
     } | null;
-    locales: { id: string; locale: string; state: string; is_self: boolean }[];
+    locales: LocaleVersion[];
     derivatives: {
         id: string;
         title: string;
@@ -110,9 +118,6 @@ export default function ContentShow({
     // Null until the operator asks, so the dialog is not mounted around an
     // article nobody is sending anywhere.
     const [sendingBack, setSendingBack] = useState<SendBackTarget | null>(null);
-    const missing = Object.entries(item.entity_coverage)
-        .filter(([, covered]) => !covered)
-        .map(([entity]) => entity);
     const bodyHtml = demoteArticleHeadings(item.body_html);
 
     return (
@@ -128,7 +133,7 @@ export default function ContentShow({
             <WorkspacePage width="reading">
                 <WorkspaceHeader
                     eyebrow="Article workspace"
-                    context={`${item.locale} · ${item.state_label}`}
+                    context={`${item.type_label} · ${item.locale}`}
                     title={item.title}
                     description={
                         item.target_query === null
@@ -150,36 +155,10 @@ export default function ContentShow({
                                     Content plan
                                 </Link>
                             </Button>
-                            <Badge className="h-9 rounded-full px-3">
-                                {item.state_label}
-                            </Badge>
-                            {/*
-                              A unit being rewritten is a `draft`, exactly like
-                              one that is finished and waiting — so the state
-                              badge alone made sending an article back look like
-                              a button that had done nothing.
-                            */}
-                            {rewriting !== null && (
-                                <Badge
-                                    variant="outline"
-                                    className="h-9 gap-2 rounded-full border-violet-500/20 bg-background/70 px-3 text-violet-700 dark:text-violet-200"
-                                >
-                                    <Spinner className="size-3.5" />
-                                    Rewriting · {rewriting.done} of{' '}
-                                    {rewriting.total}
-                                </Badge>
-                            )}
-                            <Badge
-                                variant="outline"
-                                className="h-9 rounded-full bg-background/70 px-3"
-                            >
-                                {item.type_label}
-                            </Badge>
                             {item.state === 'approved' && (
                                 <Button
                                     type="button"
-                                    variant="outline"
-                                    className="rounded-full bg-background/70 shadow-sm"
+                                    variant="secondary"
                                     onClick={() =>
                                         setSendingBack({
                                             id: item.id,
@@ -233,54 +212,41 @@ export default function ContentShow({
                                 </Form>
                             )}
                             {item.public_url !== null && (
-                                <a
-                                    href={item.public_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex h-11 items-center gap-1.5 rounded-full border bg-background/70 px-4 text-sm font-medium shadow-sm transition-colors hover:bg-accent"
-                                >
-                                    Live
-                                    <ExternalLink
-                                        className="size-3"
-                                        aria-hidden="true"
-                                    />
-                                </a>
+                                <Button variant="ghost" asChild>
+                                    <a
+                                        href={item.public_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        View live article
+                                        <ExternalLink
+                                            className="size-3.5"
+                                            aria-hidden="true"
+                                        />
+                                    </a>
+                                </Button>
                             )}
                         </>
                     }
                 />
 
-                <section
-                    className={`${workspacePanelClass} flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-4 text-sm sm:px-6`}
-                    aria-label="Article overview"
-                >
-                    <span className="flex items-center gap-2 font-medium">
-                        <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300">
-                            <FileText className="size-4" aria-hidden="true" />
-                        </span>
-                        Editorial review
-                    </span>
-                    <span className="text-muted-foreground">
-                        Score{' '}
-                        <strong className="font-semibold text-foreground">
-                            {item.score}/100
-                        </strong>
-                    </span>
-                    <span className="text-muted-foreground">
-                        {locales.length}{' '}
-                        {locales.length === 1 ? 'language' : 'languages'}
-                    </span>
-                    <span className="text-muted-foreground">
-                        {deliveries.length}{' '}
-                        {deliveries.length === 1 ? 'delivery' : 'deliveries'}
-                    </span>
-                </section>
+                <LanguageVersionNav locales={locales} />
+
+                <ArticleReviewSummary
+                    state={item.state}
+                    stateLabel={item.state_label}
+                    score={item.score}
+                    publishable={item.publishable}
+                    blocking={item.blocking}
+                    deliveries={deliveries.length}
+                    rewriting={rewriting}
+                />
 
                 {item.factcheck.passed === false && (
-                    <Card className="rounded-[1.5rem] border-amber-500/50 bg-amber-50/50 shadow-none dark:bg-amber-950/20">
+                    <Card className="rounded-[1.5rem] border-chart-3/50 bg-chart-3/10 shadow-none">
                         <CardHeader className="flex-row items-start gap-3 space-y-0">
                             <AlertTriangle
-                                className="mt-0.5 size-5 shrink-0 text-amber-600"
+                                className="mt-0.5 size-5 shrink-0 text-foreground"
                                 aria-hidden="true"
                             />
                             <div>
@@ -341,7 +307,7 @@ export default function ContentShow({
                                    than as small grey text under a heading: it
                                    is the thing an AI answer lifts, and the
                                    first thing a reviewer reads. */
-                                <p className="mb-8 rounded-r-2xl border-l-2 border-violet-500/50 bg-violet-500/[0.045] px-5 py-4 text-base leading-relaxed italic">
+                                <p className="mb-8 border-l-2 border-chart-1 bg-chart-1/5 px-5 py-4 text-base leading-relaxed">
                                     {item.summary}
                                 </p>
                             )}
@@ -380,78 +346,66 @@ export default function ContentShow({
                         <Card className={workspacePanelClass}>
                             <CardHeader>
                                 <CardTitle className="text-base">
-                                    Languages
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent className="flex flex-wrap gap-1">
-                                {locales.map((locale) => (
-                                    <Link
-                                        key={locale.id}
-                                        href={`/content/${locale.id}`}
-                                    >
-                                        <Badge
-                                            variant={
-                                                locale.is_self
-                                                    ? 'default'
-                                                    : 'outline'
-                                            }
-                                        >
-                                            {locale.locale}
-                                        </Badge>
-                                    </Link>
-                                ))}
-                            </CardContent>
-                        </Card>
-
-                        <Card className={workspacePanelClass}>
-                            <CardHeader>
-                                <CardTitle className="text-base">
-                                    Written from
+                                    Editorial context
                                 </CardTitle>
                                 <CardDescription>
-                                    {brief === null
-                                        ? 'No brief recorded.'
-                                        : `Brief v${brief.version}${brief.is_active ? ' (live)' : ' (superseded)'}`}
+                                    Provenance and coverage for this version.
                                 </CardDescription>
                             </CardHeader>
-                            {brief !== null && (
-                                <CardContent className="text-sm text-muted-foreground">
-                                    {brief.tone}
-                                </CardContent>
-                            )}
-                        </Card>
-
-                        <Card className={workspacePanelClass}>
-                            <CardHeader>
-                                <CardTitle className="text-base">
-                                    Entity coverage
-                                </CardTitle>
-                                <CardDescription>
-                                    Measured against the text, not declared.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="flex flex-wrap gap-1">
-                                {Object.entries(item.entity_coverage).map(
-                                    ([entity, covered]) => (
-                                        <Badge
-                                            key={entity}
-                                            variant={
-                                                covered
-                                                    ? 'outline'
-                                                    : 'destructive'
-                                            }
-                                        >
-                                            {entity}
-                                        </Badge>
-                                    ),
-                                )}
-                                {missing.length === 0 &&
-                                    Object.keys(item.entity_coverage).length ===
-                                        0 && (
-                                        <span className="text-sm text-muted-foreground">
-                                            No entities recorded.
-                                        </span>
+                            <CardContent className="grid gap-5">
+                                <section>
+                                    <p className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                                        Written from
+                                    </p>
+                                    <p className="mt-2 text-sm font-medium">
+                                        {brief === null
+                                            ? 'No brief recorded'
+                                            : `Brand brief v${brief.version}`}
+                                    </p>
+                                    {brief !== null && (
+                                        <>
+                                            <p className="mt-0.5 text-xs text-muted-foreground">
+                                                {brief.is_active
+                                                    ? 'Current brief'
+                                                    : 'Superseded brief'}
+                                            </p>
+                                            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                                                {brief.tone}
+                                            </p>
+                                        </>
                                     )}
+                                </section>
+
+                                <section className="border-t pt-5">
+                                    <p className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                                        Entity coverage
+                                    </p>
+                                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                        Measured against the article text.
+                                    </p>
+                                    <div className="mt-3 flex flex-wrap gap-1.5">
+                                        {Object.entries(
+                                            item.entity_coverage,
+                                        ).map(([entity, covered]) => (
+                                            <Badge
+                                                key={entity}
+                                                variant={
+                                                    covered
+                                                        ? 'outline'
+                                                        : 'destructive'
+                                                }
+                                            >
+                                                {entity}
+                                            </Badge>
+                                        ))}
+                                        {Object.keys(item.entity_coverage)
+                                            .length === 0 && (
+                                            <span className="text-sm text-muted-foreground">
+                                                No entities recorded.
+                                            </span>
+                                        )}
+                                    </div>
+                                </section>
                             </CardContent>
                         </Card>
                     </aside>
@@ -564,6 +518,214 @@ export default function ContentShow({
                 </Card>
             </WorkspacePage>
         </>
+    );
+}
+
+/**
+ * Locale variants are peer documents, not a filter over this one. Keeping them
+ * as real links preserves browser navigation while presenting the set where a
+ * reviewer starts, rather than after the article in the details rail.
+ */
+function LanguageVersionNav({ locales }: { locales: LocaleVersion[] }) {
+    return (
+        <nav
+            className={`${workspacePanelClass} grid gap-4 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(12rem,0.35fr)_minmax(0,1fr)] lg:items-center`}
+            aria-label="Article language versions"
+        >
+            <div>
+                <p className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+                    Language versions
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                    Switch markets without leaving the review.
+                </p>
+            </div>
+
+            <div className="flex min-w-0 gap-2 overflow-x-auto pb-1 lg:justify-end">
+                {locales.map((locale) => (
+                    <Link
+                        key={locale.id}
+                        href={`/content/${locale.id}`}
+                        aria-current={locale.is_self ? 'page' : undefined}
+                        className={cn(
+                            'flex min-h-12 min-w-40 shrink-0 items-center justify-between gap-4 rounded-xl border px-4 py-2.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                            locale.is_self
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-border bg-background/60 text-foreground hover:border-primary/40 hover:bg-accent',
+                        )}
+                    >
+                        <span className="min-w-0">
+                            <span className="block truncate text-sm font-semibold">
+                                {localeDisplayName(locale.locale)}
+                            </span>
+                            <span
+                                className={cn(
+                                    'block text-xs',
+                                    locale.is_self
+                                        ? 'text-primary-foreground/70'
+                                        : 'text-muted-foreground',
+                                )}
+                            >
+                                {locale.locale}
+                            </span>
+                        </span>
+                        <span
+                            className={cn(
+                                'shrink-0 text-xs font-medium',
+                                locale.is_self
+                                    ? 'text-primary-foreground'
+                                    : 'text-muted-foreground',
+                            )}
+                        >
+                            {locale.is_self ? 'Current' : locale.state_label}
+                        </span>
+                    </Link>
+                ))}
+            </div>
+        </nav>
+    );
+}
+
+function ArticleReviewSummary({
+    state,
+    stateLabel,
+    score,
+    publishable,
+    blocking,
+    deliveries,
+    rewriting,
+}: {
+    state: string;
+    stateLabel: string;
+    score: number;
+    publishable: boolean;
+    blocking: string[];
+    deliveries: number;
+    rewriting: Props['rewriting'];
+}) {
+    return (
+        <section
+            className={`${workspacePanelClass} grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(13rem,1.2fr)_repeat(3,minmax(0,1fr))] lg:gap-0`}
+            aria-label="Article review status"
+        >
+            <div className="lg:border-r lg:pr-6">
+                <p className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+                    Publishing status
+                </p>
+                <div className="mt-2 flex items-center gap-2.5">
+                    <span
+                        className={cn(
+                            'size-2.5 shrink-0 rounded-full',
+                            contentStateDot(state),
+                        )}
+                        aria-hidden="true"
+                    />
+                    <p className="text-xl font-semibold tracking-tight">
+                        {stateLabel}
+                    </p>
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {contentStateDescription(state)}
+                </p>
+                {rewriting !== null && (
+                    <p className="mt-3 flex items-center gap-2 text-xs font-medium text-foreground">
+                        <Spinner className="size-3.5" />
+                        Rewriting {rewriting.done} of {rewriting.total}
+                    </p>
+                )}
+            </div>
+
+            <ReviewMetric
+                label="Review score"
+                value={`${score}/100`}
+                hint={
+                    score >= 80 ? 'Strong editorial shape' : 'Review the checks'
+                }
+            />
+            <ReviewMetric
+                label="Readiness"
+                value={publishable ? 'Ready' : 'Needs work'}
+                hint={
+                    publishable
+                        ? 'No publishing blockers'
+                        : `${blocking.length} blocking ${blocking.length === 1 ? 'check' : 'checks'}`
+                }
+            />
+            <ReviewMetric
+                label="Delivery history"
+                value={deliveries.toLocaleString()}
+                hint={
+                    deliveries === 1 ? 'Recorded attempt' : 'Recorded attempts'
+                }
+            />
+        </section>
+    );
+}
+
+function ReviewMetric({
+    label,
+    value,
+    hint,
+}: {
+    label: string;
+    value: string;
+    hint: string;
+}) {
+    return (
+        <dl className="border-t pt-4 lg:border-t-0 lg:border-r lg:px-6 lg:pt-0 last:lg:border-r-0">
+            <dt className="text-xs font-medium text-muted-foreground">
+                {label}
+            </dt>
+            <dd className="mt-1 font-serif text-2xl font-semibold tracking-tight">
+                {value}
+            </dd>
+            <dd className="mt-0.5 text-xs text-muted-foreground">{hint}</dd>
+        </dl>
+    );
+}
+
+function localeDisplayName(locale: string): string {
+    try {
+        return (
+            new Intl.DisplayNames(undefined, { type: 'language' }).of(locale) ??
+            locale
+        );
+    } catch {
+        return locale;
+    }
+}
+
+function contentStateDot(state: string): string {
+    if (state === 'approved') {
+        return 'bg-chart-2';
+    }
+
+    if (state === 'published') {
+        return 'bg-primary';
+    }
+
+    if (state === 'generating' || state === 'queued') {
+        return 'bg-chart-3';
+    }
+
+    if (state === 'refreshing') {
+        return 'animate-pulse bg-chart-1';
+    }
+
+    return 'bg-chart-1';
+}
+
+function contentStateDescription(state: string): string {
+    return (
+        {
+            idea: 'Captured, but not scheduled for production',
+            queued: 'Waiting for a generation worker',
+            generating: 'The article is being written',
+            draft: 'Written and waiting for editorial review',
+            approved: 'Signed off and ready for delivery',
+            published: 'Live on at least one channel',
+            refreshing: 'Live while a refreshed draft is prepared',
+        }[state] ?? 'Current state of this article version'
     );
 }
 

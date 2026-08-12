@@ -83,10 +83,12 @@ class ContentItemDetailController extends Controller
                 'tone' => $brief->tone,
             ],
             'locales' => $item->localeVariants
+                ->sortBy('locale')
                 ->map(fn (ContentItem $sibling): array => [
                     'id' => $sibling->getKey(),
                     'locale' => $sibling->locale,
                     'state' => $sibling->state->value,
+                    'state_label' => $sibling->state->label(),
                     'is_self' => $sibling->is($item),
                 ])->values()->all(),
             'derivatives' => $item->derivatives
