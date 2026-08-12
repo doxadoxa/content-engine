@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Http;
 
 use App\Enums\AuditSeverity;
+use App\Enums\PipelineRunStatus;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\SiteAudit;
@@ -198,6 +199,63 @@ final class SiteAuditScreenTest extends TestCase
             1,
             PipelineRun::acrossProjects()->where('pipeline', 'site_audit_fix_plan')->count(),
         );
+    }
+
+    #[Test]
+    public function a_fix_plan_that_failed_is_reported_rather_than_leaving_the_button_looking_untouched(): void
+    {
+        $audit = SiteAudit::factory()->create();
+
+        PipelineRun::query()->create([
+            'pipeline' => 'site_audit_fix_plan',
+            'status' => PipelineRunStatus::Failed,
+            'input' => ['site_audit_id' => (string) $audit->getKey()],
+            'error' => ['message' => 'The openai call failed: timed out'],
+            'started_at' => now()->subMinutes(4),
+            'finished_at' => now(),
+        ]);
+
+        $this->actingAs($this->user)
+            ->get('/audit')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('fix_plan_run.status', 'failed')
+                ->where('fix_plan_run.error', 'The openai call failed: timed out')
+                ->where('is_writing_fix_plan', false));
+    }
+
+    #[Test]
+    public function a_fix_plan_still_running_reports_how_long_it_has_been(): void
+    {
+        $audit = SiteAudit::factory()->create();
+
+        PipelineRun::query()->create([
+            'pipeline' => 'site_audit_fix_plan',
+            'status' => PipelineRunStatus::Running,
+            'input' => ['site_audit_id' => (string) $audit->getKey()],
+            'started_at' => now()->subMinutes(9),
+        ]);
+
+        // The clock is the server's: a run going for nine minutes has to be
+        // distinguishable from one that started a moment ago, and the client
+        // cannot tell without reading a clock while it renders.
+        $this->actingAs($this->user)
+            ->get('/audit')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('is_writing_fix_plan', true)
+                ->where('fix_plan_run.running_for_minutes', 9));
+    }
+
+    #[Test]
+    public function a_sweep_nobody_has_asked_a_plan_for_says_nothing_about_one(): void
+    {
+        SiteAudit::factory()->create();
+
+        $this->actingAs($this->user)
+            ->get('/audit')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('fix_plan_run', null));
     }
 
     #[Test]

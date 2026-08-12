@@ -12,6 +12,7 @@ use App\Pipelines\Core\PipelineRunner;
 use App\Pipelines\Definitions\SiteAuditFixPlanPipeline;
 use App\Pipelines\Definitions\SiteAuditPipeline;
 use App\Support\Tenancy\CurrentProject;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -151,12 +152,34 @@ class SiteAuditStarter
 
     public function isWritingFixPlan(Project $project, SiteAudit $audit): bool
     {
+        return $this->fixPlanRuns($project, $audit)->inFlight()->exists();
+    }
+
+    /**
+     * What happened the last time somebody asked for a plan for this sweep.
+     *
+     * `null` when nobody has, and otherwise the run's own status. The screen
+     * needs this because a fix plan is the only thing in the section an
+     * operator presses and then waits for: without it a run that failed just
+     * puts the button back, unchanged, with no plan and no explanation — which
+     * reads as the button not working. It is also how a run that has been
+     * grinding for half an hour becomes visible as something other than
+     * progress.
+     */
+    public function lastFixPlanRun(Project $project, SiteAudit $audit): ?PipelineRun
+    {
+        return $this->fixPlanRuns($project, $audit)->latest()->first();
+    }
+
+    /**
+     * @return Builder<PipelineRun>
+     */
+    private function fixPlanRuns(Project $project, SiteAudit $audit): Builder
+    {
         return PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
             ->where('pipeline', SiteAuditFixPlanPipeline::key())
-            ->where('input->site_audit_id', (string) $audit->getKey())
-            ->inFlight()
-            ->exists();
+            ->where('input->site_audit_id', (string) $audit->getKey());
     }
 
     /**

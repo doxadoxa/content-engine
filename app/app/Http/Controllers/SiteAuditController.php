@@ -77,6 +77,7 @@ class SiteAuditController extends Controller
             'checks' => $this->checks->describe(),
             'is_running' => $this->audits->isRunning($project),
             'is_writing_fix_plan' => $audit !== null && $this->audits->isWritingFixPlan($project, $audit),
+            'fix_plan_run' => $audit === null ? null : $this->fixPlanRun($project, $audit),
             'project' => [
                 'name' => $project->name,
                 'website_url' => $project->website_url,
@@ -122,6 +123,40 @@ class SiteAuditController extends Controller
         return $run === null
             ? $this->back('info', 'A fix plan for this sweep is already being written.')
             : $this->back('success', 'Writing a fix plan from the latest sweep.');
+    }
+
+    /**
+     * What became of the last request for a fix plan.
+     *
+     * A plan is the only thing in this section an operator presses and then
+     * waits for, so it is the only one where "nothing happened" needs an
+     * explanation. A failed run otherwise just puts the button back with no
+     * plan beside it, which reads as a button that does not work; and a run
+     * that has been going for half an hour looks exactly like one that started
+     * a moment ago.
+     *
+     * How long it has been going is measured here rather than on the client.
+     * The clock belongs to the server — it is the one that knows when the run
+     * started — and reading `Date.now()` while rendering is a side effect the
+     * React compiler is right to refuse.
+     *
+     * @return array{status: string, running_for_minutes: int|null, error: string|null}|null
+     */
+    private function fixPlanRun(Project $project, SiteAudit $audit): ?array
+    {
+        $run = $this->audits->lastFixPlanRun($project, $audit);
+
+        if ($run === null) {
+            return null;
+        }
+
+        return [
+            'status' => $run->status->value,
+            'running_for_minutes' => $run->started_at === null
+                ? null
+                : (int) $run->started_at->diffInMinutes(now(), absolute: true),
+            'error' => is_string($run->error['message'] ?? null) ? $run->error['message'] : null,
+        ];
     }
 
     /**

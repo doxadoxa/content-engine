@@ -125,6 +125,10 @@ const PIPELINE_LABELS: Record<string, string> = {
     publishing: 'Publishing',
     refresh: 'Refreshing',
     repurpose: 'Cutting down for social',
+    site_audit: 'Reading the site',
+    site_audit_fix_plan: 'Writing a fix plan for the site audit',
+    feedback: 'Reading what the published work did',
+    visibility: 'Asking the assistants about the brand',
 };
 
 export default function Dashboard({

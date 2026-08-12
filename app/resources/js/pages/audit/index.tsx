@@ -89,8 +89,16 @@ type Props = {
     }[];
     is_running: boolean;
     is_writing_fix_plan: boolean;
+    fix_plan_run: {
+        status: string;
+        running_for_minutes: number | null;
+        error: string | null;
+    } | null;
     project: { name: string; website_url: string | null };
 };
+
+/** After this, a plan that is still "writing" is worth remarking on. */
+const FIX_PLAN_SLOW_AFTER_MINUTES = 3;
 
 const SEVERITY_TONE: Record<Severity, string> = {
     high: 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300',
@@ -115,6 +123,7 @@ export default function SiteAudit({
     checks,
     is_running,
     is_writing_fix_plan,
+    fix_plan_run,
     project,
 }: Props) {
     const withIssues = pages.filter((page) => page.issues_count > 0);
@@ -251,6 +260,13 @@ export default function SiteAudit({
                             ))}
                         </CardContent>
                     </Card>
+                )}
+
+                {audit !== null && !audit.fix_plan && (
+                    <FixPlanState
+                        run={fix_plan_run}
+                        writing={is_writing_fix_plan}
+                    />
                 )}
 
                 {audit?.fix_plan && (
@@ -487,6 +503,78 @@ function AuditHero({
                 </dl>
             </div>
         </section>
+    );
+}
+
+/**
+ * What happened to a fix plan that was asked for and has not arrived.
+ *
+ * Renders nothing in the ordinary case — nobody has asked, so there is nothing
+ * to say. The two states worth a card are the ones where the button alone
+ * misleads: a run that failed puts the button back looking untouched, and a run
+ * that has been going for half an hour is indistinguishable from one that
+ * started a moment ago.
+ *
+ * The slow case is deliberately not called an error. Writing a plan is a model
+ * call and a slow provider is not a broken one; what the operator needs is to
+ * know it is being waited on rather than to wonder whether they pressed it.
+ */
+function FixPlanState({
+    run,
+    writing,
+}: {
+    run: Props['fix_plan_run'];
+    writing: boolean;
+}) {
+    if (run === null) {
+        return null;
+    }
+
+    // Measured by the server, which owns the clock: reading Date.now() while
+    // rendering is a side effect, and the React compiler is right to refuse it.
+    const minutes = run.running_for_minutes ?? 0;
+
+    if (writing) {
+        if (minutes < FIX_PLAN_SLOW_AFTER_MINUTES) {
+            return null;
+        }
+
+        return (
+            <Card className={workspacePanelClass}>
+                <CardHeader className="flex-row items-center gap-3">
+                    <RefreshCw
+                        className="size-4 shrink-0 animate-spin text-muted-foreground"
+                        aria-hidden="true"
+                    />
+                    <CardDescription>
+                        The fix plan has been writing for {minutes} minutes. It
+                        is a single model call, so this usually means the
+                        provider is slow to answer — the sweep and its findings
+                        above are unaffected.
+                    </CardDescription>
+                </CardHeader>
+            </Card>
+        );
+    }
+
+    if (run.status !== 'failed') {
+        return null;
+    }
+
+    return (
+        <Card className="rounded-[1.5rem] border-amber-300 bg-amber-50 shadow-none dark:border-amber-900 dark:bg-amber-950/40">
+            <CardHeader className="flex-row items-start gap-3">
+                <TriangleAlert
+                    className="mt-0.5 size-4 shrink-0 text-amber-600"
+                    aria-hidden="true"
+                />
+                <CardDescription className="text-amber-900 dark:text-amber-200">
+                    The last fix plan did not finish
+                    {run.error ? `: ${run.error}` : '.'} Everything above was
+                    still measured — press Get AI fix plan to try again.
+                </CardDescription>
+            </CardHeader>
+        </Card>
     );
 }
 
