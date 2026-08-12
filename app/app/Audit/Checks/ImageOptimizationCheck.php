@@ -32,6 +32,9 @@ class ImageOptimizationCheck implements PageCheck
      */
     private const array MODERN_FORMATS = ['webp', 'avif', 'svg'];
 
+    /** Sources named in the detail. Enough to go and look, not an inventory. */
+    private const int MAX_EXAMPLES = 10;
+
     public static function key(): string
     {
         return 'image_optimization';
@@ -61,32 +64,32 @@ class ImageOptimizationCheck implements PageCheck
 
         $findings = [];
 
-        $missingAlt = $this->sources($page, static fn (array $image): bool => $image['alt'] === null);
+        $missingAlt = $this->matching($page, static fn (array $image): bool => $image['alt'] === null);
 
-        if ($missingAlt !== []) {
+        if ($missingAlt['count'] > 0) {
             $findings[] = CheckFinding::low(
                 $this->count($missingAlt, 'image has', 'images have').' no alt text.',
-                ['images' => $missingAlt],
+                ['images' => $missingAlt['examples']],
             );
         }
 
-        $missingDimensions = $this->sources($page, static fn (array $image): bool => ! $image['has_dimensions']);
+        $missingDimensions = $this->matching($page, static fn (array $image): bool => ! $image['has_dimensions']);
 
-        if ($missingDimensions !== []) {
+        if ($missingDimensions['count'] > 0) {
             $findings[] = CheckFinding::low(
                 $this->count($missingDimensions, 'image has', 'images have')
                     .' no width and height, so the page shifts as they load.',
-                ['images' => $missingDimensions],
+                ['images' => $missingDimensions['examples']],
             );
         }
 
-        $legacy = $this->sources($page, static fn (array $image): bool => $image['format'] !== ''
+        $legacy = $this->matching($page, static fn (array $image): bool => $image['format'] !== ''
             && ! in_array($image['format'], self::MODERN_FORMATS, true));
 
-        if ($legacy !== []) {
+        if ($legacy['count'] > 0) {
             $findings[] = CheckFinding::low(
                 $this->count($legacy, 'image is', 'images are').' served in a dated format.',
-                ['images' => $legacy],
+                ['images' => $legacy['examples']],
             );
         }
 
@@ -94,30 +97,46 @@ class ImageOptimizationCheck implements PageCheck
     }
 
     /**
+     * How many images match, and a few of them by name.
+     *
+     * Counted and sampled separately, on purpose. The number is every matching
+     * `<img>` on the page, because that is what the summary claims and what an
+     * operator will count when they go and look. The examples are capped and
+     * deduplicated, because the detail is evidence rather than an inventory and
+     * one source repeated across a page is one file to fix.
+     *
+     * Conflating the two — counting the capped list — reported a page with fifty
+     * missing alt attributes as having exactly ten, every time. A wrong number
+     * that plausible is one nobody ever goes and checks.
+     *
      * @param  callable(array{src: string, alt: string|null, has_dimensions: bool, format: string}): bool  $matches
-     * @return list<string>
+     * @return array{count: int, examples: list<string>}
      */
-    private function sources(PageFacts $page, callable $matches): array
+    private function matching(PageFacts $page, callable $matches): array
     {
-        $sources = [];
+        $count = 0;
+        $examples = [];
 
         foreach ($page->images as $image) {
-            if ($matches($image)) {
-                $sources[] = $image['src'];
+            if (! $matches($image)) {
+                continue;
+            }
+
+            $count++;
+
+            if (count($examples) < self::MAX_EXAMPLES && ! in_array($image['src'], $examples, true)) {
+                $examples[] = $image['src'];
             }
         }
 
-        // Capped: the detail is evidence for a number, not a full inventory, and
-        // a page with two hundred pictures should not write two hundred strings
-        // into a json column.
-        return array_slice(array_values(array_unique($sources)), 0, 10);
+        return ['count' => $count, 'examples' => $examples];
     }
 
     /**
-     * @param  list<string>  $sources
+     * @param  array{count: int, examples: list<string>}  $matching
      */
-    private function count(array $sources, string $singular, string $plural): string
+    private function count(array $matching, string $singular, string $plural): string
     {
-        return count($sources).' '.(count($sources) === 1 ? $singular : $plural);
+        return $matching['count'].' '.($matching['count'] === 1 ? $singular : $plural);
     }
 }

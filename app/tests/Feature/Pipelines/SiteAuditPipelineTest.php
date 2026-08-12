@@ -260,6 +260,34 @@ final class SiteAuditPipelineTest extends TestCase
     }
 
     #[Test]
+    public function a_pagespeed_outage_does_not_throw_away_the_rest_of_the_sweep(): void
+    {
+        $this->pageSpeed->failing();
+        $this->fakeSite();
+
+        $run = $this->sweep();
+
+        // The only branch whose absence costs nothing must not be able to cost
+        // everything. A failed run dies before `finished_at` is written, so the
+        // audit row stays open for ever and the screen keeps showing last
+        // week's numbers — every crawled page and every finding thrown away
+        // because an optional enrichment provider was down.
+        $this->assertSame(PipelineRunStatus::Completed, $run->refresh()->status);
+
+        $audit = SiteAudit::newest();
+
+        $this->assertNotNull($audit);
+        $this->assertNotNull($audit->finished_at);
+        $this->assertSame(4, $audit->pages_crawled);
+        $this->assertGreaterThan(0, $audit->issues_found);
+        $this->assertSame(
+            0,
+            SiteAuditPage::query()->whereNotNull('speed')->count(),
+            'And no reading was invented to paper over it.',
+        );
+    }
+
+    #[Test]
     public function lighthouse_measures_the_home_page_first(): void
     {
         config()->set('audit.page_speed.max_pages', 1);
@@ -318,6 +346,30 @@ final class SiteAuditPipelineTest extends TestCase
         $this->assertSame(
             1,
             SiteAuditIssue::query()->where('check_key', 'broken_links')->count(),
+        );
+    }
+
+    #[Test]
+    public function a_later_sweep_verifies_links_an_earlier_one_had_no_budget_for(): void
+    {
+        // Four pages, each linking to a distinct dead URL, and a budget of one.
+        // With a stable page order and a fixed budget the tail is never checked
+        // — and fixing a link inside the budget does not free the slot, because
+        // the link is still on the page and still costs a request to confirm.
+        $this->fakeSiteWithOneDeadLinkPerPage();
+
+        $this->sweep(['max_links' => 1]);
+        $first = $this->deadLinkPaths();
+
+        $this->sweep(['max_links' => 1]);
+        $second = $this->deadLinkPaths();
+
+        $this->assertCount(1, $first);
+        $this->assertCount(1, $second);
+        $this->assertNotSame(
+            $first,
+            $second,
+            'A second sweep must begin somewhere else, or the tail is never reached at all.',
         );
     }
 
@@ -461,6 +513,68 @@ final class SiteAuditPipelineTest extends TestCase
             'https://example.test/' => Http::response($this->healthyPage()),
             '*' => Http::response('', 404),
         ]);
+    }
+
+    /**
+     * Which pages the newest sweep found a dead link on.
+     *
+     * @return list<string>
+     */
+    private function deadLinkPaths(): array
+    {
+        $audit = SiteAudit::newest();
+
+        /** @var list<string> $paths */
+        $paths = SiteAuditIssue::query()
+            ->where('site_audit_id', $audit?->getKey())
+            ->where('check_key', 'broken_links')
+            ->with('page')
+            ->get()
+            ->map(static fn (SiteAuditIssue $issue): string => (string) $issue->page?->url)
+            ->sort()
+            ->values()
+            ->all();
+
+        return $paths;
+    }
+
+    /** Four pages, each with its own dead link, so a budget of one covers one. */
+    private function fakeSiteWithOneDeadLinkPerPage(): void
+    {
+        $urls = ['a', 'b', 'c', 'd'];
+
+        $locs = implode('', array_map(
+            static fn (string $slug): string => "<url><loc>https://example.test/page-{$slug}</loc></url>",
+            $urls,
+        ));
+
+        $routes = [
+            'https://example.test/robots.txt' => Http::response(
+                "User-agent: *\nAllow: /\nSitemap: https://example.test/sitemap.xml\n",
+            ),
+            'https://example.test/llms.txt' => Http::response(
+                "# Cleaning Point\n\nA home cleaning service in Lisbon, booked online.\n",
+            ),
+            'https://example.test/sitemap.xml' => Http::response(
+                '<?xml version="1.0"?><urlset>'.$locs.'</urlset>',
+            ),
+            'https://example.test/' => Http::response($this->healthyPage()),
+        ];
+
+        foreach ($urls as $slug) {
+            // Each page links to a dead URL that is not itself in the sitemap,
+            // so verifying it costs a request rather than being free.
+            $routes["https://example.test/page-{$slug}"] = Http::response(
+                '<html lang="en"><head><title>A page about cleaning things</title>'
+                .'<meta name="description" content="A page long enough that the description check has nothing at all to say about it.">'
+                ."<link rel=\"canonical\" href=\"https://example.test/page-{$slug}\">"
+                .'<script type="application/ld+json">{"@type":"Article"}</script></head>'
+                ."<body><h1>Cleaning</h1><a href=\"/missing-{$slug}\">gone</a></body></html>",
+            );
+            $routes["https://example.test/missing-{$slug}"] = Http::response('', 404);
+        }
+
+        Http::fake([...$routes, '*' => Http::response('', 404)]);
     }
 
     /**

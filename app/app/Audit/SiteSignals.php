@@ -61,6 +61,20 @@ final readonly class SiteSignals
      * Only the wildcard agent with a bare `Disallow: /`, which is the case that
      * means "nothing here may be indexed". Narrower rules are a site's business
      * and reporting them as faults would make the check noise.
+     *
+     * **A group may name several agents.** The format allows consecutive
+     * `User-agent` lines to share one set of rules — a group ends at its first
+     * rule line, and the next agent line after that begins a new one. So
+     *
+     *     User-agent: *
+     *     User-agent: Googlebot
+     *     Disallow: /
+     *
+     * blocks everything, including the wildcard. Deciding membership from the
+     * *last* agent line seen read that as a rule about Googlebot alone and
+     * called the site healthy — which is the one verdict this method exists to
+     * never get wrong, since it is the difference between an indexable site and
+     * a year of writing nothing will ever fetch.
      */
     public function robotsBlocksEverything(): bool
     {
@@ -68,7 +82,8 @@ final readonly class SiteSignals
             return false;
         }
 
-        $inWildcard = false;
+        $groupHasWildcard = false;
+        $readingAgents = false;
 
         foreach (preg_split('/\R/u', $this->robotsBody) ?: [] as $line) {
             $line = trim(preg_replace('/#.*$/', '', $line) ?? '');
@@ -78,12 +93,21 @@ final readonly class SiteSignals
             }
 
             if (preg_match('/^user-agent:\s*(.+)$/i', $line, $match) === 1) {
-                $inWildcard = trim($match[1]) === '*';
+                // An agent line that follows a rule opens a new group; one that
+                // follows another agent line joins the group being declared.
+                if (! $readingAgents) {
+                    $groupHasWildcard = false;
+                    $readingAgents = true;
+                }
+
+                $groupHasWildcard = $groupHasWildcard || trim($match[1]) === '*';
 
                 continue;
             }
 
-            if ($inWildcard && preg_match('/^disallow:\s*\/\s*$/i', $line) === 1) {
+            $readingAgents = false;
+
+            if ($groupHasWildcard && preg_match('/^disallow:\s*\/\s*$/i', $line) === 1) {
                 return true;
             }
         }

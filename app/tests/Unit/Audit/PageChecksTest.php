@@ -214,6 +214,40 @@ final class PageChecksTest extends TestCase
     }
 
     #[Test]
+    public function the_number_of_images_is_the_real_one_however_many_are_named(): void
+    {
+        $images = [];
+
+        for ($i = 0; $i < 50; $i++) {
+            $images[] = ['src' => "/photo-{$i}.png", 'alt' => null, 'has_dimensions' => true, 'format' => 'webp'];
+        }
+
+        $findings = (new ImageOptimizationCheck)->run($this->facts(['images' => $images]));
+
+        // Counting the capped evidence list reported every such page as having
+        // exactly ten — a wrong number plausible enough that nobody would ever
+        // go and check it.
+        $this->assertStringContainsString('50 images have no alt text', $findings[0]->summary);
+        $this->assertCount(10, $findings[0]->detail['images'], 'The evidence stays capped.');
+    }
+
+    #[Test]
+    public function one_source_repeated_across_a_page_is_named_once_but_counted_each_time(): void
+    {
+        $findings = (new ImageOptimizationCheck)->run($this->facts([
+            'images' => [
+                ['src' => '/logo.png', 'alt' => null, 'has_dimensions' => true, 'format' => 'webp'],
+                ['src' => '/logo.png', 'alt' => null, 'has_dimensions' => true, 'format' => 'webp'],
+                ['src' => '/hero.png', 'alt' => null, 'has_dimensions' => true, 'format' => 'webp'],
+            ],
+        ]));
+
+        // Three images are wrong on the page; two files need fixing.
+        $this->assertStringContainsString('3 images have no alt text', $findings[0]->summary);
+        $this->assertSame(['/logo.png', '/hero.png'], $findings[0]->detail['images']);
+    }
+
+    #[Test]
     public function an_empty_alt_is_a_decorative_image_and_not_a_missing_one(): void
     {
         // `alt=""` is the correct marking for decoration, and punishing a site

@@ -53,6 +53,34 @@ final class SiteChecksTest extends TestCase
     }
 
     #[Test]
+    public function a_group_naming_several_agents_still_counts_as_the_wildcard(): void
+    {
+        // Consecutive User-agent lines share one set of rules, so this blocks
+        // everything — including the wildcard. Deciding membership from the last
+        // agent line read it as a rule about Googlebot alone and called a
+        // de-indexed site healthy, which is the single most expensive verdict
+        // this check can get wrong.
+        $findings = (new RobotsTxtCheck)->run($this->signals([
+            'robots_body' => "User-agent: *\nUser-agent: Googlebot\nDisallow: /\n",
+        ]));
+
+        $this->assertCount(1, $findings);
+        $this->assertSame(AuditSeverity::High, $findings[0]->severity);
+    }
+
+    #[Test]
+    public function a_wildcard_group_that_has_already_ended_does_not_leak_into_the_next(): void
+    {
+        // The wildcard group ends at its own rule line; the Googlebot group
+        // that follows is a separate one, and its `Disallow: /` is that site's
+        // business rather than a site-wide block.
+        $this->assertSame([], (new RobotsTxtCheck)->run($this->signals([
+            'robots_body' => "User-agent: *\nDisallow: /admin\nSitemap: https://example.test/sitemap.xml\n\n"
+                ."User-agent: Googlebot\nDisallow: /\n",
+        ])));
+    }
+
+    #[Test]
     public function a_commented_out_disallow_is_not_a_disallow(): void
     {
         $this->assertSame([], (new RobotsTxtCheck)->run($this->signals([

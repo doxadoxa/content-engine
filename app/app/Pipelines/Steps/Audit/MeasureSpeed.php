@@ -10,6 +10,7 @@ use App\Models\SiteAuditPage;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Lighthouse, on the handful of pages a quota can afford.
@@ -26,6 +27,16 @@ use Illuminate\Support\Facades\Log;
  * unchanged rather than mixing it with a zero. Getting that wrong would mean
  * every site without a Google API key reporting as slow, which is a fact about
  * our configuration presented as a fact about their site.
+ *
+ * **And it swallows the vendor's failures, which no other step here does.**
+ * This is the one branch whose absence costs nothing: a sweep without
+ * Lighthouse still has thirteen checks, a hundred crawled pages and every
+ * finding on them. A sweep that *fails* has none of that — the run dies before
+ * {@see ScoreAudit} writes `finished_at`, the audit row stays open forever, and
+ * the screen keeps showing last week's numbers. So a rejected key, an exhausted
+ * quota or an outage at Google must not be able to throw away work that was
+ * already done and paid for. The failure is logged and the step skips; the
+ * speed score comes out null and every other number is unaffected.
  */
 class MeasureSpeed extends AuditStep
 {
@@ -74,9 +85,24 @@ class MeasureSpeed extends AuditStep
         $pages = $this->sample($crawl->origin, (string) $audit->getKey());
 
         $measured = 0;
+        $failure = null;
 
         foreach ($pages as $page) {
-            $reading = $this->pageSpeed->measure($page->url);
+            try {
+                $reading = $this->pageSpeed->measure($page->url);
+            } catch (Throwable $e) {
+                // The vendor is the only part of a sweep that can fail without
+                // the sweep being wrong, so it is the only part allowed to fail
+                // quietly. See the note on this class.
+                $failure ??= $e;
+
+                Log::warning('PageSpeed could not measure a page', [
+                    'url' => $page->url,
+                    'reason' => $e->getMessage(),
+                ]);
+
+                continue;
+            }
 
             if ($reading === null) {
                 // The vendor had nothing to say about this page. Left null
@@ -90,6 +116,12 @@ class MeasureSpeed extends AuditStep
             $page->forceFill(['speed' => $reading->toArray()])->save();
 
             $measured++;
+        }
+
+        if ($measured === 0 && $failure !== null) {
+            return StepResult::skip(
+                "PageSpeed Insights could not be reached, so page speed was not measured: {$failure->getMessage()}"
+            );
         }
 
         return StepResult::success(new AuditFindingsPayload(

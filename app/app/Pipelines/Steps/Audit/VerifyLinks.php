@@ -6,6 +6,7 @@ namespace App\Pipelines\Steps\Audit;
 
 use App\Audit\CheckFinding;
 use App\Audit\Checks\BrokenLinksCheck;
+use App\Models\SiteAudit;
 use App\Models\SiteAuditPage;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
@@ -27,11 +28,13 @@ use Illuminate\Support\Facades\Log;
  * each distinct URL is fetched once and the verdict is attributed back to every
  * page that links to it.
  *
- * **A budget.** Even deduplicated this is the largest source of outbound
- * requests in the product, and an unbounded version aimed at a customer's site
- * is indistinguishable from an attack. `audit.links.max_checked` caps it; what
- * is not reached is not lost, because the next sweep of a site whose earlier
- * links were fixed spends its budget further down.
+ * **A budget, and a rotation.** Even deduplicated this is the largest source of
+ * outbound requests in the product, and an unbounded version aimed at a
+ * customer's site is indistinguishable from an attack. `audit.links.max_checked`
+ * caps it — and because a cap on a stable list would mean the tail beyond it is
+ * never verified at all, {@see withinBudget()} starts each sweep further along
+ * than the last. That is what makes "what is not reached this week is reached
+ * later" a fact rather than a hope.
  *
  * HEAD rather than GET, because the question is whether the URL resolves and
  * the body is beside the point. A server that refuses HEAD is retried with GET
@@ -76,58 +79,59 @@ class VerifyLinks extends AuditStep
 
         $check = app(BrokenLinksCheck::class);
 
+        // Every distinct link, and which pages carry it. Built first, from rows
+        // the crawl already wrote, so the budget is spent knowing the whole
+        // picture rather than in the order pages happen to arrive.
+        $carriers = $this->linksByPage($audit);
+
+        $crawled = $this->crawledUrls($audit->getKey());
+
         /** @var array<string, int|null> $verdicts  url => status, null when unreachable */
         $verdicts = [];
+
+        // Free verdicts first, and all of them: a link to a page this sweep
+        // already fetched needs no second request. On a site whose internal
+        // links mostly point at its own sitemap entries this is most of them,
+        // and they must never be crowded out by the budget — which is exactly
+        // what happened when the budget was checked before this lookup.
+        foreach (array_keys($carriers) as $link) {
+            if (array_key_exists($link, $crawled)) {
+                $verdicts[$link] = $crawled[$link];
+            }
+        }
+
+        $needRequests = array_values(array_diff(array_keys($carriers), array_keys($verdicts)));
+
+        $spending = $this->withinBudget($needRequests, $budget, $audit);
+
+        foreach ($spending as $link) {
+            $verdicts[$link] = $this->statusOf($link, $crawl->origin);
+        }
+
+        $skipped = count($needRequests) - count($spending);
+
+        if ($skipped > 0) {
+            // A sweep that verified less than it looked at has to say so
+            // somewhere, or a clean result reads as "every link works" when it
+            // means "every link we could afford to try".
+            Log::info('A link budget was exhausted before every distinct link was verified', [
+                'audit' => $audit->getKey(),
+                'checked' => count($spending),
+                'skipped' => $skipped,
+            ]);
+        }
 
         /** @var array<string, list<string>> $broken  page id => dead urls */
         $broken = [];
 
-        $crawled = $this->crawledUrls($audit->getKey());
-        $checked = 0;
-        $skipped = 0;
-
-        foreach ($audit->pages()->lazyById(100) as $page) {
-            foreach ($this->linksOf($page) as $link) {
-                if (! array_key_exists($link, $verdicts)) {
-                    // A link to a page this sweep already fetched needs no
-                    // second request: we know what it answered. On a site whose
-                    // internal links mostly point at its own sitemap entries,
-                    // this is most of them — and it is why the budget is
-                    // checked *after* this lookup rather than before. Checked
-                    // before, a site with more distinct links than the budget
-                    // stopped verifying entirely once it ran out, including for
-                    // the links whose verdicts were already free.
-                    if (array_key_exists($link, $crawled)) {
-                        $verdicts[$link] = $crawled[$link];
-                    } elseif ($checked < $budget) {
-                        $verdicts[$link] = $this->statusOf($link, $crawl->origin);
-                        $checked++;
-                    } else {
-                        // Out of budget for links that cost a request. The rest
-                        // of the sweep still gets its free verdicts, and what is
-                        // skipped here is picked up by the next sweep of a site
-                        // whose earlier links have been fixed.
-                        $skipped++;
-
-                        continue;
-                    }
-                }
-
-                if ($this->isDead($verdicts[$link])) {
-                    $broken[(string) $page->getKey()][] = $link;
-                }
+        foreach ($carriers as $link => $pageIds) {
+            if (! array_key_exists($link, $verdicts) || ! $this->isDead($verdicts[$link])) {
+                continue;
             }
-        }
 
-        if ($skipped > 0) {
-            // §"no silent caps": a sweep that verified less than it looked at
-            // should say so somewhere, or a clean result reads as "every link
-            // works" when it means "every link we could afford to try".
-            Log::info('A link budget was exhausted before every distinct link was verified', [
-                'audit' => $audit->getKey(),
-                'checked' => $checked,
-                'skipped' => $skipped,
-            ]);
+            foreach ($pageIds as $pageId) {
+                $broken[$pageId][] = $link;
+            }
         }
 
         $found = 0;
@@ -139,7 +143,7 @@ class VerifyLinks extends AuditStep
         return StepResult::success(new AuditFindingsPayload(
             auditId: $crawl->auditId,
             findings: $found,
-            examined: $checked,
+            examined: count($spending),
         ));
     }
 
@@ -169,6 +173,78 @@ class VerifyLinks extends AuditStep
                 : "{$count} links on this page no longer resolve.",
             ['links' => $detail],
         );
+    }
+
+    /**
+     * Which of the links that cost a request this sweep will spend on.
+     *
+     * The rotation, and it applies to the *links* rather than to the pages
+     * carrying them — which is the correction that matters. Rotating pages does
+     * not rotate coverage: a page with no links, or one whose links were all
+     * free, absorbs the offset and the sweep begins on the same link it did
+     * last time. The budget is spent per distinct link, so that is the list
+     * whose starting point has to move.
+     *
+     * Without any rotation the tail beyond the budget is *never* verified.
+     * Fixing a link inside the budget does not free its slot either: the link
+     * is still on the page and still costs a request to confirm it now works.
+     * An earlier comment here claimed the next sweep would pick up what this
+     * one skipped; it would not have, and this is what makes it true.
+     *
+     * The offset comes from how many sweeps this project has already finished,
+     * so it needs no cursor column, no write, and no care when a sweep dies
+     * half way. Ordered by URL first so the rotation moves through a stable
+     * list rather than a different one each week.
+     *
+     * @param  list<string>  $links
+     * @return list<string>
+     */
+    private function withinBudget(array $links, int $budget, SiteAudit $audit): array
+    {
+        $count = count($links);
+
+        if ($count <= $budget) {
+            return $links;
+        }
+
+        sort($links);
+
+        // Counted by id rather than by `created_at`, for the reason
+        // {@see SiteAudit::newest()} orders by both: two sweeps of a small site
+        // fit inside one timestamp, and a rotation that cannot tell them apart
+        // does not rotate. ULIDs sort by the time they were minted.
+        $sweeps = SiteAudit::query()->where('id', '<', $audit->getKey())->count();
+
+        $offset = ($sweeps * $budget) % $count;
+
+        // Wrapping, so a budget that runs off the end of the list continues
+        // from its start rather than coming back short.
+        $rotated = array_merge(array_slice($links, $offset), array_slice($links, 0, $offset));
+
+        return array_slice($rotated, 0, $budget);
+    }
+
+    /**
+     * Every distinct internal link in the sweep, and the pages that carry it.
+     *
+     * Deduplicated across the whole site before anything is fetched. A hundred
+     * pages share one navigation, so the same forty links appear on every one
+     * of them: checked per page that is four thousand requests for forty
+     * answers.
+     *
+     * @return array<string, list<string>> link url => page ids
+     */
+    private function linksByPage(SiteAudit $audit): array
+    {
+        $carriers = [];
+
+        foreach ($audit->pages()->orderBy('url')->lazyById(100) as $page) {
+            foreach ($this->linksOf($page) as $link) {
+                $carriers[$link][] = (string) $page->getKey();
+            }
+        }
+
+        return $carriers;
     }
 
     /**

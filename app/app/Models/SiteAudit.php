@@ -102,7 +102,16 @@ class SiteAudit extends Model
      */
     public static function newest(): ?self
     {
-        return self::query()->whereNotNull('finished_at')->orderByDesc('created_at')->first();
+        // The id breaks ties, and it is not decoration: two sweeps of a small
+        // site can be created inside the same timestamp, and ordering on
+        // `created_at` alone then returns whichever the planner happened to
+        // pick. ULIDs are lexicographically ordered by the time they were
+        // minted, so this is the same ordering at finer resolution.
+        return self::query()
+            ->whereNotNull('finished_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
     }
 
     /**

@@ -13,6 +13,7 @@ use App\Pipelines\Definitions\SiteAuditFixPlanPipeline;
 use App\Pipelines\Definitions\SiteAuditPipeline;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The one place a sweep is started.
@@ -46,15 +47,35 @@ class SiteAuditStarter
      */
     public function start(Project $project, array $input = []): ?PipelineRun
     {
-        if (! $this->canAudit($project) || $this->isRunning($project)) {
+        if (! $this->canAudit($project)) {
             return null;
         }
 
-        return $this->current->run($project, fn (): PipelineRun => $this->runner->start(
-            SiteAuditPipeline::key(),
-            $project,
-            $input,
-        ));
+        // The check and the start happen together, under a lock on the project
+        // row. Without it the two are separate statements with a gap between
+        // them, and every caller can arrive in that gap: a double-clicked
+        // Recheck, the scheduler waking while a launch is still starting, an
+        // operator rechecking a project that has just launched. Both observe no
+        // run in flight, both start one, and a customer's server is crawled
+        // twice at once by an engine that promised it would not be.
+        //
+        // The same shape as OnboardingController::launch(), which locks the
+        // project row to make a second final click a no-op rather than a second
+        // set of channels. The throttle in front of the route bounds how often
+        // requests arrive; it does nothing about two that arrive together.
+        return DB::transaction(function () use ($project, $input): ?PipelineRun {
+            $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->first();
+
+            if ($locked === null || $this->isRunning($locked)) {
+                return null;
+            }
+
+            return $this->current->run($locked, fn (): PipelineRun => $this->runner->start(
+                SiteAuditPipeline::key(),
+                $locked,
+                $input,
+            ));
+        });
     }
 
     /**
@@ -96,15 +117,26 @@ class SiteAuditStarter
      */
     public function startFixPlan(Project $project, SiteAudit $audit): ?PipelineRun
     {
-        if (! $audit->isFinished() || $this->isWritingFixPlan($project, $audit)) {
+        if (! $audit->isFinished()) {
             return null;
         }
 
-        return $this->current->run($project, fn (): PipelineRun => $this->runner->start(
-            SiteAuditFixPlanPipeline::key(),
-            $project,
-            ['site_audit_id' => (string) $audit->getKey()],
-        ));
+        // Locked for the same reason as start(), and with more at stake per
+        // duplicate: this one spends tokens. Two presses in the same instant
+        // would buy two plans for one sweep.
+        return DB::transaction(function () use ($project, $audit): ?PipelineRun {
+            $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->first();
+
+            if ($locked === null || $this->isWritingFixPlan($locked, $audit)) {
+                return null;
+            }
+
+            return $this->current->run($locked, fn (): PipelineRun => $this->runner->start(
+                SiteAuditFixPlanPipeline::key(),
+                $locked,
+                ['site_audit_id' => (string) $audit->getKey()],
+            ));
+        });
     }
 
     /** Whether a sweep is running for this project right now. */
