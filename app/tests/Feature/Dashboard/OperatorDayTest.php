@@ -63,6 +63,31 @@ final class OperatorDayTest extends TestCase
         config()->set('queue.default', 'sync');
     }
 
+    #[Test]
+    public function the_article_card_exposes_every_language_and_its_state(): void
+    {
+        $draft = $this->draft(['locale' => 'en']);
+        $portuguese = $draft->addLocale(
+            'pt-PT',
+            'como-limpar-janelas',
+            'Como limpar janelas',
+        );
+        $portuguese->forceFill(['state' => ContentItemState::Approved])->save();
+
+        $this->actingAs($this->operator)
+            ->get(route('content.show', $draft))
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->has('locales', 2)
+                ->where('locales.0.locale', 'en')
+                ->where('locales.0.state_label', 'Draft')
+                ->where('locales.0.is_self', true)
+                ->where('locales.1.locale', 'pt-PT')
+                ->where('locales.1.state_label', 'Approved')
+                ->where('locales.1.is_self', false)
+            );
+    }
+
     // ------------------------------------------------------- exit criterion 1
 
     #[Test]

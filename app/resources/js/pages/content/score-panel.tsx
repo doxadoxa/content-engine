@@ -51,26 +51,53 @@ export function ScorePanel({
 }) {
     return (
         <Card className={workspacePanelClass}>
-            <CardHeader className="items-center pb-2">
-                <CardDescription className="text-xs tracking-wide uppercase">
-                    Article score
-                </CardDescription>
-                <Dial score={score} />
+            <CardHeader className="gap-4 border-b pb-5">
+                <div className="flex items-center justify-between gap-3">
+                    <CardDescription className="text-xs tracking-[0.12em] uppercase">
+                        Article score
+                    </CardDescription>
+                    <span className="text-xs font-medium text-muted-foreground">
+                        {publishable ? 'Ready to publish' : 'Review required'}
+                    </span>
+                </div>
+                <div className="flex items-end gap-1">
+                    <span className="font-serif text-5xl leading-none font-semibold tracking-tight tabular-nums">
+                        {score}
+                    </span>
+                    <span className="pb-1 text-sm text-muted-foreground">
+                        /100
+                    </span>
+                </div>
+                <div
+                    className="h-1.5 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                    aria-label="Article score"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={score}
+                >
+                    <div
+                        className={`h-full rounded-full ${score >= 80 ? 'bg-chart-2' : score >= 55 ? 'bg-chart-3' : 'bg-destructive'}`}
+                        style={{
+                            width: `${Math.max(0, Math.min(100, score))}%`,
+                        }}
+                    />
+                </div>
                 {/* The number and the verdict answer different questions. A
                     piece can score 88 and still be unfit to publish, and an
                     operator reading only the dial would never know which. */}
                 {!publishable && (
-                    <p className="text-center text-xs text-destructive">
+                    <p className="text-xs leading-relaxed text-destructive">
                         Not ready: {blocking.join(', ').toLowerCase()}
                     </p>
                 )}
             </CardHeader>
-            <CardContent className="flex flex-col gap-1.5 border-t pt-4 text-sm">
+            <CardContent className="flex flex-col gap-2 pt-5 text-sm">
                 {checks.map((check) => (
                     <span key={check.key} className="flex items-start gap-2">
                         {check.ok ? (
                             <Check
-                                className="mt-0.5 size-3.5 shrink-0 text-emerald-500"
+                                className="mt-0.5 size-3.5 shrink-0 text-chart-2"
                                 aria-hidden="true"
                             />
                         ) : check.severity === 'critical' ? (
@@ -104,53 +131,6 @@ export function ScorePanel({
                 ))}
             </CardContent>
         </Card>
-    );
-}
-
-/**
- * A half-circle gauge, drawn rather than imported: one arc for the track and
- * one for the score, clipped by stroke-dasharray.
- */
-function Dial({ score }: { score: number }) {
-    // The arc is π×r long for a semicircle; the visible portion is the score.
-    const radius = 52;
-    const length = Math.PI * radius;
-    const filled = (Math.max(0, Math.min(100, score)) / 100) * length;
-
-    const tone =
-        score >= 80
-            ? 'text-emerald-500'
-            : score >= 55
-              ? 'text-amber-500'
-              : 'text-destructive';
-
-    return (
-        <div className="relative w-32">
-            <svg viewBox="0 0 120 66" className="w-full" aria-hidden="true">
-                <path
-                    d="M 8 60 A 52 52 0 0 1 112 60"
-                    fill="none"
-                    strokeWidth="9"
-                    strokeLinecap="round"
-                    className="stroke-muted"
-                />
-                <path
-                    d="M 8 60 A 52 52 0 0 1 112 60"
-                    fill="none"
-                    strokeWidth="9"
-                    strokeLinecap="round"
-                    strokeDasharray={`${filled} ${length}`}
-                    className={`${tone} stroke-current transition-all`}
-                />
-            </svg>
-            <div className="absolute inset-x-0 bottom-0 text-center">
-                <span className="text-3xl font-semibold tabular-nums">
-                    {score}
-                </span>
-                <span className="text-sm text-muted-foreground">/100</span>
-            </div>
-            <span className="sr-only">{score} out of 100</span>
-        </div>
     );
 }
 
@@ -246,7 +226,7 @@ function Figure({
                 {value.toLocaleString()}
                 <span
                     className={`size-1.5 rounded-full ${
-                        good ? 'bg-emerald-500' : 'bg-muted-foreground/40'
+                        good ? 'bg-chart-2' : 'bg-muted-foreground/40'
                     }`}
                     aria-hidden="true"
                 />
