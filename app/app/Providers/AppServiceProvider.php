@@ -10,6 +10,9 @@ use App\Ai\FakeEmbeddingGateway;
 use App\Ai\FakeModelGateway;
 use App\Ai\LaragentModelGateway;
 use App\Ai\OpenAiEmbeddingGateway;
+use App\Audit\PageSpeed\Contracts\PageSpeedGateway;
+use App\Audit\PageSpeed\FakePageSpeed;
+use App\Audit\PageSpeed\GooglePageSpeedInsights;
 use App\Enums\ChannelType;
 use App\Feedback\Contracts\AnalyticsGateway;
 use App\Feedback\Contracts\CitationChecker;
@@ -98,6 +101,14 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SiteReader::class, fn (): SiteReader => $this->app->environment('testing')
             ? new FakeSiteReader
             : $this->app->make(HttpSiteReader::class));
+
+        // What a browser experiences on the project's own pages, for the site
+        // audit. Unlike its neighbours here, the real implementation is
+        // unconfigured on most installations and says so — the audit treats an
+        // absent key as "no speed score" rather than as an outage.
+        $this->app->singleton(PageSpeedGateway::class, fn (): PageSpeedGateway => $this->app->environment('testing')
+            ? new FakePageSpeed
+            : $this->app->make(GooglePageSpeedInsights::class));
 
         // Which transport reaches which channel (§9). Two members, and the
         // second one arriving as a line here rather than as a search for every

@@ -9,6 +9,8 @@ use App\Pipelines\Definitions\GenerationPipeline;
 use App\Pipelines\Definitions\PlanningPipeline;
 use App\Pipelines\Definitions\RepurposePipeline;
 use App\Pipelines\Definitions\ResearchPipeline;
+use App\Pipelines\Definitions\SiteAuditFixPlanPipeline;
+use App\Pipelines\Definitions\SiteAuditPipeline;
 use App\Pipelines\Definitions\SocialDraftPipeline;
 use App\Pipelines\Definitions\SocialEngagePipeline;
 use App\Pipelines\Definitions\SocialListenPipeline;
@@ -51,6 +53,16 @@ return [
         // is a pipeline key. This one is started by the webhook rather than by
         // the scheduler — see the definition.
         SocialEngagePipeline::class,
+        // The site the engine writes *for*, rather than the content it writes.
+        // Started by the launch, by `audit:sweep` and by a button, and never by
+        // `engine:tick` — it feeds none of the six pipelines the tick runs, so
+        // it is not in that contour and neither waits for it nor blocks it.
+        SiteAuditPipeline::class,
+        // The model's reading of one sweep, on request. Its own key so §8's
+        // cost report can answer "what did the fix plans cost" separately from
+        // "what did the crawling cost", which is the whole difference between a
+        // free sweep and a paid one.
+        SiteAuditFixPlanPipeline::class,
     ],
 
     /*
@@ -62,11 +74,20 @@ return [
     | calls) run on separate queues with separate worker pools, so one long
     | generation cannot starve every quick step behind it (§3.2).
     |
+    | The third pool is a third *kind* rather than a middle: the site audit is
+    | slow without being costly. A crawl is a hundred sequential requests to
+    | somebody else's server — minutes of waiting and almost no CPU, no tokens
+    | and no money. On `cheap` it would sit in front of every quick step in the
+    | installation, so an article would be late because a customer's TLS
+    | handshake was; on `expensive` it would occupy one of the few workers that
+    | bound how fast the engine can spend money, for work that spends none.
+    |
     */
 
     'queues' => [
         'cheap' => env('PIPELINE_QUEUE_CHEAP', 'pipeline'),
         'expensive' => env('PIPELINE_QUEUE_EXPENSIVE', 'pipeline-expensive'),
+        'audit' => env('PIPELINE_QUEUE_AUDIT', 'pipeline-audit'),
     ],
 
     /*
@@ -101,6 +122,12 @@ return [
         'timeouts' => [
             'pipeline' => 90,
             'pipeline-expensive' => 600,
+            // Generous, and it has to be: a crawl is a hundred pages at up to
+            // fifteen seconds each, and the two long steps of the audit
+            // override even this. Nothing here is holding a scarce worker —
+            // the pool is its own — so the cost of a wedged step is the step,
+            // not the throughput of the engine.
+            'pipeline-audit' => 900,
         ],
         'timeout' => 300,
     ],

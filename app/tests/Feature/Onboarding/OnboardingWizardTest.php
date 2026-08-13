@@ -225,7 +225,14 @@ final class OnboardingWizardTest extends TestCase
             ->orderBy('pipeline')
             ->get();
 
-        $this->assertSame(['content_studio', 'research'], $runs->pluck('pipeline')->all());
+        // Three independent contours, not a chain: the Studio proposal, the SEO
+        // research the month is planned from, and a reading of the website the
+        // operator has just handed over. None needs the others, so one provider
+        // failing cannot silently cancel the rest.
+        $this->assertSame(
+            ['content_studio', 'research', 'site_audit'],
+            $runs->pluck('pipeline')->all(),
+        );
         $this->assertTrue($runs->every(
             static fn (PipelineRun $run): bool => $run->status !== PipelineRunStatus::Failed,
         ));

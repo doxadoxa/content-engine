@@ -19,6 +19,7 @@ use App\Http\Controllers\InteractionController;
 use App\Http\Controllers\MeteringController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\SiteAuditController;
 use App\Http\Controllers\ThreadsConnectionController;
 use App\Http\Controllers\ThreadsWebhookController;
 use App\Http\Controllers\VisibilityController;
@@ -199,6 +200,21 @@ Route::middleware(['auth'])->group(function () use ($social): void {
         ->middleware('project.owner')->name('metering.index');
     Route::get('feedback', FeedbackController::class)->name('feedback.index');
     Route::get('visibility', VisibilityController::class)->name('visibility.index');
+
+    // The site the engine writes for, read as a crawler sees it. No
+    // `project.owner` on any of the three: an audit is about the work rather
+    // than about the account, and everything here is tenant-scoped already.
+    //
+    // Both POSTs are throttled, and for different reasons. A recheck crawls a
+    // hundred pages of somebody else's server, so an accidental double press
+    // must cost them nothing — the starter refuses a second sweep outright and
+    // this is the belt to that brace. A fix plan is a model call, and a stuck
+    // button should cost a few cents rather than a few dollars.
+    Route::get('audit', [SiteAuditController::class, 'index'])->name('audit.index');
+    Route::post('audit/recheck', [SiteAuditController::class, 'recheck'])
+        ->middleware('throttle:10,1')->name('audit.recheck');
+    Route::post('audit/fix-plan', [SiteAuditController::class, 'fixPlan'])
+        ->middleware('throttle:10,1')->name('audit.fix-plan');
 });
 
 // The pull API (§9.5). Outside the auth group: it is authenticated by a

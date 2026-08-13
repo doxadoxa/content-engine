@@ -282,6 +282,40 @@ return [
             'timeout' => 2100,
             'nice' => 0,
         ],
+
+        /*
+         * The site audit (see App\Pipelines\Definitions\SiteAuditPipeline).
+         *
+         * A third pool because the audit is a third kind of work: slow at the
+         * network and cheap everywhere else. Its longest steps — the crawl and
+         * the link verification — are quarter-hour affairs made almost entirely
+         * of waiting, and on either of the pools above they would occupy a
+         * worker that something urgent needs. Here they occupy a worker that
+         * exists for them.
+         *
+         * `nice` is raised deliberately, and it is the only supervisor with a
+         * non-zero value. When the machine is busy, an article being drafted
+         * for a deadline should win against a crawl that is checking whether a
+         * footer link still resolves.
+         *
+         * 1800 clears the longest step here (1500, twice over — crawl_pages and
+         * verify_links) with room. PipelineTimeoutChainTest asserts the
+         * relation, so a step timeout raised past this fails the suite rather
+         * than silently becoming a promise nobody keeps.
+         */
+        'pipeline-audit' => [
+            'connection' => 'redis',
+            'queue' => ['pipeline-audit'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 1,
+            'timeout' => 1800,
+            'nice' => 5,
+        ],
     ],
 
     'environments' => [
@@ -300,6 +334,12 @@ return [
             'pipeline-expensive' => [
                 'maxProcesses' => 4,
             ],
+            // Fewer still, and bounding politeness rather than spend: this is
+            // how many customer sites the installation may be crawling at once.
+            // Two is enough that a launch does not wait behind the weekly sweep.
+            'pipeline-audit' => [
+                'maxProcesses' => 2,
+            ],
         ],
 
         'local' => [
@@ -311,6 +351,9 @@ return [
             ],
             'pipeline-expensive' => [
                 'maxProcesses' => 2,
+            ],
+            'pipeline-audit' => [
+                'maxProcesses' => 1,
             ],
         ],
     ],
