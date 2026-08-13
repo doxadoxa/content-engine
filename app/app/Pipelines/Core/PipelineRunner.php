@@ -274,6 +274,13 @@ class PipelineRunner
             dependencyOutputs: $this->dependencyOutputs($run, $graph, $stepKey),
             runContext: $run->context,
             gateway: app(ModelGateway::class),
+            // The step's own deadline, handed to the context so it can refuse
+            // to start a model call that would outlive it. A per-call timeout
+            // bounds one call; a handler that catches a failed call and carries
+            // on — five of them do, deliberately — needs the sum bounded too,
+            // or a provider that never answers is exactly as expensive as one
+            // with no timeout at all.
+            deadlineAt: now()->addSeconds($step->timeout()),
         );
 
         try {

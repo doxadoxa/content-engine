@@ -13,7 +13,10 @@ use App\Media\HeroImage;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Contracts\StepPayload;
+use App\Pipelines\Exceptions\RetryableStepFailure;
 use App\Pipelines\Exceptions\TerminalStepFailure;
+use App\Pipelines\Steps\Planning\SelectTopics;
+use Carbon\CarbonInterface;
 
 /**
  * Everything a step is allowed to see, and the only way it reaches a model.
@@ -38,6 +41,7 @@ final class StepContext implements ModelSession
      * @param  array<string, mixed>  $input  what the run was started with
      * @param  array<string, array<string, mixed>|null>  $dependencyOutputs  keyed by step key
      * @param  array<string, mixed>  $runContext
+     * @param  CarbonInterface|null  $deadlineAt  when this step's own timeout expires
      */
     public function __construct(
         public readonly PipelineRun $run,
@@ -46,6 +50,7 @@ final class StepContext implements ModelSession
         private readonly array $dependencyOutputs,
         private readonly array $runContext,
         private readonly ModelGateway $gateway,
+        private readonly ?CarbonInterface $deadlineAt = null,
     ) {}
 
     /** @return array<string, mixed> */
@@ -99,15 +104,13 @@ final class StepContext implements ModelSession
      */
     public function ask(string $role, string $prompt, string $instructions = ''): ModelResponse
     {
-        $response = $this->gateway->send(new ModelRequest($role, $instructions, $prompt));
-
-        $this->usage[] = $response;
-
-        return $response;
+        return $this->send(new ModelRequest($role, $instructions, $prompt));
     }
 
     public function send(ModelRequest $request): ModelResponse
     {
+        $this->refuseWithoutTimeToFinish();
+
         $response = $this->gateway->send($request);
 
         $this->usage[] = $response;
@@ -183,5 +186,49 @@ final class StepContext implements ModelSession
     public function usage(): array
     {
         return $this->usage;
+    }
+
+    /**
+     * Refuse to *start* a model call this step cannot finish in its own time.
+     *
+     * A per-call deadline bounds one call; it does not bound a handler that
+     * makes many. Five steps in this engine catch a failed model call and carry
+     * on — deliberately, because failing open is usually the right answer
+     * ({@see SelectTopics::isTheSameSubject()}
+     * would rather write one duplicate than plan an empty month). Against a
+     * provider that accepts connections and never answers, that turns one
+     * bounded call into as many bounded calls as there are items in the loop,
+     * and the sum passes the worker's limit exactly as an unbounded call did.
+     * The process is killed with nothing recorded, which is the failure the
+     * per-call timeout was added to remove.
+     *
+     * The bound is the step's own declared timeout, because that is the number
+     * everything else already agrees on: past it, {@see PipelineRunner::claim()}
+     * lets another delivery take the step over, so a handler still working is
+     * one racing its own replacement. Refusing to start a call that would
+     * finish after the deadline — rather than refusing once it has passed —
+     * keeps the last call inside the budget too.
+     *
+     * Retryable, because it is: the step is out of time, and a retry gets a
+     * whole new deadline. A step that swallows this simply stops asking, which
+     * is what a step that has decided to fail open should do once it knows the
+     * provider is not answering.
+     */
+    private function refuseWithoutTimeToFinish(): void
+    {
+        if ($this->deadlineAt === null) {
+            return;
+        }
+
+        $callMayTake = max(1, (int) config('models.timeout', 300));
+
+        if (now()->addSeconds($callMayTake)->lessThanOrEqualTo($this->deadlineAt)) {
+            return;
+        }
+
+        throw new RetryableStepFailure(
+            'This step has no time left to start another model call before its own deadline. '
+            .'The provider is most likely not answering: see MODEL_TIMEOUT in config/models.php.'
+        );
     }
 }
