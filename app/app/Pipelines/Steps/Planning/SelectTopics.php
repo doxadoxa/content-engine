@@ -39,6 +39,22 @@ class SelectTopics extends AbstractStep
         return 'select_topics';
     }
 
+    /**
+     * The expensive queue, because this step calls a model.
+     *
+     * {@see AbstractStep::expensiveQueue()} states the rule and this step was
+     * quietly breaking it: one model call on the cheap pool occupies a worker
+     * that every quick step in every other run is queued behind. It also made
+     * the call impossible to bound — the cheap worker stops at 120 seconds, so
+     * any deadline generous enough for a real model call was longer than the
+     * worker would allow, and the process was killed with nothing recorded.
+     * See the `timeout` note in config/models.php.
+     */
+    public function queue(): string
+    {
+        return $this->expensiveQueue();
+    }
+
     /** @return list<string> */
     public function dependsOn(): array
     {

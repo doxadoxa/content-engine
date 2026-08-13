@@ -2,17 +2,18 @@
 
 declare(strict_types=1);
 
+use App\Ai\Drivers\BoundedClaudeDriver;
+use App\Ai\Drivers\BoundedGeminiDriver;
+use App\Ai\Drivers\BoundedGroqDriver;
+use App\Ai\Drivers\BoundedNativeGeminiDriver;
+use App\Ai\Drivers\BoundedOllamaDriver;
+use App\Ai\Drivers\BoundedOpenAiCompatible;
+use App\Ai\Drivers\BoundedOpenAiDriver;
+use App\Ai\Drivers\BoundedOpenAiResponsesDriver;
+use App\Ai\Drivers\BoundedOpenRouterDriver;
 use LarAgent\Context\Drivers\CacheStorage;
 use LarAgent\Context\Drivers\FileStorage;
 use LarAgent\Context\Truncation\SimpleTruncationStrategy;
-use LarAgent\Drivers\Anthropic\ClaudeDriver;
-use LarAgent\Drivers\Groq\GroqDriver;
-use LarAgent\Drivers\OpenAi\GeminiDriver;
-use LarAgent\Drivers\OpenAi\OllamaDriver;
-use LarAgent\Drivers\OpenAi\OpenAiCompatible;
-use LarAgent\Drivers\OpenAi\OpenAiDriver;
-use LarAgent\Drivers\OpenAi\OpenAiResponsesDriver;
-use LarAgent\Drivers\OpenAi\OpenRouter;
 use LarAgent\History\InMemoryChatHistory;
 use Redberry\MCPClient\Enums\Transporters;
 
@@ -23,7 +24,7 @@ return [
      * Default driver to use, binded in service provider
      * with \LarAgent\Core\Contracts\LlmDriver interface
      */
-    'default_driver' => OpenAiCompatible::class,
+    'default_driver' => BoundedOpenAiCompatible::class,
 
     /**
      * Default chat history to use, binded in service provider
@@ -68,7 +69,11 @@ return [
         'default' => [
             'label' => 'openai',
             'api_key' => env('OPENAI_API_KEY'),
-            'driver' => OpenAiDriver::class,
+            // Ours rather than LarAgent's OpenAiDriver, and only because that
+            // one builds its HTTP client with no timeout — see the class, and
+            // the `timeout` note in config/models.php. Identical in every
+            // other respect.
+            'driver' => BoundedOpenAiDriver::class,
             'default_truncation_threshold' => 50000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
@@ -82,7 +87,7 @@ return [
         'openai' => [
             'label' => 'openai',
             'api_key' => env('OPENAI_API_KEY'),
-            'driver' => OpenAiDriver::class,
+            'driver' => BoundedOpenAiDriver::class,
             'default_truncation_threshold' => 50000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
@@ -91,7 +96,7 @@ return [
         'gemini' => [
             'label' => 'gemini',
             'api_key' => env('GEMINI_API_KEY'),
-            'driver' => GeminiDriver::class,
+            'driver' => BoundedGeminiDriver::class,
             'default_truncation_threshold' => 1000000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
@@ -101,7 +106,7 @@ return [
         'gemini_native' => [
             'label' => 'gemini',
             'api_key' => env('GEMINI_API_KEY'),
-            'driver' => LarAgent\Drivers\Gemini\GeminiDriver::class,
+            'driver' => BoundedNativeGeminiDriver::class,
             'default_truncation_threshold' => 1000000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
@@ -111,7 +116,7 @@ return [
         'groq' => [
             'label' => 'groq',
             'api_key' => env('GROQ_API_KEY'),
-            'driver' => GroqDriver::class,
+            'driver' => BoundedGroqDriver::class,
             'default_truncation_threshold' => 131072,
             'default_max_completion_tokens' => 131072,
             'default_temperature' => 1,
@@ -121,7 +126,7 @@ return [
             'label' => 'claude',
             'api_key' => env('ANTHROPIC_API_KEY'),
             'model' => 'claude-3-7-sonnet-latest',
-            'driver' => ClaudeDriver::class,
+            'driver' => BoundedClaudeDriver::class,
             'default_truncation_threshold' => 200000,
             'default_max_completion_tokens' => 8192,
             'default_temperature' => 1,
@@ -130,7 +135,7 @@ return [
         'openai_responses' => [
             'label' => 'openai_responses',
             'api_key' => env('OPENAI_API_KEY'),
-            'driver' => OpenAiResponsesDriver::class,
+            'driver' => BoundedOpenAiResponsesDriver::class,
             'default_truncation_threshold' => 50000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
@@ -140,7 +145,7 @@ return [
             'label' => 'openrouter',
             'api_key' => env('OPENROUTER_API_KEY'),
             'model' => 'openai/gpt-oss-20b:free',
-            'driver' => OpenRouter::class,
+            'driver' => BoundedOpenRouterDriver::class,
             'default_truncation_threshold' => 200000,
             'default_max_completion_tokens' => 8192,
             'default_temperature' => 1,
@@ -154,7 +159,7 @@ return [
          */
         'ollama' => [
             'label' => 'ollama',
-            'driver' => OllamaDriver::class,
+            'driver' => BoundedOllamaDriver::class,
             'default_truncation_threshold' => 131072,
             'default_max_completion_tokens' => 131072,
             'default_temperature' => 0.8,

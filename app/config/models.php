@@ -30,6 +30,38 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | How long a model call may take
+    |--------------------------------------------------------------------------
+    |
+    | LarAgent's drivers build their HTTP client with no timeout, and Guzzle's
+    | default is "wait for ever". Nothing else bounds the call: a step's own
+    | `timeout()` decides when a claim may be taken over, not when the handler
+    | is interrupted, so the only thing that ever stopped a hung provider was
+    | the worker being killed at 2100 seconds — thirty-five minutes of one of
+    | four expensive workers, with the dashboard drawing it as progress.
+    |
+    | `timeout` is the whole request, and is deliberately generous: a model
+    | writing two thousand words takes a while, and cutting real work short is
+    | worse than the hang it replaces, because the tokens are billed either way
+    | and the retry pays again. What matters is that it is far below the
+    | worker's, so the pipeline gets to record a failure instead of the process
+    | disappearing with nothing written down.
+    |
+    | `connect_timeout` is short and separate: failing to reach a provider says
+    | nothing about how long its answers take, and ten seconds of DNS and TLS is
+    | already an unwell network.
+    |
+    | Applied by App\Ai\Drivers\BoundedOpenAiDriver, which config/laragent.php
+    | uses in place of LarAgent's own.
+    |
+    */
+
+    'timeout' => (int) env('MODEL_TIMEOUT', 300),
+
+    'connect_timeout' => (int) env('MODEL_CONNECT_TIMEOUT', 10),
+
     'default_role' => 'draft',
 
     'roles' => [
