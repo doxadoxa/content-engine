@@ -6,7 +6,6 @@ namespace App\Ai\Drivers;
 
 use App\Ai\LaragentModelGateway;
 use App\Pipelines\Core\PipelineRunner;
-use GuzzleHttp\Client;
 use LarAgent\Core\DTO\DriverConfig;
 use LarAgent\Drivers\OpenAi\BaseOpenAiDriver;
 use OpenAI;
@@ -40,6 +39,8 @@ use OpenAI;
  */
 class BoundedOpenAiDriver extends BaseOpenAiDriver
 {
+    use BoundsModelCalls;
+
     /**
      * @param  DriverConfig|array<string, mixed>  $settings
      */
@@ -59,39 +60,11 @@ class BoundedOpenAiDriver extends BaseOpenAiDriver
             : $this->buildClient($apiKey, $config->apiUrl);
     }
 
-    /**
-     * What Guzzle is told about waiting.
-     *
-     * Public and static so the deadline is checkable without reaching through
-     * the OpenAI client into its transporter — the decision is this array, and
-     * the rest is somebody else's plumbing.
-     *
-     * `timeout` covers the whole request. Generous by default, because a model
-     * writing two thousand words legitimately takes a while and a deadline that
-     * cuts real work short is worse than the hang it replaced: the work is lost,
-     * the tokens are billed, and the retry pays again. It sits far below the
-     * worker timeout, which is the point — a bound the pipeline can see and
-     * record beats one that kills the process with nothing written down.
-     *
-     * `connect_timeout` is short and separate. Failing to *reach* a provider
-     * says nothing about how long its answers take, and ten seconds of DNS and
-     * TLS is already an unwell network.
-     *
-     * @return array<string, mixed>
-     */
-    public static function httpOptions(): array
-    {
-        return [
-            'timeout' => (float) config('models.timeout', 300),
-            'connect_timeout' => (float) config('models.connect_timeout', 10),
-        ];
-    }
-
     protected function buildClient(string $apiKey, ?string $apiUrl): mixed
     {
         $factory = OpenAI::factory()
             ->withApiKey($apiKey)
-            ->withHttpClient(new Client(self::httpOptions()));
+            ->withHttpClient(self::boundedClient());
 
         if ($apiUrl !== null && $apiUrl !== '') {
             $factory->withBaseUri($apiUrl);
