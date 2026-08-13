@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Ai\Drivers\BoundedOpenAiDriver;
 use LarAgent\Context\Drivers\CacheStorage;
 use LarAgent\Context\Drivers\FileStorage;
 use LarAgent\Context\Truncation\SimpleTruncationStrategy;
@@ -10,7 +11,6 @@ use LarAgent\Drivers\Groq\GroqDriver;
 use LarAgent\Drivers\OpenAi\GeminiDriver;
 use LarAgent\Drivers\OpenAi\OllamaDriver;
 use LarAgent\Drivers\OpenAi\OpenAiCompatible;
-use LarAgent\Drivers\OpenAi\OpenAiDriver;
 use LarAgent\Drivers\OpenAi\OpenAiResponsesDriver;
 use LarAgent\Drivers\OpenAi\OpenRouter;
 use LarAgent\History\InMemoryChatHistory;
@@ -68,7 +68,11 @@ return [
         'default' => [
             'label' => 'openai',
             'api_key' => env('OPENAI_API_KEY'),
-            'driver' => OpenAiDriver::class,
+            // Ours rather than LarAgent's OpenAiDriver, and only because that
+            // one builds its HTTP client with no timeout — see the class, and
+            // the `timeout` note in config/models.php. Identical in every
+            // other respect.
+            'driver' => BoundedOpenAiDriver::class,
             'default_truncation_threshold' => 50000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
@@ -82,7 +86,7 @@ return [
         'openai' => [
             'label' => 'openai',
             'api_key' => env('OPENAI_API_KEY'),
-            'driver' => OpenAiDriver::class,
+            'driver' => BoundedOpenAiDriver::class,
             'default_truncation_threshold' => 50000,
             'default_max_completion_tokens' => 10000,
             'default_temperature' => 1,
