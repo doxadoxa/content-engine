@@ -30,6 +30,7 @@ class BrandBriefController extends Controller
             return Inertia::render('brief/edit', [
                 'brief' => null,
                 'versions' => [],
+                'palette' => null,
             ]);
         }
 
@@ -42,6 +43,14 @@ class BrandBriefController extends Controller
 
         return Inertia::render('brief/edit', [
             'brief' => $active === null ? null : $this->toFormProps($active),
+            // Offered, never applied. A wrong fill is not a visible error — it
+            // silently becomes every carousel for a month — so the colours
+            // counted off the site sit beside the fields as something to click,
+            // and a person decides. Null where the site was analysed before
+            // there was a browser to photograph it with.
+            'palette' => is_array($project->site_analysis['palette'] ?? null)
+                ? $project->site_analysis['palette']
+                : null,
             'versions' => $versions->map(fn (BrandBrief $brief): array => [
                 ...$this->toFormProps($brief),
                 'version' => $brief->version,
@@ -90,6 +99,7 @@ class BrandBriefController extends Controller
             'visual_language' => $brief->visual_language,
             'brand_colour' => $brief->brand_colour,
             'brand_ink' => $brief->brand_ink,
+            'brand_accent' => $brief->brand_accent,
             'overlay_position' => $brief->overlay_position,
             'overlay_case' => $brief->overlay_case,
             'forbidden_topics' => $brief->forbidden_topics,

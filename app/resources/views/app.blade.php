@@ -43,7 +43,21 @@
             }
         </style>
 
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        {{-- The SVG is what every current browser uses; the .ico is the
+             fallback older ones fetch from the root whether or not it is
+             declared, so it is declared and real rather than the empty file it
+             used to be.
+
+             Stamped with the file's own mtime, because a favicon is the one
+             asset a browser will not re-fetch on a hard reload — Chrome keeps
+             it in a separate store and honours the week-long max-age against
+             it. Without a changing URL, everyone who has already loaded the app
+             keeps the old mark for seven days and nobody can clear it from our
+             side. --}}
+        @php($iconVersion = @filemtime(public_path('favicon.svg')) ?: 1)
+        <link rel="icon" href="/favicon.svg?v={{ $iconVersion }}" type="image/svg+xml">
+        <link rel="icon" href="/favicon.ico?v={{ $iconVersion }}" sizes="32x32">
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png?v={{ $iconVersion }}">
 
 
         @viteReactRefresh

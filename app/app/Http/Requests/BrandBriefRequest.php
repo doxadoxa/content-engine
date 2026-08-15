@@ -42,6 +42,7 @@ class BrandBriefRequest extends FormRequest
             // seeder, the console, or a row written before this rule existed.
             'brand_colour' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'brand_ink' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
+            'brand_accent' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'overlay_position' => ['nullable', 'string', 'in:top,centre,bottom'],
             'overlay_case' => ['nullable', 'string', 'in:sentence,upper'],
 
@@ -69,6 +70,7 @@ class BrandBriefRequest extends FormRequest
             'visual_language' => 'visual language',
             'brand_colour' => 'brand colour',
             'brand_ink' => 'text colour on the brand colour',
+            'brand_accent' => 'accent colour',
             'overlay_position' => 'overlay position',
             'overlay_case' => 'overlay case',
             'forbidden_topics' => 'topics to avoid',

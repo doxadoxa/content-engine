@@ -1,5 +1,6 @@
 import { Form, Head, usePage } from '@inertiajs/react';
 import { BookOpen, ChevronDown, History } from 'lucide-react';
+import { useState } from 'react';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,8 @@ type BriefContent = {
     visual_language: string;
     brand_colour: string;
     brand_ink: string;
+    /** Empty where the brand has no accent, which means "use the ink". */
+    brand_accent: string;
     overlay_position: string;
     overlay_case: string;
     forbidden_topics: string[];
@@ -54,6 +57,8 @@ type Props = {
     brief: BriefContent | null;
     /** Newest first. */
     versions: BriefVersion[];
+    /** Colours read off the site during analysis. Null before there was a browser. */
+    palette: Palette | null;
 };
 
 /** Declaration order is the order the compiled prompt uses. */
@@ -75,7 +80,7 @@ const LIST_FIELDS = new Set<keyof BriefContent>([
     'competitors',
 ]);
 
-export default function BrandBriefEdit({ brief, versions }: Props) {
+export default function BrandBriefEdit({ brief, versions, palette }: Props) {
     const { auth } = usePage().props;
     const isOwner = auth.project?.role === 'owner';
     const nextVersion = (versions[0]?.version ?? 0) + 1;
@@ -225,49 +230,18 @@ export default function BrandBriefEdit({ brief, versions }: Props) {
                                         The part something draws with rather
                                         than reads. Visual language above tells
                                         an image model what to make; these tell
-                                        the engine what colour to fill and where
-                                        to put the words when it lays out a
-                                        panel itself.
+                                        the engine what colour to fill, what to
+                                        emphasise with, and where to put the
+                                        words when it lays out a panel itself.
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent className="grid gap-4 sm:grid-cols-2">
-                                    <div className="grid gap-2">
-                                        <Label htmlFor="brand_colour">
-                                            Brand colour
-                                        </Label>
-                                        <input
-                                            id="brand_colour"
-                                            name="brand_colour"
-                                            type="color"
-                                            defaultValue={
-                                                brief?.brand_colour ?? '#1a1a2e'
-                                            }
-                                            disabled={!isOwner}
-                                            className="h-9 w-full rounded-md border bg-background px-1"
-                                        />
-                                        <InputError
-                                            message={errors.brand_colour}
-                                        />
-                                    </div>
-
-                                    <div className="grid gap-2">
-                                        <Label htmlFor="brand_ink">
-                                            Text on that colour
-                                        </Label>
-                                        <input
-                                            id="brand_ink"
-                                            name="brand_ink"
-                                            type="color"
-                                            defaultValue={
-                                                brief?.brand_ink ?? '#ffffff'
-                                            }
-                                            disabled={!isOwner}
-                                            className="h-9 w-full rounded-md border bg-background px-1"
-                                        />
-                                        <InputError
-                                            message={errors.brand_ink}
-                                        />
-                                    </div>
+                                    <Colours
+                                        brief={brief}
+                                        palette={palette}
+                                        disabled={!isOwner}
+                                        errors={errors}
+                                    />
 
                                     <div className="grid gap-2">
                                         <Label htmlFor="overlay_position">
@@ -572,6 +546,204 @@ function VersionEntry({
         </Card>
     );
 }
+
+/**
+ * The three colours a renderer draws with, and the site's own suggestion.
+ *
+ * Controlled rather than `defaultValue`, which is the whole reason this is a
+ * component: an uncontrolled input cannot be filled in from outside, and the
+ * point of counting the colours off a screenshot is that one click puts them in
+ * the fields.
+ *
+ * **Suggested, never applied.** The palette arrives from site analysis as three
+ * values nobody has agreed to, and a wrong fill is not a visible error — it
+ * quietly becomes every carousel for a month. So it sits beside the fields as
+ * something to click, the same way the assistant's goal is approved rather than
+ * written straight into the month.
+ */
+function Colours({
+    brief,
+    palette,
+    disabled,
+    errors,
+}: {
+    brief: BriefContent | null;
+    palette: Palette | null;
+    disabled: boolean;
+    errors: Record<string, string>;
+}) {
+    const [colour, setColour] = useState(brief?.brand_colour ?? '#1a1a2e');
+    const [ink, setInk] = useState(brief?.brand_ink ?? '#ffffff');
+    const [accent, setAccent] = useState(brief?.brand_accent ?? '');
+
+    const differs =
+        palette !== null &&
+        (palette.fill !== colour ||
+            palette.ink !== ink ||
+            (palette.accent ?? '') !== accent);
+
+    return (
+        <>
+            <div className="grid gap-2">
+                <Label htmlFor="brand_colour">Brand colour</Label>
+                <input
+                    id="brand_colour"
+                    name="brand_colour"
+                    type="color"
+                    value={colour}
+                    onChange={(event) => setColour(event.target.value)}
+                    disabled={disabled}
+                    className="h-9 w-full rounded-md border bg-background px-1"
+                />
+                <InputError message={errors.brand_colour} />
+            </div>
+
+            <div className="grid gap-2">
+                <Label htmlFor="brand_ink">Text on that colour</Label>
+                <input
+                    id="brand_ink"
+                    name="brand_ink"
+                    type="color"
+                    value={ink}
+                    onChange={(event) => setInk(event.target.value)}
+                    disabled={disabled}
+                    className="h-9 w-full rounded-md border bg-background px-1"
+                />
+                <InputError message={errors.brand_ink} />
+            </div>
+
+            <AccentField
+                value={accent}
+                ink={ink}
+                disabled={disabled}
+                error={errors.brand_accent}
+                onChange={setAccent}
+            />
+
+            {palette !== null && (
+                <div className="rounded-2xl border border-dashed p-4 sm:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex shrink-0 overflow-hidden rounded-lg border">
+                                <Swatch colour={palette.fill} />
+                                <Swatch colour={palette.ink} />
+                                {palette.accent !== null && (
+                                    <Swatch colour={palette.accent} />
+                                )}
+                            </span>
+                            <p className="min-w-0 text-xs text-muted-foreground">
+                                Counted off a picture of your site
+                                {palette.accent === null &&
+                                    ' — it uses one colour, so there is no accent to suggest'}
+                                .
+                            </p>
+                        </div>
+                        {differs && !disabled && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    setColour(palette.fill);
+                                    setInk(palette.ink);
+                                    setAccent(palette.accent ?? '');
+                                }}
+                            >
+                                Use these
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+function Swatch({ colour }: { colour: string }) {
+    return (
+        <span
+            className="block size-7"
+            style={{ backgroundColor: colour }}
+            title={colour}
+        />
+    );
+}
+
+/**
+ * The accent, and the one thing a colour input cannot say.
+ *
+ * `<input type="color">` always has a value, so it has no way to express "this
+ * brand has not got an accent" — and that state has to be expressible, because
+ * it is the one every brief starts in and the one that keeps carousels looking
+ * exactly as they did before the field existed. A swatch alone would force every
+ * brand to have a third colour, and the ones that picked whatever the input
+ * happened to open on would be the worst off: a wrong accent is not a visible
+ * error, it just quietly ships on every carousel.
+ *
+ * So the checkbox owns the decision and the swatch owns the value, and a hidden
+ * field posts the empty string the server reads as "use the ink". The swatch
+ * keeps its colour while the box is ticked rather than resetting, so changing
+ * your mind twice does not lose the colour you chose.
+ */
+function AccentField({
+    value,
+    ink,
+    disabled,
+    error,
+    onChange,
+}: {
+    value: string;
+    ink: string;
+    disabled: boolean;
+    error?: string;
+    onChange: (next: string) => void;
+}) {
+    const [colour, setColour] = useState(value === '' ? ink : value);
+    const none = value === '';
+
+    return (
+        <div className="grid gap-2">
+            <Label htmlFor="brand_accent">Accent</Label>
+            <input type="hidden" name="brand_accent" value={value} />
+            <input
+                id="brand_accent"
+                type="color"
+                value={colour}
+                onChange={(event) => {
+                    setColour(event.target.value);
+                    onChange(event.target.value);
+                }}
+                disabled={disabled || none}
+                className="h-9 w-full rounded-md border bg-background px-1 disabled:opacity-45"
+            />
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                    type="checkbox"
+                    checked={none}
+                    onChange={(event) =>
+                        onChange(event.target.checked ? '' : colour)
+                    }
+                    disabled={disabled}
+                    className="size-3.5"
+                />
+                Same as the text colour
+            </label>
+            <p className="text-xs text-muted-foreground">
+                What a carousel emphasises with — the figure on a statistic, the
+                half of a comparison that matters.
+            </p>
+            <InputError message={error} />
+        </div>
+    );
+}
+
+/** Colours counted off a screenshot of the site. Suggestions, never applied. */
+type Palette = {
+    fill: string;
+    ink: string;
+    /** Null where the site uses a single colour and there is no second one. */
+    accent: string | null;
+};
 
 type Change = {
     key: string;

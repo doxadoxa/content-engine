@@ -8,13 +8,17 @@ use App\Ai\Contracts\ModelSession;
 use App\Ai\ModelRequest;
 use App\Enums\AssetRole;
 use App\Enums\ChannelType;
+use App\Enums\ContentFormat;
 use App\Enums\ContentItemType;
 use App\Enums\PostKind;
+use App\Enums\SlideLayout;
+use App\Enums\SocialKpi;
 use App\Media\CarouselPanels;
 use App\Media\HeroImage;
 use App\Media\SocialImage;
 use App\Models\Asset;
 use App\Models\BrandBrief;
+use App\Models\ContentGoal;
 use App\Models\ContentIdea;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
@@ -24,6 +28,7 @@ use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Pipelines\Steps\SocialDraft\DraftCandidates;
 use App\Pipelines\Steps\SocialDraft\FactCheckPost;
 use App\Pipelines\Steps\SocialDraft\GuardFinding;
+use App\Social\PublishedCadence;
 use App\Support\Brand\VisualStyle;
 use App\Support\Social\ChannelPlaybook;
 use App\Support\Social\ChannelPostScore;
@@ -175,6 +180,22 @@ class ContentStudioAssistant
                 throw new ContentStudioException('There is no assistant proposal to accept yet.');
             }
 
+            // One click, two rows. The proposal and the goal it was written
+            // against are one decision to the person making it — "yes, this is
+            // the month" — and splitting them into two buttons produced the
+            // state nobody could explain: an accepted plan with no goal above
+            // it, so the Overview reported progress against a denominator the
+            // plan had already argued for and nobody had agreed to.
+            //
+            // Still two rows underneath, because a goal outlives the proposal
+            // that suggested it. Confirmed only when unconfirmed, so accepting a
+            // revised proposal never restamps a decision made weeks ago.
+            $goal = ContentGoal::forMonth($locked->month);
+
+            if ($goal !== null && ! $goal->isConfirmed()) {
+                $goal->forceFill(['confirmed_at' => now()])->save();
+            }
+
             $locked->forceFill([
                 'assistant_accepted_version' => $locked->assistant_version,
                 'assistant_accepted_at' => now(),
@@ -248,10 +269,11 @@ class ContentStudioAssistant
         ContentIdea $idea,
         ModelSession $models,
         string $operationId,
+        ?string $signalId = null,
     ): array {
         try {
             return Cache::lock("content-studio:idea:{$idea->getKey()}", self::DRAFT_LOCK_SECONDS)
-                ->block(self::DUPLICATE_WAIT_SECONDS, function () use ($idea, $models, $operationId): array {
+                ->block(self::DUPLICATE_WAIT_SECONDS, function () use ($idea, $models, $operationId, $signalId): array {
                     $fresh = ContentIdea::query()->whereKey($idea->getKey())->firstOrFail();
                     $plan = $fresh->contentPlan;
 
@@ -275,6 +297,7 @@ class ContentStudioAssistant
                         $this->draftIdea($plan, $fresh, $missing, $models),
                         $brief,
                         $operationId,
+                        $signalId,
                     );
 
                     $this->illustrateDrafts($written, $brief, $models);
@@ -449,7 +472,7 @@ class ContentStudioAssistant
             $correction = implode(' ', $findings);
         }
 
-        /** @var array{summary: string, strategy: array<string, mixed>, ideas: list<array<string, mixed>>} $proposal */
+        /** @var array{summary: string, goal: array{kpi: SocialKpi, target: int, cadence: int, weeks: list<array{objective: string}>}|null, strategy: array<string, mixed>, ideas: list<array<string, mixed>>} $proposal */
         // A month that is still unbalanced after the second ask is proposed
         // anyway, with what is wrong with it written down beside it. The
         // alternative is an operator who clicks Propose and gets nothing, and
@@ -467,6 +490,8 @@ class ContentStudioAssistant
             $locked = ContentPlan::query()->whereKey($plan->getKey())->lockForUpdate()->firstOrFail();
             $this->assertVersion($locked, $expectedVersion);
             $nextVersion = $expectedVersion + 1;
+
+            $this->storeGoal($locked, $proposal['goal']);
 
             $locked->forceFill([
                 'assistant_summary' => $proposal['summary'],
@@ -510,6 +535,45 @@ class ContentStudioAssistant
         });
     }
 
+    /**
+     * Write the proposed goal, unless a person already decided this month's.
+     *
+     * **A confirmed goal is never overwritten**, which is the rule the goals
+     * table was split off `content_plans` to make possible: a plan is replaced
+     * every time the operator asks for a better month, and if the goal went with
+     * it then asking for better ideas would silently rewrite what the month was
+     * for. So refinement can propose ideas against a confirmed target but not
+     * move the target — to change that, the operator changes it.
+     *
+     * Written unconfirmed. Approving the proposal is what confirms it, so the
+     * two halves of one decision stay one click; see {@see accept()}.
+     *
+     * @param  array{kpi: SocialKpi, target: int, cadence: int, weeks: list<array{objective: string}>}|null  $goal
+     */
+    private function storeGoal(ContentPlan $plan, ?array $goal): void
+    {
+        if ($goal === null) {
+            return;
+        }
+
+        $existing = ContentGoal::forMonth($plan->month);
+
+        if ($existing?->isConfirmed() === true) {
+            return;
+        }
+
+        ContentGoal::query()->updateOrCreate(
+            ['month' => $plan->month->copy()->startOfMonth()],
+            [
+                'kpi' => $goal['kpi'],
+                'target' => $goal['target'],
+                'cadence' => $goal['cadence'],
+                'weeks' => $goal['weeks'],
+                'confirmed_at' => null,
+            ],
+        );
+    }
+
     private function operationApplied(ContentPlan $plan, string $operationId): bool
     {
         return $plan->messages()
@@ -549,8 +613,31 @@ class ContentStudioAssistant
 
             'Write every idea angle for the channels it is actually going to. Give each channel a distinct '
                 .'execution, not one shared paragraph.',
+
+            // The goal, and why the model is asked for it rather than the
+            // operator. A blank target field is a question nobody can answer on
+            // their first month — the honest answer is "I don't know, what is
+            // realistic?" — so it was answered with whatever the field was
+            // prefilled with, and a month was then measured against a number
+            // that meant nothing. The model has the audience size, the history
+            // and the cadence in front of it, which is everything the estimate
+            // needs.
+            'Also propose what the month is *for*: one KPI, a target, a weekly cadence, and one objective per '
+                .'week. Pick the single KPI the month can actually move, not the most impressive one.',
+            'Size the target from the supplied audience and history, not from ambition. A target reachable at '
+                .'the cadence you are proposing is the point; a round number nobody hits teaches the operator '
+                .'to ignore the whole screen. If the account is starting from nothing, propose a small first '
+                .'milestone that proves the format works.',
+            'Write `expected_impact` as one sentence naming the cadence, the mechanism and the arithmetic that '
+                .'gets from where the account is now to the target. It is the operator\'s only way to judge '
+                .'whether the plan is plausible before approving it, so it must be falsifiable, not encouraging.',
+            'Give exactly four weekly objectives, in order, each a short line describing what that week is '
+                .'trying to learn or prove.',
+            'If `confirmed_goal` is supplied, the operator has already decided the KPI and the target. Plan the '
+                .'month against it and repeat it back unchanged.',
+
             'Return JSON only, with exactly this shape:',
-            '{"summary":"...","site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"take|how_to|proof|behind|offer","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
+            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"take|how_to|proof|behind|offer","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
             'Use only dates inside the requested month. Spread the ideas across the month. Keep questions to the two or three unknowns that would materially change the plan.',
         ]);
     }
@@ -582,9 +669,27 @@ class ContentStudioAssistant
 
         $targetIdeas = max(8, min(20, $project->weekly_target * 4));
 
+        // The goal only if a person confirmed it. An unconfirmed one is this
+        // assistant's own previous guess, and feeding a model its own estimate
+        // back as context is how a made-up number becomes a fact by the third
+        // refinement.
+        $goal = ContentGoal::forMonth($plan->month);
+        $published = PublishedCadence::beforeMonth($plan->month);
+
         $context = [
             'requested_month' => $plan->month->format('Y-m'),
             'target_ideas' => $targetIdeas,
+            // What the account is starting from, so the target is sized against
+            // something. Without it the model has no scale and reaches for a
+            // round number, which is the failure the operator's own blank
+            // target field had.
+            'posts_published_in_the_four_weeks_before' => $published,
+            'current_posts_per_week' => PublishedCadence::weeklyRate($published),
+            'confirmed_goal' => $goal !== null && $goal->isConfirmed() ? [
+                'kpi' => $goal->kpi->value,
+                'target' => $goal->target,
+                'cadence' => $goal->cadence,
+            ] : null,
             // Counts rather than percentages, because the model is producing a
             // list of exactly this length and a share has to be converted
             // before it can be obeyed — a conversion it does badly and quietly.
@@ -726,6 +831,7 @@ class ContentStudioAssistant
 
         return [
             'summary' => $summary,
+            'goal' => $this->normaliseGoal($decoded['goal'] ?? null),
             'strategy' => [
                 'site_facts' => $facts,
                 'assumptions' => $this->textList($decoded['assumptions'] ?? [], 20, 1000),
@@ -733,8 +839,62 @@ class ContentStudioAssistant
                 'pillars' => $pillars,
                 'channel_roles' => $channelRoles,
                 'questions' => $this->textList($decoded['questions'] ?? [], 5, 1000),
+                // The one sentence tying the cadence to the target. Kept on the
+                // strategy rather than on `content_goals` because it describes
+                // *this* proposal's argument for the number, and a goal outlives
+                // every proposal made against it — see the goals migration.
+                'expected_impact' => $this->text(
+                    is_array($decoded['goal'] ?? null) ? ($decoded['goal']['expected_impact'] ?? null) : null,
+                    1000,
+                ),
             ],
             'ideas' => $ideas,
+        ];
+    }
+
+    /**
+     * What the month is aiming at, or null if the model did not say usably.
+     *
+     * **Null rather than a default.** A missing target is the one field here
+     * with no safe fallback: any number invented to fill it is indistinguishable
+     * on the screen from one the model reasoned about, and the operator approves
+     * a month against it. The whole point of moving this off the operator's
+     * blank form was to stop measuring a month against a number nobody chose, and
+     * a silent default would reintroduce exactly that with the model's
+     * authorship on it. A proposal with no goal renders as a proposal with no
+     * goal, and the twenty ideas beside it are still worth having.
+     *
+     * @return array{kpi: SocialKpi, target: int, cadence: int, weeks: list<array{objective: string}>}|null
+     */
+    private function normaliseGoal(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $kpi = SocialKpi::tryFrom(strtolower(trim($this->text($raw['kpi'] ?? null, 50))));
+        $target = filter_var($raw['target'] ?? null, FILTER_VALIDATE_INT);
+        $cadence = filter_var($raw['cadence'] ?? null, FILTER_VALIDATE_INT);
+
+        // Bounded by the same rules the operator's own form is validated
+        // against, so a goal cannot arrive through the model that would have
+        // been refused from a person.
+        if ($kpi === null || $target === false || $cadence === false) {
+            return null;
+        }
+
+        if ($target < 1 || $target > 100_000_000 || $cadence < 1 || $cadence > 50) {
+            return null;
+        }
+
+        return [
+            'kpi' => $kpi,
+            'target' => $target,
+            'cadence' => $cadence,
+            'weeks' => array_map(
+                static fn (string $objective): array => ['objective' => $objective],
+                $this->textList($raw['weeks'] ?? [], ContentGoal::WEEKS, 500),
+            ),
         ];
     }
 
@@ -754,8 +914,9 @@ class ContentStudioAssistant
         array $drafts,
         ?BrandBrief $brief,
         string $operationId,
+        ?string $signalId = null,
     ): array {
-        return DB::transaction(function () use ($plan, $idea, $drafts, $brief, $operationId): array {
+        return DB::transaction(function () use ($plan, $idea, $drafts, $brief, $operationId, $signalId): array {
             $created = [];
 
             foreach ($drafts as $channel => $draft) {
@@ -779,6 +940,12 @@ class ContentStudioAssistant
                     'entities' => [],
                     'scheduled_for' => $idea->scheduled_for,
                     'channel_type' => $channel,
+                    // The reason this post exists, where there was one. A real
+                    // column rather than a payload key, because §3's whole
+                    // argument for signals being a table is that the loop
+                    // learns by source — and `whereNotNull('signal_id')` is the
+                    // question that answers.
+                    'signal_id' => $signalId,
                 ]);
 
                 // The queued Studio pipeline still crosses the same
@@ -1106,7 +1273,9 @@ class ContentStudioAssistant
 
         $shape = $playbook->isCaptionChannel()
             ? ($idea->instagramFormat() === 'carousel'
-                ? '{"caption":"...","slides":[{"heading":"...","body":"..."}],'.$visual.'}'
+                ? '{"caption":"...","slides":[{"layout":"cover|statement|step|stat|contrast|checklist|cta",'
+                    .'"heading":"...","body":"...","kicker":"...","figure":"...","before":"...","after":"...",'
+                    .'"beforeLabel":"...","afterLabel":"...","items":["..."],"action":"..."}],'.$visual.'}'
                 : '{"caption":"...",'.$visual.'}')
             : '{"segments":["the post"],"link":null,"chain_reason":null,'.$visual.'}';
 
@@ -1119,7 +1288,7 @@ class ContentStudioAssistant
         return implode(' ', array_filter([
             $limits,
             $playbook->isCaptionChannel() && $idea->instagramFormat() === 'carousel'
-                ? 'At most 10 slides, each with a short heading and a concise body.'
+                ? $this->carouselContract()
                 : null,
             'The visual fields describe one photograph to go with this post: what is in it, how it is '
                 .'framed, what is happening, where, in what style, and in what light. Be specific — a '
@@ -1129,6 +1298,68 @@ class ContentStudioAssistant
                 .'showroom. Never ask for text, words or logos in the image.',
             'Reply with JSON and nothing else: '.$shape,
         ]));
+    }
+
+    /**
+     * How a carousel is built, said to the model that writes it.
+     *
+     * This used to be one sentence — "at most 10 slides, each with a short
+     * heading and a concise body" — and it produced exactly what it asked for:
+     * N interchangeable steps with no opening, no ending and nothing a reader
+     * could not have got from the caption. Every slide then drew identically,
+     * because the template had one shape, and the two failures compounded into
+     * a format that looked like a list of paragraphs on coloured cards.
+     *
+     * The three rules that matter are stated as rules rather than as advice.
+     * The hook decides whether anything after it is read at all; the count is
+     * where saves and completion actually peak; and a carousel that ends without
+     * asking for anything has spent the attention it earned and banked nothing.
+     *
+     * The figure rule is a refusal, not a preference. See
+     * {@see SlideLayout::needsEvidence()} — a number at display size is the most
+     * believable thing this engine can draw and therefore the most damaging
+     * thing to invent.
+     */
+    private function carouselContract(): string
+    {
+        $layouts = implode(' ', [
+            'Choose a layout for each slide, and choose it because the thought is that shape:',
+            '- cover: the opening hook. Slide one is always this.',
+            '- statement: one sentence that stands alone. Needs only a heading.',
+            '- step: one move in a sequence. Heading and body. The numbering is added for you.',
+            '- stat: one figure, shown at the size of the whole slide. Give `figure` short — '
+                .'"68%", "3x", "4.9" — and the heading is the line read under it.',
+            '- contrast: two halves. `before` is what people assume, `after` is what is true.',
+            '- checklist: three to five short `items` under a heading.',
+            '- cta: the closing ask. The final slide is always this.',
+        ]);
+
+        return implode(' ', [
+            'Between 5 and 8 slides — that is where a carousel is actually read to the end.',
+
+            'Slide one is a cover whose heading opens a gap the rest of the carousel closes. '
+                .'"5 cleaning tips" closes it immediately and nobody swipes; "the one thing your routine '
+                .'never reaches" opens it. Do not summarise the post on the cover.',
+
+            'The last slide is a cta asking for exactly one thing — save it, follow, send a message. One, '
+                .'not three.',
+
+            $layouts,
+
+            'Vary the layouts. Four steps in a row is the format this replaces; if the middle of the '
+                .'carousel is all one shape, the argument is probably a list and would read better as one.',
+
+            // The whole guard, said plainly. The parser enforces it too — see
+            // ContentStudioAssistant::sourcedFigure() — but a model told the
+            // rule writes a better slide than one whose slide is silently
+            // rewritten into a statement afterwards.
+            'Use a stat slide only for a figure that appears in this idea\'s evidence. Do not estimate, '
+                .'round up, or invent a number to fill the layout — a figure you cannot source will be '
+                .'redrawn as a plain statement.',
+
+            'Every slide has a heading whatever its layout: it is the picture\'s alt text and its line in '
+                .'the caption, so it has to say the slide\'s point on its own.',
+        ]);
     }
 
     /**
@@ -1219,20 +1450,7 @@ class ContentStudioAssistant
             );
         }
 
-        $slides = [];
-
-        foreach (array_slice($this->list($decoded['slides'] ?? []), 0, 10) as $slide) {
-            if (! is_array($slide)) {
-                continue;
-            }
-
-            $heading = $this->untruncatedText($slide['heading'] ?? null, 120, 'Instagram slide heading');
-            $body = $this->untruncatedText($slide['body'] ?? null, 500, 'Instagram slide body');
-
-            if ($heading !== '' || $body !== '') {
-                $slides[] = ['heading' => $heading, 'body' => $body];
-            }
-        }
+        $slides = $this->parseSlides($this->list($decoded['slides'] ?? []), $idea);
 
         if ($slides === []) {
             throw new InvalidAssistantResponse('Instagram carousel has no usable slides.');
@@ -1245,6 +1463,224 @@ class ContentStudioAssistant
             slides: $slides,
             visual: $visual,
         );
+    }
+
+    /**
+     * The model's slides, normalised into layouts this engine can draw.
+     *
+     * **Degrades, never refuses.** Every failure here is a slide asking to be
+     * something it did not supply the fields for, and the sentence on it is
+     * still worth publishing — so a `contrast` with one half becomes a
+     * statement rather than a hole in the argument. The only thing dropped is a
+     * slide with no heading, because a heading is what the caption and the alt
+     * text are made of.
+     *
+     * Position decides what a slide is allowed to be, so a model that opened
+     * with a checklist or ended mid-sequence still produces a carousel with a
+     * cover and an ending. See {@see SlideLayout::allowedAt()}.
+     *
+     * @param  list<mixed>  $raw
+     * @return list<array{heading: string, body: string, layout: string, fields: array<string, mixed>}>
+     */
+    private function parseSlides(array $raw, ContentIdea $idea): array
+    {
+        // The upper bound is the format's, not the model's. Eight is where
+        // completion stops paying; ten was an arbitrary ceiling that let a
+        // rambling answer through intact.
+        // Filtered before anything is positioned, because position is a promise
+        // about the *surviving* slides. Counting the raw answer meant that a
+        // model omitting the last slide's heading — plausible for a `cta`, whose
+        // real payload is its `action` — left no slide at the final position at
+        // all, so the carousel ended on a middle layout with nothing asked for.
+        // The docblock above promises the opposite.
+        $usable = [];
+
+        foreach (array_slice($raw, 0, 8) as $slide) {
+            if (! is_array($slide)) {
+                continue;
+            }
+
+            $heading = $this->untruncatedText($slide['heading'] ?? null, 120, 'Instagram slide heading');
+
+            if ($heading !== '') {
+                $usable[] = ['heading' => $heading, 'raw' => $slide];
+            }
+        }
+
+        $count = count($usable);
+        $slides = [];
+        $step = 0;
+
+        foreach ($usable as $index => ['heading' => $heading, 'raw' => $slide]) {
+            $layout = $this->slideLayout($slide, $index + 1, $count);
+            $fields = [];
+
+            foreach ($layout->fields() as $field => $limit) {
+                // Truncated, not refused. `untruncatedText` throws, and these
+                // are short optional fields with tight limits that the model is
+                // never told — so a 62-character kicker discarded the entire
+                // candidate and burned a retry, and a batch where every
+                // candidate overran failed the channel outright. That is the
+                // opposite of what this method promises. The heading above
+                // still throws, because a heading over 120 characters is a
+                // model ignoring the shape rather than overrunning a label.
+                $value = $this->text($slide[$field] ?? null, $limit);
+
+                if ($value !== '') {
+                    $fields[$field] = $value;
+                }
+            }
+
+            // The one list-valued field, so it is read here rather than being
+            // given a character limit in fields() that would mean nothing.
+            // Five, because a sixth tick slides off the frame.
+            if ($layout === SlideLayout::Checklist) {
+                $items = $this->textList($slide['items'] ?? [], 5, 120);
+
+                if ($items !== []) {
+                    $fields['items'] = $items;
+                }
+            }
+
+            $layout = $this->settleLayout($layout, $fields, $idea);
+
+            if ($layout === SlideLayout::Step) {
+                $fields['step'] = (string) ++$step;
+            }
+
+            $slides[] = [
+                'layout' => $layout->value,
+                'heading' => $heading,
+                // Read from the slide rather than out of `fields`, and the two
+                // are different jobs rather than a duplication: this is the
+                // slide's prose for the caption and the post body, which every
+                // layout has whether or not its template draws a paragraph.
+                // `fields['body']` is what `step` and `cta` put on the picture.
+                'body' => $this->text($slide['body'] ?? null, 500),
+                'fields' => $fields,
+            ];
+        }
+
+        return $slides;
+    }
+
+    /**
+     * What the model asked for, if it is allowed here.
+     *
+     * An unknown or absent layout is not an error: the field is new, and an
+     * answer written against the older contract is still a usable slide. It
+     * lands on whatever this position permits.
+     *
+     * @param  array<string, mixed>  $slide
+     */
+    private function slideLayout(array $slide, int $position, int $count): SlideLayout
+    {
+        $allowed = SlideLayout::allowedAt($position, $count);
+        $asked = SlideLayout::tryFrom(strtolower(trim((string) ($slide['layout'] ?? ''))));
+
+        if ($asked !== null && in_array($asked, $allowed, true)) {
+            return $asked;
+        }
+
+        // The first permitted layout, which for the two fixed positions is the
+        // only one. In the middle it is Statement — the layout that needs
+        // nothing but the heading every slide already has.
+        return $allowed[0];
+    }
+
+    /**
+     * Whether the slide may keep the layout it asked for.
+     *
+     * Two ways it may not. A layout missing a field it cannot be drawn without
+     * falls back; and a figure the idea cannot source is refused outright,
+     * because a number at display size is the most believable thing this engine
+     * draws and therefore the most damaging thing to invent.
+     *
+     * @param  array<string, mixed>  $fields
+     */
+    private function settleLayout(SlideLayout $layout, array $fields, ContentIdea $idea): SlideLayout
+    {
+        foreach ($layout->required() as $field) {
+            if (! isset($fields[$field])) {
+                return $layout->fallback();
+            }
+        }
+
+        if ($layout->needsEvidence() && ! $this->sourcedFigure((string) ($fields['figure'] ?? ''), $idea)) {
+            return $layout->fallback();
+        }
+
+        return $layout;
+    }
+
+    /**
+     * Whether a figure appears in what this idea was planned from.
+     *
+     * Digits rather than the whole string, and deliberately loose. The slide
+     * says "68%" where the evidence says "68 per cent of clients rebook"; a
+     * literal match would reject the honest case and teach nobody anything.
+     * What it does catch is the invented one — a model reaching for "3x faster"
+     * with nothing behind it writes digits that appear nowhere in its own
+     * source material.
+     *
+     * A figure with no digits at all — "most", "nearly all" — is not a figure
+     * and does not belong at 300px, so it fails too.
+     *
+     * Evidence that spells its number as a word does not source a numeral, and
+     * that is deliberate rather than an oversight: this engine writes in four
+     * languages, so reading "four" means also reading "quatro", "четыре" and
+     * "чотири", and a matcher that is only right in English would wave figures
+     * through in the other three. The failure it produces is the safe one — a
+     * true figure demoted to a statement — and the fix is to write the evidence
+     * with a numeral.
+     */
+    private function sourcedFigure(string $figure, ContentIdea $idea): bool
+    {
+        $wanted = $this->numbersIn($figure);
+
+        if ($wanted === []) {
+            return false;
+        }
+
+        $known = $this->numbersIn(implode(' ', [
+            implode(' ', $idea->evidence),
+            $idea->thesis,
+            $idea->title,
+        ]));
+
+        return array_intersect($wanted, $known) !== [];
+    }
+
+    /**
+     * Every number in a string, as comparable digit-runs.
+     *
+     * **Numbers are found first and flattened second**, which is the whole
+     * point. Stripping non-digits from the string up front shatters "4.9" into
+     * "4" and "9", so a slide saying 4.9 could never match evidence saying 4.9 —
+     * and "4.9" is one of the three examples the prompt gives of a good figure.
+     * Every decimal and every thousands-grouped number was silently demoted to a
+     * statement, including the ones stated verbatim in the idea's own evidence.
+     *
+     * Separators are dropped rather than interpreted. "4.9" and "4,9" are the
+     * same figure in the four languages this engine writes, and deciding whether
+     * a comma groups thousands or marks a decimal needs a locale nobody has
+     * passed down here — while "49" matching "49" is right in all of them.
+     *
+     * @return list<string>
+     */
+    private function numbersIn(string $text): array
+    {
+        preg_match_all('/\d[\d.,\s]*\d|\d/u', $text, $matches);
+
+        $numbers = array_map(
+            static fn (string $number): string => (string) preg_replace('/\D+/', '', $number),
+            $matches[0],
+        );
+
+        return array_values(array_unique(array_filter(
+            $numbers,
+            static fn (string $number): bool => $number !== '',
+        )));
     }
 
     /**
@@ -1555,6 +1991,15 @@ class ContentStudioAssistant
             // that refused one post took that post's slides with it. A
             // carousel's steps have nothing to do with whether a photograph of
             // a kitchen was available.
+            // A text post buys nothing. The shape has always allowed it —
+            // `visual: 'none'` — and nothing ever produced it, so every post
+            // paid for a photograph whether the post wanted one or not. An
+            // opinion or a question is frequently stronger without one, and
+            // this is the only choice on the idea that makes a post cheaper.
+            if ($item->contentIdea?->format() === ContentFormat::Text) {
+                continue;
+            }
+
             $payload = $this->illustrate($item, $playbook, $payload, $brief, $models);
 
             $this->drawPanels($item, $playbook, $payload, $brief);
@@ -1647,6 +2092,11 @@ class ContentStudioAssistant
                 $panels[] = [
                     'heading' => (string) $slide['heading'],
                     'body' => (string) ($slide['body'] ?? ''),
+                    // Absent on a carousel drafted before layouts existed, and
+                    // resolved to the old flat template by CarouselPanels —
+                    // those posts keep the pictures they were written for.
+                    'layout' => is_string($slide['layout'] ?? null) ? $slide['layout'] : null,
+                    'fields' => is_array($slide['fields'] ?? null) ? $slide['fields'] : [],
                 ];
             }
         }

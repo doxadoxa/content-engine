@@ -18,6 +18,8 @@ final readonly class SiteAnalysis
      * @param  list<string>  $competitors
      * @param  list<string>  $seedKeywords
      * @param  list<string>  $forbidden
+     * @param  array{fill: string, ink: string, accent: string|null}|null  $palette
+     *                                                                               colours counted off a picture of the site, where one could be taken
      */
     public function __construct(
         public string $name,
@@ -31,7 +33,37 @@ final readonly class SiteAnalysis
         public string $language,
         public string $market,
         public bool $isYmyl,
+        public ?array $palette = null,
     ) {}
+
+    /**
+     * The same analysis with the site's colours attached.
+     *
+     * A `with`-er rather than a constructor argument at each call site, because
+     * the palette is taken by a different mechanism at a different time from
+     * everything else here — a browser rather than a model — and it has to
+     * reach both the interpreted analysis and the blank one a dead site
+     * produces.
+     *
+     * @param  array{fill: string, ink: string, accent: string|null}|null  $palette
+     */
+    public function withPalette(?array $palette): self
+    {
+        return new self(
+            name: $this->name,
+            description: $this->description,
+            audiences: $this->audiences,
+            tone: $this->tone,
+            visualLanguage: $this->visualLanguage,
+            competitors: $this->competitors,
+            seedKeywords: $this->seedKeywords,
+            forbidden: $this->forbidden,
+            language: $this->language,
+            market: $this->market,
+            isYmyl: $this->isYmyl,
+            palette: $palette,
+        );
+    }
 
     /** @return array<string, mixed> */
     public function toArray(): array
@@ -48,6 +80,7 @@ final readonly class SiteAnalysis
             'language' => $this->language,
             'market' => $this->market,
             'is_ymyl' => $this->isYmyl,
+            'palette' => $this->palette,
         ];
     }
 
@@ -68,6 +101,16 @@ final readonly class SiteAnalysis
             language: (string) ($data['language'] ?? 'en'),
             market: (string) ($data['market'] ?? 'us'),
             isYmyl: (bool) ($data['is_ymyl'] ?? false),
+            // Absent on every project analysed before there was a browser to
+            // take the picture with, which is a suggestion nobody was offered
+            // rather than a suggestion that failed.
+            palette: is_array($data['palette'] ?? null) ? [
+                'fill' => (string) ($data['palette']['fill'] ?? ''),
+                'ink' => (string) ($data['palette']['ink'] ?? ''),
+                'accent' => isset($data['palette']['accent'])
+                    ? (string) $data['palette']['accent']
+                    : null,
+            ] : null,
         );
     }
 }

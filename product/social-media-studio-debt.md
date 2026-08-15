@@ -111,7 +111,8 @@ raising all three deliberately: step, supervisor, `retry_after`.
 
 ## 3. Brand overlay on photographs — prerequisites built, treatment not
 
-**Low. Cheap now.**
+**Low, and *not* cheap now — updated 14 August 2026 while building Phase E of
+`studio-rethink-spec.md`.**
 
 `VisualStyle` exists, the brand carries a colour, an ink, a position and a case,
 the form edits them, and the renderer draws text with the app's own typeface.
@@ -121,6 +122,39 @@ brand's words on it.
 Note the deliberate divergence from `social-creative-designer`, which asks the
 *image model* to add the overlay. We will not: it garbles text, and we already
 have the glyphs and a browser.
+
+**What "cheap now" got wrong.** `social-media-studio.md` says GD with FreeType
+is in the container so this needs no new dependency. Both halves are true and
+the conclusion still does not follow:
+
+```
+gd: loaded, FreeType: yes, PNG: yes, JPEG: yes     # in the app container
+find / -name '*.ttf'                               # → nothing
+resources/fonts/instrument-sans/*.woff2            # the only typeface we ship
+```
+
+`imagettftext()` needs TTF or OTF. Everything we have is **woff2**, which the
+renderer can use because a browser can and GD cannot. So the treatment needs one
+of: a TTF of Instrument Sans committed beside the woff2 files (OFL, so
+permitted), a woff2→ttf conversion at image build time, or the renderer path in
+§3b below.
+
+## 3b. Structured graphic — blocked behind the renderer, not behind design
+
+**Medium, and blocked by §1 rather than by anything about the treatment.**
+
+The fourth treatment — a laid-out graphic with real type, for how-tos,
+comparisons and anything with numbers — needs a second Remotion composition
+beside `panel`. The renderer today declares exactly one, and adding another
+means rebuilding the image.
+
+Which cannot be done on this machine: §1 above is still open, Docker Hub is
+still unreachable from the daemon, and the running renderer is still the
+hand-built one. So this is not "not designed yet"; it is one `docker compose
+build renderer` away from being buildable, behind a registry block.
+
+Phase E shipped the treatments that work and left these two out of the interface
+entirely, rather than rendering padlocks an operator could never clear.
 
 ## 4. Composite is parked on purpose
 

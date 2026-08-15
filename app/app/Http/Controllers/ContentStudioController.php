@@ -11,7 +11,9 @@ use App\ContentStudio\ContentStudioException;
 use App\ContentStudio\ContentStudioOperations;
 use App\Enums\AssetRole;
 use App\Enums\ChannelType;
+use App\Enums\ContentFormat;
 use App\Enums\PipelineRunStatus;
+use App\Enums\PostKind;
 use App\Media\UploadedPicture;
 use App\Models\Asset;
 use App\Models\ContentIdea;
@@ -19,12 +21,16 @@ use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\Signal;
 use App\Pipelines\Definitions\ContentStudioPipeline;
+use App\Social\GoalSummary;
 use App\Support\Social\ChannelPlaybook;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -44,7 +50,7 @@ class ContentStudioController extends Controller
         $month = $this->month((string) $request->query('month', now()->format('Y-m')));
         $plan = ContentPlan::query()->whereDate('month', $month)->first();
 
-        return Inertia::render('studio/index', [
+        return Inertia::render('social/plan', [
             'month' => $month->format('Y-m'),
             'label' => $month->translatedFormat('F Y'),
             'previous' => $month->copy()->subMonth()->format('Y-m'),
@@ -57,6 +63,12 @@ class ContentStudioController extends Controller
                 'site_articles' => $project->sitePages()->articles()->count(),
             ],
             'plan' => $plan === null ? null : $this->planProps($plan),
+            // Beside the plan rather than inside it. A goal survives every
+            // proposal made against it, so a screen that read it out of
+            // `plan.goal` would show it disappearing for the seconds a
+            // refinement is in flight.
+            'goal' => GoalSummary::forMonth($month),
+            'kpis' => GoalSummary::kpis(),
             'operation' => $plan === null ? null : $this->operationProps($this->latestOperation($plan)),
         ]);
     }
@@ -124,7 +136,13 @@ class ContentStudioController extends Controller
         try {
             $updated = $assistant->accept($plan, (int) $validated['version']);
 
-            return response()->json(['plan' => $this->planProps($updated)]);
+            // The goal comes back too, because accepting confirmed it. Without
+            // it the screen would show an accepted plan above a goal still
+            // labelled "not approved" until the next full page load.
+            return response()->json([
+                'plan' => $this->planProps($updated),
+                'goal' => GoalSummary::forMonth($updated->month),
+            ]);
         } catch (ContentStudioConflict $e) {
             return response()->json(['message' => $e->getMessage()], 409);
         } catch (ContentStudioException $e) {
@@ -249,6 +267,242 @@ class ContentStudioController extends Controller
     }
 
     /**
+     * Draft one idea, now, because somebody asked for that one.
+     *
+     * The engine could already do this and had no door: `GenerateIdea` is
+     * locked per idea, guarded per idea, and dispatched by the `generate_week`
+     * fan-out — but the only route into drafting was the fan-out itself, so the
+     * smallest thing an operator could ask for was a week, and the smallest
+     * occasion for asking was a month. That is the whole reason the Studio was
+     * a monthly ritual rather than something to open on a Tuesday.
+     *
+     * **No acceptance gate, unlike {@see generate()}.** The gate exists so that
+     * a model's month does not become drafts without a person saying it is the
+     * right month. Clicking Create on one idea *is* that person saying so, at a
+     * finer grain and about the only idea it will spend money on — a stronger
+     * signal than accepting twenty at once, not a way around it. Onboarding's
+     * `initial` path already generates a preview idea before acceptance for a
+     * related reason, so this is the existing position applied consistently
+     * rather than a new one.
+     *
+     * A fully drafted idea is refused here rather than being dispatched to
+     * discover it: {@see ContentStudioAssistant::generateIdea()} would return
+     * `created: 0` after a worker had picked the run up, and the operator would
+     * watch a spinner to be told nothing happened.
+     */
+    public function generateIdea(ContentIdea $idea): JsonResponse
+    {
+        $idea->loadMissing('contentPlan');
+
+        $drafted = ContentItem::query()
+            ->where('content_idea_id', $idea->getKey())
+            ->pluck('channel_type')
+            ->all();
+
+        if (array_diff($idea->channels, $drafted) === []) {
+            return response()->json([
+                'message' => 'Every channel of this idea is already drafted.',
+            ], 422);
+        }
+
+        $plan = $idea->contentPlan;
+
+        $run = $this->operations->start($this->project(), $plan, ContentStudioAction::GenerateIdea, [
+            'content_idea_id' => (string) $idea->getKey(),
+        ]);
+
+        return response()->json([
+            'plan' => $this->planProps($plan->refresh()),
+            'operation' => $this->operationProps($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * An idea somebody typed, written immediately.
+     *
+     * The Studio's ideas all came from one place — a model reading the site
+     * once a month — so the thing that happened this morning had nowhere to go.
+     * This is the other door: a title, a kind, a date, and it is drafting
+     * within the second.
+     *
+     * **The kind decides the channels, exactly as it does for the assistant.**
+     * {@see PostKind::channels()} is the same mapping the proposal is held to,
+     * and letting an operator pick channels freely would let a hand-written
+     * idea do the one thing every planned idea is forbidden — go everywhere,
+     * which is the cross-posting this engine exists to argue against.
+     *
+     * Generated on the spot rather than left in the plan. An idea a person
+     * typed is an idea they want now; leaving it to the weekly batch would make
+     * this a slower way of doing what the Studio already did.
+     */
+    public function storeIdea(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'title' => ['required', 'string', 'min:3', 'max:255'],
+            'thesis' => ['required', 'string', 'min:3', 'max:5000'],
+            'kind' => ['required', 'string', 'in:'.implode(',', array_column(PostKind::cases(), 'value'))],
+            'date' => ['required', 'date'],
+            // Where the reason came from, when it came from one. Scoped by the
+            // `exists` rule through the tenant's own table, so a signal id from
+            // another project is a validation failure rather than a silent
+            // attribution to somebody else's reason.
+            'signal_id' => ['nullable', 'string'],
+        ]);
+
+        $date = Carbon::parse($validated['date'])->startOfDay();
+        $project = $this->project();
+
+        $signal = ($validated['signal_id'] ?? null) === null
+            ? null
+            : Signal::query()->whereKey($validated['signal_id'])->first();
+
+        if (($validated['signal_id'] ?? null) !== null && $signal === null) {
+            throw ValidationException::withMessages([
+                'signal_id' => 'That signal does not belong to this project.',
+            ]);
+        }
+
+        $plan = ContentPlan::query()->firstOrCreate(['month' => $date->copy()->startOfMonth()]);
+        $kind = PostKind::from($validated['kind']);
+
+        $idea = $plan->contentIdeas()->create([
+            // The live version, so it appears on a board and in a proposal that
+            // already exists. Once it has drafts, `preserveDraftedIdeas()`
+            // carries it through every later refinement — which is why this is
+            // written *and generated* in one action rather than left to sit at
+            // a version the next refine would drop it from.
+            'proposal_version' => max(1, $plan->assistant_version),
+            'idea_key' => $this->ideaKey($plan, $validated['title']),
+            'title' => $validated['title'],
+            'kind' => $kind,
+            'pillar' => 'Operator',
+            'thesis' => $validated['thesis'],
+            'evidence' => [],
+            'goal' => 'operator',
+            'audience' => (string) ($project->site_analysis['audience'] ?? ''),
+            'angle' => null,
+            'channels' => array_map(
+                static fn (ChannelType $channel): string => $channel->value,
+                $kind->channels(),
+            ),
+            'scheduled_for' => $date,
+        ]);
+
+        $run = $this->operations->start($project, $plan, ContentStudioAction::GenerateIdea, [
+            'content_idea_id' => (string) $idea->getKey(),
+            // Carried to the drafting run so the posts it writes point back at
+            // the reason. `content_items.signal_id` is a real column for
+            // exactly this — §3's argument that the loop learns by source only
+            // works if the attribution survives the trip through the queue.
+            ...($signal === null ? [] : ['signal_id' => (string) $signal->getKey()]),
+        ]);
+
+        return response()->json([
+            'idea' => ['id' => (string) $idea->getKey(), 'title' => $idea->title],
+            'plan' => $this->planProps($plan->refresh()),
+            'operation' => $this->operationProps($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Change an idea before it is written.
+     *
+     * The three things somebody actually adjusts when they open one and
+     * disagree: what it is called, what the point of it is, and what artefact
+     * it should be. Nothing else on the row is editable, because everything
+     * else — the kind, the channels, the date — either follows from those or
+     * would break the rule that the kind decides the channels.
+     *
+     * Refused once it has drafts. Changing the format of an idea whose posts
+     * are already written would describe an artefact that does not exist:
+     * `plannedProduction()` would promise a carousel over a single drawn
+     * photograph, and the screen would be lying about what is on the row.
+     * Redrawing is a different act with its own controls.
+     */
+    public function updateIdea(Request $request, ContentIdea $idea): JsonResponse
+    {
+        $validated = $request->validate([
+            'title' => ['sometimes', 'string', 'min:3', 'max:255'],
+            'thesis' => ['sometimes', 'string', 'min:3', 'max:5000'],
+            'content_format' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'in:'.implode(',', array_column(ContentFormat::cases(), 'value')),
+            ],
+        ]);
+
+        $written = ContentItem::query()->where('content_idea_id', $idea->getKey())->exists();
+
+        if ($written && array_key_exists('content_format', $validated)) {
+            return response()->json([
+                'message' => 'This idea is already written, so its format is settled. '
+                    .'Redraw the picture on the post instead.',
+            ], 422);
+        }
+
+        $idea->forceFill(array_filter([
+            'title' => $validated['title'] ?? null,
+            'thesis' => $validated['thesis'] ?? null,
+        ], static fn (mixed $value): bool => $value !== null));
+
+        if (array_key_exists('content_format', $validated)) {
+            // Null is a real answer here — it hands the choice back to the
+            // kind — so it cannot go through the `array_filter` above.
+            $idea->content_format = $validated['content_format'] === null
+                ? null
+                : ContentFormat::from($validated['content_format']);
+        }
+
+        $idea->save();
+
+        return response()->json(['idea' => $this->ideaProps($idea->refresh())]);
+    }
+
+    /**
+     * One idea as the panel that edits it reads it.
+     *
+     * @return array<string, mixed>
+     */
+    private function ideaProps(ContentIdea $idea): array
+    {
+        return [
+            'id' => (string) $idea->getKey(),
+            'title' => $idea->title,
+            'thesis' => $idea->thesis,
+            'kind_label' => $idea->kind->label(),
+            'content_format' => $idea->format()->value,
+            // Whether a person set it, or it is still the kind's guess. The
+            // panel says "chosen" or "suggested" on the strength of this.
+            'format_chosen' => $idea->content_format !== null,
+            'channels' => $idea->channels,
+            'production' => $idea->plannedProduction(),
+        ];
+    }
+
+    /**
+     * A key that is unique within the plan.
+     *
+     * `idea_key` is what {@see ContentStudioAssistant::preserveDraftedIdeas()}
+     * matches a frozen idea on, so two ideas sharing one would make a
+     * refinement keep the wrong one.
+     */
+    private function ideaKey(ContentPlan $plan, string $title): string
+    {
+        $base = Str::slug(Str::limit($title, 100, '')) ?: 'operator-idea';
+        $key = $base;
+        $suffix = 2;
+
+        $taken = $plan->contentIdeas()->pluck('idea_key')->all();
+
+        while (in_array($key, $taken, true)) {
+            $key = $base.'-'.$suffix++;
+        }
+
+        return $key;
+    }
+
+    /**
      * The operation the screen should be watching.
      *
      * An active one if there is one, and only otherwise the newest.
@@ -297,7 +551,11 @@ class ContentStudioController extends Controller
                 : match ($action) {
                     ContentStudioAction::Refine => 'The assistant could not refine this proposal right now.',
                     ContentStudioAction::Generate => 'The assistant could not generate this batch right now.',
-                    ContentStudioAction::GenerateIdea => 'The assistant could not draft one of this week\'s ideas.',
+                    // Neutral about which door it came through: an idea is
+                    // drafted both by the weekly fan-out and by one Create
+                    // button, and "one of this week's ideas" was a lie on the
+                    // second of those.
+                    ContentStudioAction::GenerateIdea => 'The assistant could not draft that idea right now.',
                     ContentStudioAction::ReviseImage => 'The picture could not be drawn right now.',
                     default => 'The assistant could not build a proposal right now.',
                 };
@@ -308,6 +566,15 @@ class ContentStudioController extends Controller
             'action' => $action?->value,
             'status' => $run->status->value,
             'message' => $message,
+            // Which idea this run is about, while it is still about it.
+            // `result.idea` carries the idea *key* and only once the run has
+            // finished, so before this there was no way for a card to know it
+            // was the one being written — an operator pressed Create and the
+            // only feedback was a banner about the plan. Null for the three
+            // plan-level actions, which are about no single idea.
+            'idea_id' => is_string($run->input['content_idea_id'] ?? null)
+                ? $run->input['content_idea_id']
+                : null,
             'result' => $run->context['content_studio.result'] ?? null,
             'created_at' => $run->created_at?->toIso8601String(),
             'started_at' => $run->started_at?->toIso8601String(),

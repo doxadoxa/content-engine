@@ -62,6 +62,12 @@ class ApplyContentStudioAction extends AbstractStep
                     ContentIdea::query()->whereKey((string) $context->get('content_idea_id'))->firstOrFail(),
                     $context,
                     $context->run->getKey(),
+                    // Carried from the request that started the run, so a post
+                    // written because of a signal points back at it. Null for
+                    // every idea the assistant planned, which is most of them.
+                    $context->get('signal_id') === null
+                        ? null
+                        : (string) $context->get('signal_id'),
                 ),
                 ContentStudioAction::ReviseImage => $this->assistant->reviseImage(
                     ContentItem::query()->whereKey((string) $context->get('content_item_id'))->firstOrFail(),

@@ -33,6 +33,7 @@ use Illuminate\Support\Facades\DB;
  * @property string $visual_language
  * @property string $brand_colour
  * @property string $brand_ink
+ * @property string $brand_accent
  * @property string $overlay_position
  * @property string $overlay_case
  * @property list<string> $forbidden_topics
@@ -72,6 +73,7 @@ class BrandBrief extends Model
     public const array VISUAL_FIELDS = [
         'brand_colour',
         'brand_ink',
+        'brand_accent',
         'overlay_position',
         'overlay_case',
     ];
@@ -109,6 +111,7 @@ class BrandBrief extends Model
         'visual_language' => '',
         'brand_colour' => VisualStyle::DEFAULT_COLOUR,
         'brand_ink' => VisualStyle::DEFAULT_INK,
+        'brand_accent' => VisualStyle::DEFAULT_ACCENT,
         'overlay_position' => VisualStyle::DEFAULT_POSITION,
         'overlay_case' => VisualStyle::DEFAULT_CASE,
         'forbidden_topics' => '[]',
@@ -294,6 +297,10 @@ class BrandBrief extends Model
         return match ($field) {
             'brand_colour' => VisualStyle::DEFAULT_COLOUR,
             'brand_ink' => VisualStyle::DEFAULT_INK,
+            // Empty, which VisualStyle reads as "the ink". Clearing the accent
+            // is how an operator says they have not got one, and it has to be
+            // expressible — the other visual fields have no such state.
+            'brand_accent' => VisualStyle::DEFAULT_ACCENT,
             'overlay_position' => VisualStyle::DEFAULT_POSITION,
             default => VisualStyle::DEFAULT_CASE,
         };

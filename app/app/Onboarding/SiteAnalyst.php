@@ -7,7 +7,9 @@ namespace App\Onboarding;
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\ModelRequest;
 use App\Onboarding\Contracts\SiteReader;
+use App\Support\Brand\SitePalette;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Read a site, then say what the business is (§3.1, and the first step of the
@@ -24,6 +26,7 @@ class SiteAnalyst
     public function __construct(
         private readonly SiteReader $reader,
         private readonly ModelGateway $models,
+        private readonly SiteScreenshot $screenshots,
     ) {}
 
     /**
@@ -32,13 +35,17 @@ class SiteAnalyst
     public function analyse(string $url): array
     {
         $snapshot = $this->reader->read($url);
+        // Taken before the model call and used after it, so a site that reads
+        // as empty still gets its colours: a one-page site built entirely in
+        // images has no text to interpret and a palette worth having.
+        $palette = $this->palette($url);
 
         if ($snapshot->isEmpty()) {
             // Nothing readable. Better to say so than to hand a model an empty
             // page and let it invent a business.
             return [
                 'snapshot' => $snapshot,
-                'analysis' => $this->blank($snapshot),
+                'analysis' => $this->blank($snapshot)->withPalette($palette),
             ];
         }
 
@@ -87,7 +94,7 @@ class SiteAnalyst
 
         return [
             'snapshot' => $snapshot,
-            'analysis' => $this->parse($answer->text, $snapshot),
+            'analysis' => $this->parse($answer->text, $snapshot)->withPalette($palette),
         ];
     }
 
@@ -127,6 +134,30 @@ class SiteAnalyst
             market: strtolower($fields['MARKET'] ?? '') ?: 'us',
             isYmyl: Str::startsWith(mb_strtolower($fields['YMYL'] ?? ''), 'y'),
         );
+    }
+
+    /**
+     * The site's colours, counted off a picture of it.
+     *
+     * **Never fails the analysis.** Every reason this can come back empty — no
+     * renderer on this deployment, a site that will not load in a browser, a
+     * page that is genuinely just black on white — is a reason to have no
+     * suggestion, not a reason to lose the interpretation of the copy that
+     * already succeeded. The one exception is an unsafe address, which
+     * {@see SiteScreenshot} throws for and which the reader above would have
+     * refused first anyway.
+     *
+     * @return array{fill: string, ink: string, accent: string|null}|null
+     */
+    private function palette(string $url): ?array
+    {
+        try {
+            $png = $this->screenshots->of($url);
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $png === null ? null : SitePalette::fromPng($png)?->toArray();
     }
 
     private function blank(SiteSnapshot $snapshot): SiteAnalysis

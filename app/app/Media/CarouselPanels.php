@@ -6,6 +6,7 @@ namespace App\Media;
 
 use App\Enums\AssetRole;
 use App\Enums\AssetSource;
+use App\Enums\SlideLayout;
 use App\Models\Asset;
 use App\Models\ContentItem;
 use App\Pipelines\Exceptions\RetryableStepFailure;
@@ -54,7 +55,7 @@ class CarouselPanels
     /**
      * Draw this carousel's slides and keep them against the draft.
      *
-     * @param  list<array{heading: string, body: string}>  $slides
+     * @param  list<array{heading: string, body: string, layout?: string|null, fields?: array<string, mixed>}>  $slides
      * @return list<Asset>
      */
     public function draw(
@@ -72,24 +73,15 @@ class CarouselPanels
 
         foreach ($slides as $index => $slide) {
             $position = $index + 1;
+            $layout = SlideLayout::tryFrom((string) ($slide['layout'] ?? ''));
 
             try {
                 $bytes = $this->renderer->render(
-                    composition: 'panel',
-                    props: [
-                        'heading' => $style->write($slide['heading']),
-                        'body' => trim($slide['body']),
-                        'index' => $position,
-                        'total' => $total,
-                        'colour' => $style->colour,
-                        'ink' => $style->ink,
-                        'position' => $style->position,
-                        // The ink again rather than a third colour. A brand that
-                        // has not been asked for an accent has not got one, and
-                        // inventing a complementary hue is the sort of decision
-                        // that makes an operator wonder where the pink came from.
-                        'accent' => $style->ink,
-                    ],
+                    // The flat template where a slide names no layout, which is
+                    // every carousel written before layouts existed. Those posts
+                    // are redrawn as what they were, not reinterpreted.
+                    composition: $layout?->composition() ?? 'panel',
+                    props: $this->props($layout, $slide, $position, $total, $style),
                     width: $playbook->imageWidth,
                     height: $playbook->imageHeight,
                 );
@@ -145,6 +137,69 @@ class CarouselPanels
             ->orderBy('anchor')
             ->get()
             ->all());
+    }
+
+    /**
+     * One slide's props, as the layout that draws it expects them.
+     *
+     * The brand half is identical for every layout and the content half is not,
+     * which is the whole reason this is a method: a template reading a field the
+     * parser never sends draws a blank band, and blank is the one failure a
+     * renderer reports as success.
+     *
+     * `heading` goes to every layout including the ones whose component ignores
+     * it — `stat` draws `caption` and `contrast` draws its two halves — because
+     * it costs nothing and a layout that later wants it does not need this
+     * touched.
+     *
+     * @param  array{heading: string, body: string, layout?: string|null, fields?: array<string, mixed>}  $slide
+     * @return array<string, mixed>
+     */
+    private function props(
+        ?SlideLayout $layout,
+        array $slide,
+        int $position,
+        int $total,
+        VisualStyle $style,
+    ): array {
+        $heading = $style->write($slide['heading']);
+
+        $props = [
+            'heading' => $heading,
+            'body' => trim($slide['body']),
+            'index' => $position,
+            'total' => $total,
+            'colour' => $style->colour,
+            'ink' => $style->ink,
+            'position' => $style->position,
+            // The brief's own third colour, which resolves to the ink where a
+            // brand has not named one. It used to be the ink unconditionally,
+            // and that was right while there was one template with a rule on
+            // it: with two colours, emphasis is impossible — the figure on a
+            // `stat` and the half of a `contrast` that matters both had to be
+            // drawn in the same colour as everything around them.
+            'accent' => $style->accent,
+            // What may be written *on* the accent, and what the accent may be
+            // written *with*. Computed here because a template knows it is
+            // filling a band with the accent and cannot know whether this
+            // brand's accent carries type — see VisualStyle::readableOn().
+            'onAccent' => $style->readableOn($style->accent),
+            'accentType' => $style->accentType($style->colour),
+        ];
+
+        foreach (($slide['fields'] ?? []) as $field => $value) {
+            $props[$field] = is_string($value) ? $style->write($value) : $value;
+        }
+
+        // The one place a field is renamed on the way out. `stat` draws the
+        // heading beneath its figure, and calling that slot `caption` in the
+        // component is right — it is a caption to a number — while calling it
+        // `caption` in the parser would collide with the post's own caption.
+        if ($layout === SlideLayout::Stat) {
+            $props['caption'] = $heading;
+        }
+
+        return $props;
     }
 
     /**
