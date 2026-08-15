@@ -6,6 +6,9 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\BrandBriefRequest;
 use App\Models\BrandBrief;
+use App\Onboarding\SiteScreenshot;
+use App\Support\Brand\SitePalette;
+use App\Support\Http\UnsafePublicUrl;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
@@ -82,6 +85,77 @@ class BrandBriefController extends Controller
             'type' => 'success',
             'message' => "Brief saved as version {$brief->version}.",
         ]);
+
+        return to_route('brief.edit');
+    }
+
+    /**
+     * Look at the site again and re-read its colours.
+     *
+     * **The colours, and nothing else.** The obvious implementation — re-run
+     * `SiteAnalyst::analyse()` — would overwrite the whole of `site_analysis`:
+     * the name, the description, the audiences, the seed keywords, every one of
+     * which the operator corrected by hand in the wizard and none of which they
+     * asked to have re-guessed. A button labelled "read my colours" that
+     * silently replaced a month of corrections would be the worst kind of
+     * destructive, because nothing on screen would show what it had taken.
+     *
+     * So this touches one key. The rest of the analysis is left exactly as the
+     * operator left it.
+     *
+     * Still only a suggestion when it lands. It refreshes what the swatches
+     * offer; applying them stays a click, for the reason
+     * {@see SitePalette} gives — a wrong fill is not a visible error, it
+     * quietly becomes every carousel for a month.
+     */
+    public function palette(SiteScreenshot $screenshots): RedirectResponse
+    {
+        $project = $this->current->get();
+
+        abort_if($project === null, 409, 'Pick a project before reading its site.');
+
+        $url = trim((string) $project->website_url);
+
+        if ($url === '') {
+            return $this->toast('error', 'This project has no website address to read.');
+        }
+
+        if (! $screenshots->isConfigured()) {
+            // Named rather than shrugged at. "It did not work" sends an
+            // operator looking at their own site; this sends them at the thing
+            // that is actually missing.
+            return $this->toast('error', 'No renderer is configured, so the site cannot be photographed.');
+        }
+
+        try {
+            $png = $screenshots->of($url);
+        } catch (UnsafePublicUrl $e) {
+            return $this->toast('error', $e->getMessage());
+        }
+
+        $palette = $png === null ? null : SitePalette::fromPng($png);
+
+        if ($palette === null) {
+            // Two different nothings, deliberately not distinguished here: the
+            // page would not load, or it loaded and is black on white. Both
+            // mean there is nothing to suggest, and an operator can act on
+            // neither differently.
+            return $this->toast(
+                'error',
+                'Nothing came back from that page, or it uses no colour of its own.',
+            );
+        }
+
+        $project->forceFill([
+            'site_analysis' => [...$project->site_analysis, 'palette' => $palette->toArray()],
+        ])->save();
+
+        return $this->toast('success', 'Read the colours from your site.');
+    }
+
+    private function toast(string $type, string $message): RedirectResponse
+    {
+        Inertia::flash('toast', ['type' => $type, 'message' => $message]);
 
         return to_route('brief.edit');
     }

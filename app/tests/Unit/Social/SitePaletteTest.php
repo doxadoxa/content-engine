@@ -103,6 +103,31 @@ final class SitePaletteTest extends TestCase
         $this->assertNull($palette);
     }
 
+    /**
+     * Pure black and pure white are colours a real page actually contains.
+     *
+     * Found by running this against a live site rather than a fixture. `0x00 /
+     * 255` is `int(0)` in PHP — the one channel value that does not come back a
+     * float — so the achromatic guard's strict comparison missed it and the hue
+     * calculation divided by zero. Every generated fixture here quantises 255 to
+     * 240 and so never produced a pure black; every screenshot of a real site
+     * does, on the first letter of text.
+     */
+    #[Test]
+    public function a_page_containing_pure_black_and_white_does_not_divide_by_zero(): void
+    {
+        $palette = SitePalette::fromPng($this->page(
+            background: [255, 255, 255],
+            bands: [
+                [[0, 0, 0], 0.0, 0.20],
+                [[47, 79, 67], 0.40, 0.80],
+            ],
+        ));
+
+        $this->assertNotNull($palette);
+        $this->assertSame('#204040', $palette->fill);
+    }
+
     #[Test]
     public function bytes_that_are_not_an_image_are_not_a_palette(): void
     {

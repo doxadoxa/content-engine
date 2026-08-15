@@ -118,6 +118,11 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     Route::get('brief', [BrandBriefController::class, 'edit'])->name('brief.edit');
     Route::put('brief', [BrandBriefController::class, 'update'])
         ->middleware('project.owner')->name('brief.update');
+    // Owner-only and rate limited, because each press drives a real browser at
+    // somebody else's website. Same permission as editing the brief: it changes
+    // what the brief offers.
+    Route::post('brief/palette', [BrandBriefController::class, 'palette'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('brief.palette');
 
     // §7's own screen: one summary, five minutes, four sections. No
     // `project.owner`, by the same reasoning as `content.approve` and

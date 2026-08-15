@@ -214,9 +214,18 @@ final readonly class SitePalette
     {
         $hex = ltrim($hex, '#');
 
-        $r = ((int) hexdec(substr($hex, 0, 2))) / 255;
-        $g = ((int) hexdec(substr($hex, 2, 2))) / 255;
-        $b = ((int) hexdec(substr($hex, 4, 2))) / 255;
+        // Cast to float *before* dividing, and it is not decoration. PHP's `/`
+        // returns an int when both operands are ints and the division is exact,
+        // so `0x00 / 255` is `int(0)` and `0xff / 255` is `int(1)` — while every
+        // other channel value comes back a float. On a pure black or pure white
+        // pixel the delta below was therefore `int(0)`, the strict `=== 0.0`
+        // guard did not match it, and the achromatic case fell through to a
+        // division by that same zero. It never fired in tests because the
+        // 4-bit quantisation turns 255 into 240, so only genuine black reaches
+        // it — which every real screenshot has and no generated fixture did.
+        $r = ((float) hexdec(substr($hex, 0, 2))) / 255;
+        $g = ((float) hexdec(substr($hex, 2, 2))) / 255;
+        $b = ((float) hexdec(substr($hex, 4, 2))) / 255;
 
         $max = max($r, $g, $b);
         $min = min($r, $g, $b);

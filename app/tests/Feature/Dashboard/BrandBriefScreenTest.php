@@ -12,8 +12,10 @@ use App\Models\Project;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -341,5 +343,121 @@ final class BrandBriefScreenTest extends TestCase
                 ->has('items.data', 1)
                 ->where('items.current_page', 2)
             );
+    }
+
+    /**
+     * Reading the site again fills the swatches and touches nothing else.
+     *
+     * The gap this closes: the palette was only ever written by the onboarding
+     * wizard, and the wizard refuses a launched project — so every project that
+     * existed before this feature could never be offered a suggestion at all.
+     */
+    #[Test]
+    public function reading_the_site_again_refreshes_the_colours_it_suggests(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/screenshot' => Http::response($this->pagePng(), 200)]);
+
+        $this->project->forceFill([
+            'website_url' => 'https://example.com',
+            // The rest of the analysis, which the operator corrected by hand in
+            // the wizard and did not ask to have re-guessed.
+            'site_analysis' => [
+                'name' => 'Cleaning Point',
+                'description' => 'A Lisbon home-cleaning business.',
+                'seed_keywords' => ['limpeza lisboa'],
+            ],
+        ])->save();
+
+        $this->actingAs($this->operator)
+            ->post('/brief/palette')
+            ->assertRedirect('/brief');
+
+        $analysis = $this->project->refresh()->site_analysis;
+
+        $this->assertSame('#204040', $analysis['palette']['fill']);
+
+        // Everything the wizard wrote survives. Re-running the whole analysis
+        // would have replaced all of this, silently, behind a button that says
+        // it reads colours.
+        $this->assertSame('Cleaning Point', $analysis['name']);
+        $this->assertSame('A Lisbon home-cleaning business.', $analysis['description']);
+        $this->assertSame(['limpeza lisboa'], $analysis['seed_keywords']);
+    }
+
+    /**
+     * A suggestion is still only a suggestion once it has been read.
+     */
+    #[Test]
+    public function reading_the_site_does_not_write_the_colours_into_the_brief(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/screenshot' => Http::response($this->pagePng(), 200)]);
+
+        $brief = BrandBrief::revise($this->project, ['brand_colour' => '#111111'], null);
+        $this->project->forceFill(['website_url' => 'https://example.com'])->save();
+
+        $this->actingAs($this->operator)->post('/brief/palette')->assertRedirect('/brief');
+
+        // Offered on the screen, and nowhere near the live version.
+        $this->assertSame('#111111', $brief->refresh()->brand_colour);
+
+        $this->actingAs($this->operator)
+            ->get('/brief')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('palette.fill', '#204040')
+                ->where('brief.brand_colour', '#111111')
+                ->etc()
+            );
+    }
+
+    #[Test]
+    public function a_project_with_no_address_is_told_so_rather_than_failing(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake();
+
+        $this->project->forceFill(['website_url' => ''])->save();
+
+        $this->actingAs($this->operator)->post('/brief/palette')->assertRedirect('/brief');
+
+        // No browser was driven at nothing.
+        Http::assertNothingSent();
+        $this->assertNull($this->project->refresh()->site_analysis['palette'] ?? null);
+    }
+
+    #[Test]
+    public function only_an_owner_may_ask_the_engine_to_read_the_site(): void
+    {
+        $operator = User::factory()->create();
+        $this->project->users()->attach($operator, ['role' => 'operator']);
+
+        $this->actingAs($operator)
+            ->withSession(['project_id' => $this->project->getKey()])
+            ->post('/brief/palette')
+            ->assertForbidden();
+    }
+
+    /** A white page with a green band across the top. */
+    private function pagePng(): string
+    {
+        $image = imagecreatetruecolor(320, 240);
+        $white = imagecolorallocate($image, 255, 255, 255);
+        $green = imagecolorallocate($image, 47, 79, 67);
+
+        if ($white === false || $green === false) {
+            throw new RuntimeException('The test image ran out of colours.');
+        }
+
+        imagefilledrectangle($image, 0, 0, 320, 240, $white);
+        imagefilledrectangle($image, 0, 0, 320, 70, $green);
+
+        ob_start();
+        imagepng($image);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($image);
+
+        return $bytes;
     }
 }

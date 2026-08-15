@@ -1,4 +1,4 @@
-import { Form, Head, usePage } from '@inertiajs/react';
+import { Form, Head, router, usePage } from '@inertiajs/react';
 import { BookOpen, ChevronDown, History } from 'lucide-react';
 import { useState } from 'react';
 import InputError from '@/components/input-error';
@@ -24,7 +24,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
-import { edit, update } from '@/routes/brief';
+import { edit, palette, update } from '@/routes/brief';
 
 type BriefContent = {
     id: string;
@@ -620,10 +620,10 @@ function Colours({
                 onChange={setAccent}
             />
 
-            {palette !== null && (
-                <div className="rounded-2xl border border-dashed p-4 sm:col-span-2">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex min-w-0 items-center gap-3">
+            <div className="rounded-2xl border border-dashed p-4 sm:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                        {palette !== null && (
                             <span className="flex shrink-0 overflow-hidden rounded-lg border">
                                 <Swatch colour={palette.fill} />
                                 <Swatch colour={palette.ink} />
@@ -631,14 +631,18 @@ function Colours({
                                     <Swatch colour={palette.accent} />
                                 )}
                             </span>
-                            <p className="min-w-0 text-xs text-muted-foreground">
-                                Counted off a picture of your site
-                                {palette.accent === null &&
-                                    ' — it uses one colour, so there is no accent to suggest'}
-                                .
-                            </p>
-                        </div>
-                        {differs && !disabled && (
+                        )}
+                        <p className="min-w-0 text-xs text-muted-foreground">
+                            {palette === null
+                                ? 'The engine can photograph your site and count the colours it uses.'
+                                : palette.accent === null
+                                  ? 'Counted off a picture of your site — it uses one colour, so there is no accent to suggest.'
+                                  : 'Counted off a picture of your site.'}
+                        </p>
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        {palette !== null && differs && !disabled && (
                             <Button
                                 type="button"
                                 variant="outline"
@@ -652,10 +656,55 @@ function Colours({
                                 Use these
                             </Button>
                         )}
+                        {!disabled && (
+                            <ReadSite hasPalette={palette !== null} />
+                        )}
                     </div>
                 </div>
-            )}
+            </div>
         </>
+    );
+}
+
+/**
+ * Photograph the site again and re-count its colours.
+ *
+ * `router.post` rather than a `<Form>`, because this sits inside the brief's own
+ * form and a nested form is invalid markup that browsers resolve by dropping
+ * one of them — usually not the one you meant.
+ *
+ * It reloads the page rather than patching state, which is the honest thing: the
+ * server decides whether anything was found, and the outcome arrives as a toast
+ * that can say "nothing came back from that page" as easily as it can say it
+ * worked.
+ */
+function ReadSite({ hasPalette }: { hasPalette: boolean }) {
+    const [reading, setReading] = useState(false);
+
+    return (
+        <Button
+            type="button"
+            variant={hasPalette ? 'ghost' : 'outline'}
+            size="sm"
+            disabled={reading}
+            onClick={() => {
+                setReading(true);
+                router.post(
+                    palette().url,
+                    {},
+                    {
+                        preserveScroll: true,
+                        onFinish: () => setReading(false),
+                    },
+                );
+            }}
+        >
+            {reading
+                ? 'Reading your site…'
+                : hasPalette
+                  ? 'Read it again'
+                  : 'Read my site'}
+        </Button>
     );
 }
 

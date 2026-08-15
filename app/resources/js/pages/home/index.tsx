@@ -68,7 +68,7 @@ type Props = {
  * runs, impressions, citations, stack health — and this answers the only
  * question somebody has when they open the product in the morning.
  */
-export default function Home({ project, checklist, kinds }: Props) {
+export default function Home({ project, checklist, waiting, kinds }: Props) {
     if (project === null) {
         return (
             <>
@@ -99,8 +99,16 @@ export default function Home({ project, checklist, kinds }: Props) {
                 <Composer kinds={kinds} />
                 <Checklist steps={checklist} />
 
+                {/*
+                    `Deferred` waits for the prop and renders the fallback while
+                    it is in flight; it does not hand the prop to its children.
+                    So the value has to be passed in — without it `waiting` was
+                    permanently undefined and this band showed its skeleton
+                    forever, which looks exactly like a slow request that never
+                    lands.
+                */}
                 <Deferred data="waiting" fallback={<WaitingSkeleton />}>
-                    <Waiting />
+                    <Waiting waiting={waiting} />
                 </Deferred>
             </WorkspacePage>
         </>
