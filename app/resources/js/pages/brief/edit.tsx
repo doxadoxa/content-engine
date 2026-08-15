@@ -747,8 +747,29 @@ function AccentField({
     error?: string;
     onChange: (next: string) => void;
 }) {
-    const [colour, setColour] = useState(value === '' ? ink : value);
     const none = value === '';
+
+    // What the swatch falls back to while the accent is switched off, so
+    // ticking the box and changing your mind does not lose the colour you
+    // picked. It is *only* the fallback — the swatch shows `value` whenever
+    // there is one.
+    //
+    // It used to be the swatch's own state, seeded once, and that was a second
+    // source of truth for the same field: pressing "Use these" moved the parent
+    // value and left the swatch on the old colour, so the form displayed
+    // terracotta and would have saved teal. A control that lies about what it
+    // is about to write is worse than one that looks stale.
+    const [remembered, setRemembered] = useState(none ? ink : value);
+
+    // Kept in step when the value changes from outside — the suggestion being
+    // applied, a version being loaded. React's documented way to adjust state
+    // from props: set it during render, and it re-renders before anything is
+    // painted rather than flashing the old colour first.
+    if (!none && value !== remembered) {
+        setRemembered(value);
+    }
+
+    const shown = none ? remembered : value;
 
     return (
         <div className="grid gap-2">
@@ -757,9 +778,9 @@ function AccentField({
             <input
                 id="brand_accent"
                 type="color"
-                value={colour}
+                value={shown}
                 onChange={(event) => {
-                    setColour(event.target.value);
+                    setRemembered(event.target.value);
                     onChange(event.target.value);
                 }}
                 disabled={disabled || none}
@@ -770,7 +791,7 @@ function AccentField({
                     type="checkbox"
                     checked={none}
                     onChange={(event) =>
-                        onChange(event.target.checked ? '' : colour)
+                        onChange(event.target.checked ? '' : remembered)
                     }
                     disabled={disabled}
                     className="size-3.5"
