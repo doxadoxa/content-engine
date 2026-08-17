@@ -412,6 +412,54 @@ final class BrandBriefScreenTest extends TestCase
             );
     }
 
+    /**
+     * A read that finds nothing clears the last suggestion.
+     *
+     * Otherwise a stale swatch keeps offering a colour the engine no longer
+     * stands behind — and a stale one looks exactly like a fresh one, so there
+     * is nothing on the screen that could tell an operator which it is.
+     */
+    #[Test]
+    public function a_read_that_finds_no_surface_withdraws_the_old_suggestion(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+
+        // A page that is all photograph: nothing on it is painted.
+        Http::fake(['*/screenshot' => Http::response($this->noisePng(), 200)]);
+
+        $this->project->forceFill([
+            'website_url' => 'https://example.com',
+            'site_analysis' => ['palette' => ['fill' => '#b0a090', 'ink' => '#000000', 'accent' => null]],
+        ])->save();
+
+        $this->actingAs($this->operator)->post('/brief/palette')->assertRedirect('/brief');
+
+        $this->assertNull($this->project->refresh()->site_analysis['palette']);
+    }
+
+    /**
+     * A browser that could not open the page forgets nothing.
+     *
+     * The opposite case, and the reason the two are told apart: a site that was
+     * down for a minute must not cost an operator a good suggestion they had
+     * already been given.
+     */
+    #[Test]
+    public function a_read_that_could_not_open_the_page_keeps_the_old_suggestion(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/screenshot' => Http::response(['message' => 'net::ERR_ABORTED'], 502)]);
+
+        $this->project->forceFill([
+            'website_url' => 'https://example.com',
+            'site_analysis' => ['palette' => ['fill' => '#204040', 'ink' => '#f0f0f0', 'accent' => null]],
+        ])->save();
+
+        $this->actingAs($this->operator)->post('/brief/palette')->assertRedirect('/brief');
+
+        $this->assertSame('#204040', $this->project->refresh()->site_analysis['palette']['fill']);
+    }
+
     #[Test]
     public function a_project_with_no_address_is_told_so_rather_than_failing(): void
     {
@@ -437,6 +485,35 @@ final class BrandBriefScreenTest extends TestCase
             ->withSession(['project_id' => $this->project->getKey()])
             ->post('/brief/palette')
             ->assertForbidden();
+    }
+
+    /** A page that is nothing but photograph: noisy everywhere, painted nowhere. */
+    private function noisePng(): string
+    {
+        $image = imagecreatetruecolor(320, 240);
+        mt_srand(20260817);
+
+        for ($y = 0; $y < 240; $y++) {
+            for ($x = 0; $x < 320; $x++) {
+                $shade = imagecolorallocate(
+                    $image,
+                    max(0, min(255, 176 + mt_rand(-45, 45))),
+                    max(0, min(255, 160 + mt_rand(-45, 45))),
+                    max(0, min(255, 144 + mt_rand(-45, 45))),
+                );
+
+                if ($shade !== false) {
+                    imagesetpixel($image, $x, $y, $shade);
+                }
+            }
+        }
+
+        ob_start();
+        imagepng($image);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($image);
+
+        return $bytes;
     }
 
     /** A white page with a green band across the top. */

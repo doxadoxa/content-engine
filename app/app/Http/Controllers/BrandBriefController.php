@@ -133,22 +133,37 @@ class BrandBriefController extends Controller
             return $this->toast('error', $e->getMessage());
         }
 
-        $palette = $png === null ? null : SitePalette::fromPng($png);
-
-        if ($palette === null) {
-            // Two different nothings, deliberately not distinguished here: the
-            // page would not load, or it loaded and is black on white. Both
-            // mean there is nothing to suggest, and an operator can act on
-            // neither differently.
-            return $this->toast(
-                'error',
-                'Nothing came back from that page, or it uses no colour of its own.',
-            );
+        if ($png === null) {
+            return $this->toast('error', 'That page could not be opened in a browser.');
         }
 
+        $palette = SitePalette::fromPng($png);
+
+        // Written either way, and the null case is the one that matters. A read
+        // that succeeded and found nothing is an *answer*, so leaving the last
+        // suggestion in place would keep offering a colour the engine no longer
+        // stands behind — and the operator would have no way to tell the two
+        // apart, because a stale swatch looks exactly like a fresh one.
+        //
+        // The failures above return before this on purpose: a browser that
+        // could not open the page has learned nothing, and forgetting a good
+        // suggestion because the site was down for a minute is its own bug.
         $project->forceFill([
-            'site_analysis' => [...$project->site_analysis, 'palette' => $palette->toArray()],
+            'site_analysis' => [...$project->site_analysis, 'palette' => $palette?->toArray()],
         ])->save();
+
+        if ($palette === null) {
+            // Told apart from the failure above, because they are not the same
+            // thing and only one of them is a fault. A page whose colour lives
+            // in a button and a photograph rather than in any painted surface
+            // has nothing this can count — which is a fact about the page, and
+            // an operator told "no colour" goes looking for a bug they will not
+            // find.
+            return $this->toast(
+                'info',
+                'Read your site, but it paints no large area in a colour of its own — nothing to suggest.',
+            );
+        }
 
         return $this->toast('success', 'Read the colours from your site.');
     }

@@ -128,6 +128,63 @@ final class SitePaletteTest extends TestCase
         $this->assertSame('#204040', $palette->fill);
     }
 
+    /**
+     * A photograph is not a brand colour, however much of the page it covers.
+     *
+     * The failure this whole weighting exists for. Cleaning Point's homepage is
+     * a white page with a large photograph and a small teal button, and ranking
+     * by area — however that area is weighted — answered "the sand in the hero
+     * image", because that genuinely is the colour there is most of. Declining
+     * is the right answer for such a page: proposing somebody's stock photo as
+     * their brand colour is worse than proposing nothing.
+     */
+    #[Test]
+    public function a_large_photograph_is_not_mistaken_for_a_painted_surface(): void
+    {
+        $palette = SitePalette::fromPng($this->page(
+            background: [255, 255, 255],
+            bands: [],
+            // Half the page, in the warm tones a room photograph is made of.
+            photo: [0.25, 0.85],
+        ));
+
+        $this->assertNull($palette);
+    }
+
+    /**
+     * The same photograph loses to a genuinely painted band.
+     *
+     * The weighting is a ranking, not an exclusion: a page that has both a hero
+     * image and a coloured header should answer with the header, and it should
+     * do so because the header is flat rather than because the photograph was
+     * filtered out on a threshold that moves.
+     */
+    #[Test]
+    public function a_painted_band_beats_a_photograph_that_covers_more_of_the_page(): void
+    {
+        $palette = SitePalette::fromPng($this->page(
+            background: [255, 255, 255],
+            bands: [[[47, 79, 67], 0.0, 0.22]],
+            photo: [0.30, 0.95],
+        ));
+
+        $this->assertNotNull($palette);
+        $this->assertSame('#204040', $palette->fill);
+    }
+
+    #[Test]
+    public function a_few_stray_pixels_are_anti_aliasing_rather_than_a_brand(): void
+    {
+        // What `example.com` actually returned before this: a blue-grey it had
+        // exactly one sample of, off the edge of a letter.
+        $palette = SitePalette::fromPng($this->page(
+            background: [255, 255, 255],
+            bands: [[[80, 100, 190], 0.50, 0.505]],
+        ));
+
+        $this->assertNull($palette);
+    }
+
     #[Test]
     public function bytes_that_are_not_an_image_are_not_a_palette(): void
     {
@@ -142,8 +199,9 @@ final class SitePaletteTest extends TestCase
      *
      * @param  array{int, int, int}  $background
      * @param  list<array{array{int, int, int}, float, float}>  $bands  colour, top and bottom as a fraction of the height
+     * @param  array{float, float}|null  $photo  a band of warm noise, standing in for a hero image
      */
-    private function page(array $background, array $bands): string
+    private function page(array $background, array $bands, ?array $photo = null): string
     {
         $width = 640;
         $height = 450;
@@ -173,6 +231,29 @@ final class SitePaletteTest extends TestCase
 
         foreach ($bands as [$colour, $from, $to]) {
             $paint($colour, (int) ($height * $from), (int) ($height * $to));
+        }
+
+        if ($photo !== null) {
+            // Deterministic noise around a warm beige, which is what a room
+            // photograph looks like to a histogram: one dominant family of
+            // tones, varying everywhere. Seeded so a failure here is a change
+            // in the reading rather than a change in the picture.
+            mt_srand(20260817);
+
+            for ($y = (int) ($height * $photo[0]); $y < (int) ($height * $photo[1]); $y++) {
+                for ($x = (int) ($width / 2); $x < $width; $x++) {
+                    $shade = imagecolorallocate(
+                        $image,
+                        max(0, min(255, 176 + mt_rand(-45, 45))),
+                        max(0, min(255, 160 + mt_rand(-45, 45))),
+                        max(0, min(255, 144 + mt_rand(-45, 45))),
+                    );
+
+                    if ($shade !== false) {
+                        imagesetpixel($image, $x, $y, $shade);
+                    }
+                }
+            }
         }
 
         ob_start();
