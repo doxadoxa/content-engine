@@ -43,6 +43,70 @@ final readonly class SitePalette
     private const int MIN_SAMPLES = 8;
 
     /**
+     * Where "a colour" starts, and where paper and ink take over.
+     *
+     * Named because {@see fromDeclared()} draws the same three lines the census
+     * does and they have to move together — a stylesheet and a photograph
+     * disagreeing about whether a cream is a colour would put two different
+     * palettes behind one button. Chroma rather than saturation for the reason
+     * {@see choose()} sets out at length: saturation climbs towards 1 as a
+     * colour approaches white, which makes a warm cream and a deep forest green
+     * indistinguishable to any threshold.
+     */
+    private const float CHROMATIC = 0.10;
+
+    /** Above this a colour is the page's paper rather than one of its colours. */
+    private const float PALEST = 0.93;
+
+    /** And below it, the page's ink. */
+    private const float DEEPEST = 0.06;
+
+    /**
+     * How much colour an accent needs to be a mark rather than a tint.
+     *
+     * Higher than {@see CHROMATIC}, and deliberately: a fill has area to prove
+     * itself with and an accent has almost none, so the pale wash a page puts
+     * behind a callout would otherwise qualify on being faintly tinted. Cleaning
+     * Point declares `#ddf7f5` at 0.10 and its teal at 0.66; this sits where
+     * only the second reads as a colour somebody chose.
+     */
+    private const float ACCENT_CHROMA = 0.25;
+
+    /**
+     * And how far it has to stand off the fill it is drawn on.
+     *
+     * WCAG's floor for large text and graphical objects, which is what an accent
+     * is — a figure on a statistic, a rule, a tag. Below this the emphasis is
+     * there in the markup and invisible on the panel.
+     */
+    private const float ACCENT_CONTRAST = 3.0;
+
+    /**
+     * How saturated a colour must be to stand in for a surface that is not there.
+     *
+     * Only ever consulted on a page that paints nothing — see {@see choose()}.
+     * Measured on Cleaning Point's page, whose entire colour is a teal button:
+     * the sand of the hero photograph reads 0.125, its navy type 0.314, and the
+     * teal 0.627.
+     *
+     * Chroma rather than weight, because weight is exactly what {@see SURFACE}
+     * was invented to beat — the sand outweighs the teal three to one and is
+     * still a photograph. Flatness cannot separate them here either (0.068
+     * against 0.000, both nothing); chroma separates them five to one.
+     *
+     * The figure is set by the *other* end, though, and that is the one worth
+     * keeping honest. A photograph is not uniformly muted — it has highlights —
+     * and the noise the suite photographs a page with reaches 0.478 at its
+     * extreme, being a warm beige varied ±45 per channel. So this sits halfway
+     * between that and the teal: high enough that a photograph's own brightest
+     * tone does not qualify, low enough that a brand's one vivid mark does.
+     * Both margins are the same size, which is the most that can be claimed for
+     * it — a real photograph of something genuinely saturated would clear this,
+     * and the answer to that page is a person looking at the suggestion.
+     */
+    private const float VIVID = 0.55;
+
+    /**
      * @param  string  $fill  the site's dominant coloured surface
      * @param  string  $ink  what reads on that fill, from the site's own light and dark
      * @param  string|null  $accent  its brightest secondary, where it has one
@@ -83,10 +147,141 @@ final readonly class SitePalette
         return self::choose($counts);
     }
 
+    /**
+     * The palette from what the page *says*, rather than from how it came out.
+     *
+     * Preferred over {@see fromPng()} wherever the stylesheet could be read, and
+     * the reason is that a photograph is a lossy record of a decision somebody
+     * already wrote down. The census quantises to the nearest sixteenth per
+     * channel and cannot see anything smaller than its sampling grid; the
+     * cascade has the exact value and has it whether the colour paints a hero or
+     * one hover state. Measured on Cleaning Point: the teal is `#22cbc5`
+     * declared and `#20c0c0` photographed, the navy `#002954` against `#002050`,
+     * and its second teal — which only ever appears as text — is absent from the
+     * census at every threshold.
+     *
+     * The three are chosen on different tests, because they are different jobs:
+     *
+     * - **fill** is the heaviest chromatic *background*. Still backgrounds only,
+     *   and still by area, because a fill is the thing a panel is painted with
+     *   and a page's own answer to that is what it paints itself with.
+     * - **ink** comes from the site's own neutrals, exactly as before.
+     * - **accent** is the heaviest colour vivid enough to be a decision that
+     *   also stands apart from the fill. Contrast rather than the hue distance
+     *   the census path uses, because hue alone gets this wrong on real
+     *   stylesheets: Cleaning Point's navy and teal are 33° apart and would fail
+     *   a 40° test, while being about as visually distinct as two colours get.
+     *   What that test was reaching for was "an accent nobody can see", and
+     *   contrast measures that directly.
+     *
+     * @param  list<array{hex: string, role: string, weight: int}>  $colours
+     */
+    public static function fromDeclared(array $colours): ?self
+    {
+        $fill = null;
+
+        foreach ($colours as $colour) {
+            if ($colour['role'] !== 'background') {
+                continue;
+            }
+
+            [, $chroma, $l] = self::hsl($colour['hex']);
+
+            if ($chroma < self::CHROMATIC || $l > self::PALEST || $l < self::DEEPEST) {
+                continue;
+            }
+
+            if ($fill === null || $colour['weight'] > $fill['weight']) {
+                $fill = $colour;
+            }
+        }
+
+        // Nothing on this page paints a colour of its own, which is a fact about
+        // the page and not a shortfall in the reading. The caller falls back to
+        // the census, which has its own vividness rule for exactly this shape.
+        if ($fill === null) {
+            return null;
+        }
+
+        $style = VisualStyle::fallback();
+        $ink = self::inkFor($fill['hex'], $colours, $style);
+
+        $accent = null;
+        $accentWeight = -1;
+
+        foreach ($colours as $colour) {
+            if ($colour['hex'] === $fill['hex'] || $colour['weight'] <= $accentWeight) {
+                continue;
+            }
+
+            [, $chroma] = self::hsl($colour['hex']);
+
+            // Vivid, because a pale tint of the page is not an accent however
+            // much of it there is, and `CHROMATIC` is low enough to admit one.
+            if ($chroma < self::ACCENT_CHROMA) {
+                continue;
+            }
+
+            // And separate from the fill it will be drawn on. This is what stops
+            // a lighter shade of the brand colour becoming its own accent —
+            // vivid enough to pass the test above, invisible against the panel.
+            if ($style->contrast($colour['hex'], $fill['hex']) < self::ACCENT_CONTRAST) {
+                continue;
+            }
+
+            $accent = $colour['hex'];
+            $accentWeight = $colour['weight'];
+        }
+
+        return new self(fill: $fill['hex'], ink: $ink, accent: $accent);
+    }
+
     /** @return array{fill: string, ink: string, accent: string|null} */
     public function toArray(): array
     {
         return ['fill' => $this->fill, 'ink' => $this->ink, 'accent' => $this->accent];
+    }
+
+    /**
+     * Whichever of the site's own neutrals reads on the fill.
+     *
+     * The site's rather than a computed black or white, for the reason the
+     * census path gives: a brand whose light neutral is a warm cream should keep
+     * its cream. A page that declares no neutral at all falls back to the pair
+     * every screen has.
+     *
+     * @param  list<array{hex: string, role: string, weight: int}>  $colours
+     */
+    private static function inkFor(string $fill, array $colours, VisualStyle $style): string
+    {
+        $lightest = null;
+        $darkest = null;
+
+        foreach ($colours as $colour) {
+            [, $chroma, $l] = self::hsl($colour['hex']);
+
+            // The same division the census makes: a neutral is anything without
+            // enough colour in it to be a decision, plus the palest and deepest
+            // of everything, which are a page's paper and its ink.
+            if ($chroma >= self::CHROMATIC && $l <= self::PALEST && $l >= self::DEEPEST) {
+                continue;
+            }
+
+            if ($lightest === null || $l > $lightest[1]) {
+                $lightest = [$colour['hex'], $l];
+            }
+
+            if ($darkest === null || $l < $darkest[1]) {
+                $darkest = [$colour['hex'], $l];
+            }
+        }
+
+        $light = $lightest[0] ?? '#ffffff';
+        $dark = $darkest[0] ?? '#111111';
+
+        return $style->contrast($light, $fill) >= $style->contrast($dark, $fill)
+            ? $light
+            : $dark;
     }
 
     /**
@@ -323,7 +518,7 @@ final readonly class SitePalette
             // to any threshold. Chroma is the plain spread between the
             // channels — 0.06 for the cream, 0.13 for the forest — and it says
             // what a person means by "is that a colour or a shade of paper".
-            if ($chroma < 0.10 || $l > 0.93 || $l < 0.06) {
+            if ($chroma < self::CHROMATIC || $l > self::PALEST || $l < self::DEEPEST) {
                 // Neutrals are not brand colours, but the palest and the
                 // deepest of them are the brand's paper and its ink.
                 if ($lightest === null || $l > $lightest[1]) {
@@ -341,6 +536,7 @@ final readonly class SitePalette
                 'hex' => $hex,
                 'weight' => $weight,
                 'h' => $h,
+                'chroma' => $chroma,
                 'surface' => self::isSurface($candidate),
             ];
         }
@@ -362,13 +558,41 @@ final readonly class SitePalette
             }
         }
 
-        // Nothing on this page is painted, so there is nothing to suggest. A
-        // site whose colour lives only in a button has a brand colour; it does
-        // not have one this can count, and guessing is what made the first
-        // version of this unusable.
+        // Whether this page paints anything at all, kept because the accent
+        // rule below depends on it. A page with a surface has earned the benefit
+        // of the doubt about its smaller colours; a page without one has not.
+        $painted = $fill !== null;
+
+        // Nothing on this page is painted. A site whose colour lives only in a
+        // button still has a brand colour, and this used to throw it away: the
+        // acreage rule that the accent is explicitly exempt from was in practice
+        // applied to the whole palette, because the exemption sits forty lines
+        // below this return and never ran on the one page shape it was written
+        // for.
+        //
+        // So the most saturated colour stands in, rather than the heaviest.
+        // See {@see VIVID} for the measurements, and for why heaviest is the
+        // wrong question on precisely the pages that reach this line.
+        if ($fill === null) {
+            foreach ($chromatic as $candidate) {
+                if ($candidate['chroma'] < self::VIVID) {
+                    continue;
+                }
+
+                if ($fill === null || $candidate['chroma'] > $fill['chroma']) {
+                    $fill = $candidate;
+                }
+            }
+        }
+
+        // Still nothing, which on a page that paints no surface means every
+        // colour on it is muted — a photograph, and nothing that was chosen.
+        // Suggesting the best of those is the guess that made the first version
+        // of this unusable, so it stays unsuggested.
         if ($fill === null) {
             return null;
         }
+
         $light = $lightest[0] ?? '#ffffff';
         $dark = $darkest[0] ?? '#111111';
 
@@ -389,6 +613,18 @@ final readonly class SitePalette
             // button, a rule, a tag — so demanding acreage of it would throw
             // away exactly the small vivid colours an accent is for.
             //
+            // Required to be vivid, though, and only where the page paints
+            // nothing. A page with a surface has shown it makes colour
+            // decisions, so its smaller colours get the benefit of the doubt.
+            // A page without one has shown the opposite: every colour on it
+            // that is not the one vivid mark came out of a photograph, and on
+            // Cleaning Point's page the best-weighted of those is the sand of
+            // the hero at chroma 0.125. That is a suggestion the operator would
+            // read as an error, which is the failing this whole class is about.
+            if (! $painted && $candidate['chroma'] < self::VIVID) {
+                continue;
+            }
+
             // 40 degrees apart, which is about where two colours stop reading as
             // the same one at different brightness. A "second colour" that is
             // the first one lightened gives an accent nobody can see.

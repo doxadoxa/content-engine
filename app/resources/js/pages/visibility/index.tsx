@@ -49,6 +49,10 @@ type Props = {
         score: number | null;
         answered: number;
         mentions: number;
+        /** The day this assistant's freshest answers were taken. */
+        last_asked_on: string | null;
+        /** Its freshest reading trails the rest of the panel by enough to say so. */
+        stale: boolean;
     }[];
     prompts: {
         id: string;
@@ -285,12 +289,28 @@ export default function Visibility({
                             <CardTitle className="text-sm">
                                 By assistant
                             </CardTitle>
+                            {/*
+                             * Said once at the top as well as per tile, because
+                             * the number this changes the meaning of is the
+                             * headline, and the headline is not in this card.
+                             */}
+                            {by_platform.some((row) => row.stale) && (
+                                <CardDescription className="text-amber-600 dark:text-amber-400">
+                                    Some assistants were last measured earlier
+                                    than the rest, so the headline averages
+                                    readings from different days.
+                                </CardDescription>
+                            )}
                         </CardHeader>
                         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                             {by_platform.map((row) => (
                                 <div
                                     key={row.platform}
-                                    className="rounded-2xl border bg-muted/20 p-4"
+                                    className={`rounded-2xl border p-4 ${
+                                        row.stale
+                                            ? 'border-amber-500/40 bg-amber-500/5'
+                                            : 'bg-muted/20'
+                                    }`}
                                 >
                                     <div className="text-xs text-muted-foreground">
                                         {row.label}
@@ -303,6 +323,20 @@ export default function Visibility({
                                     <div className="text-xs text-muted-foreground">
                                         {row.mentions} of {row.answered} answers
                                     </div>
+                                    {/*
+                                     * Only where it is behind. A date on every
+                                     * tile is four dates that are the same on
+                                     * every healthy panel, which is noise that
+                                     * teaches people to stop reading them.
+                                     */}
+                                    {row.stale &&
+                                        row.last_asked_on !== null && (
+                                            <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                                                Last answered{' '}
+                                                {row.last_asked_on}, not in the
+                                                latest sweep
+                                            </div>
+                                        )}
                                 </div>
                             ))}
                         </CardContent>

@@ -27,24 +27,29 @@ import { staticFile } from 'remotion';
  * to whatever it has, which turned out to be a monospace face. Nothing fails,
  * the panel simply comes out in the wrong typeface, which no test would notice.
  */
-const FontFace = () => (
+const DEFAULT_TYPEFACE = 'instrument-sans';
+const DEFAULT_FAMILY = 'Instrument Sans';
+
+const FontFace = ({ typeface = DEFAULT_TYPEFACE, family = DEFAULT_FAMILY }) => (
     <style>{`
         @font-face {
-            font-family: 'Instrument Sans';
+            font-family: '${family}';
             font-style: normal;
             font-weight: 400;
-            src: url('${staticFile('fonts/instrument-sans/instrument-sans-latin-400-normal.woff2')}') format('woff2');
+            src: url('${staticFile(`fonts/${typeface}/${typeface}-latin-400-normal.woff2`)}') format('woff2');
         }
         @font-face {
-            font-family: 'Instrument Sans';
+            font-family: '${family}';
             font-style: normal;
             font-weight: 600;
-            src: url('${staticFile('fonts/instrument-sans/instrument-sans-latin-600-normal.woff2')}') format('woff2');
+            src: url('${staticFile(`fonts/${typeface}/${typeface}-latin-600-normal.woff2`)}') format('woff2');
         }
     `}</style>
 );
 
 export const Panel = ({
+    typeface = DEFAULT_TYPEFACE,
+    typefaceFamily = DEFAULT_FAMILY,
     heading,
     body,
     index,
@@ -76,12 +81,11 @@ export const Panel = ({
                 padding: 96,
                 backgroundColor: colour,
                 color: ink,
-                fontFamily:
-                    'Instrument Sans, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+                fontFamily: `${typefaceFamily}, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif`,
                 boxSizing: 'border-box',
             }}
         >
-            <FontFace />
+            <FontFace typeface={typeface} family={typefaceFamily} />
             {total > 1 && (
                 <div
                     style={{

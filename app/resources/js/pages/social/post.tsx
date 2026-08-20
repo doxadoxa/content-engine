@@ -60,6 +60,12 @@ type Panel = {
     alt: string;
     width: number | null;
     height: number | null;
+    /**
+     * When it was drawn, which is the only thing tying a slide to the note that
+     * caused it — an asset carries no reference to the sentence that produced
+     * it, exactly as for a photograph.
+     */
+    created_at: string | null;
 };
 
 type Edit = {
@@ -310,7 +316,7 @@ function Preview({ post, chosen }: { post: Post; chosen?: Asset }) {
             className={`${socialSurfaceClass} mx-auto grid w-full overflow-hidden ${hasPictures ? 'md:grid-cols-[minmax(0,1.08fr)_minmax(17rem,0.92fr)]' : 'max-w-2xl'}`}
         >
             {post.panels.length > 0 ? (
-                <Panels post={post} chosen={chosen} />
+                <Panels post={post} />
             ) : (
                 chosen && (
                     <div className="flex min-h-64 items-center bg-muted/35 md:min-h-[28rem]">
@@ -401,24 +407,19 @@ function Preview({ post, chosen }: { post: Post; chosen?: Asset }) {
  * publishes. Only the cover is labelled, because it is the one frame that is
  * not part of that count.
  */
-function Panels({ post, chosen }: { post: Post; chosen?: Asset }) {
+function Panels({ post }: { post: Post }) {
     const [looking, setLooking] = useState<Panel | null>(null);
 
-    const frames: Array<Panel & { cover: boolean }> = [
-        ...(chosen
-            ? [
-                  {
-                      id: chosen.id,
-                      url: chosen.url,
-                      alt: chosen.alt,
-                      width: chosen.width,
-                      height: chosen.height,
-                      cover: true,
-                  },
-              ]
-            : []),
-        ...post.panels.map((panel) => ({ ...panel, cover: false })),
-    ];
+    // The panels, and only the panels. The chosen photograph used to be
+    // prepended here as a cover frame, which was right while it published ahead
+    // of them — and became a duplicate the moment the cover panel started being
+    // drawn *on* that photograph. The screen showed the picture twice: once
+    // bare, then again with the hook on it.
+    //
+    // It has not stopped mattering, it has stopped being a frame. The operator
+    // still chooses it among the candidates below, and `CarouselPanels` still
+    // reads it to draw slide one.
+    const frames = post.panels;
 
     return (
         // `self-start` so the column sizes to the slides. Grid items stretch by
@@ -427,7 +428,7 @@ function Panels({ post, chosen }: { post: Post; chosen?: Asset }) {
         <div className="self-start bg-muted/35 p-4">
             <ul
                 className="grid grid-cols-2 gap-2"
-                aria-label={`${post.panels.length} slides${chosen ? ' and a cover' : ''}, in the order they publish`}
+                aria-label={`${post.panels.length} slides, in the order they publish`}
             >
                 {frames.map((frame) => (
                     <li key={frame.id} className="relative">
@@ -444,16 +445,10 @@ function Panels({ post, chosen }: { post: Post; chosen?: Asset }) {
                                 className="aspect-[4/5] w-full bg-background object-contain transition-opacity hover:opacity-90"
                             />
                         </button>
-                        {frame.cover && (
-                            <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-background/85 px-2 py-0.5 text-[11px] font-medium backdrop-blur-sm">
-                                Cover
-                            </span>
-                        )}
                     </li>
                 ))}
             </ul>
             <p className="mt-3 text-xs text-muted-foreground">
-                {chosen ? 'Cover and ' : ''}
                 {post.panels.length} slides · already drawn · click one to see
                 it full size
             </p>
@@ -1028,6 +1023,22 @@ function EditChat({ post }: { post: Post }) {
                                                 onOpen={setLooking}
                                             />
                                         )}
+
+                                        {/* And the slides it redrew beside it.
+                                            Revising a carousel's picture redraws
+                                            its panels too, so a conversation
+                                            showing only the photograph would
+                                            report one change on a post where
+                                            seven things moved. */}
+                                        {entry.redraw_queued !== false && (
+                                            <Slides
+                                                produced={panelsBy(
+                                                    entry,
+                                                    log[position + 1] ?? null,
+                                                    post,
+                                                )}
+                                            />
+                                        )}
                                     </div>
                                 </div>
                             </li>
@@ -1245,6 +1256,29 @@ function producedBy(entry: Edit, next: Edit | null, post: Post): Asset[] {
 }
 
 /**
+ * The slides a note redrew, by the same clock and for the same reason.
+ *
+ * Separate from {@link producedBy} rather than folded into it because the two
+ * lists are separate on the server and separate on purpose: `assets()` is the
+ * candidates a person chooses between, `panels()` is the sequence the post
+ * publishes. Merging them here would put a "Use this one" under a slide that
+ * has no alternative to be used instead of.
+ *
+ * Only the live panels are ever in this list — a redraw supersedes rather than
+ * duplicating — so a note that redrew a carousel shows its slides, and the
+ * notes before it show none. That is the honest reading: the older slides are
+ * gone, not hidden.
+ */
+function panelsBy(entry: Edit, next: Edit | null, post: Post): Panel[] {
+    return post.panels.filter(
+        (panel) =>
+            panel.created_at !== null &&
+            panel.created_at > entry.at &&
+            (next === null || panel.created_at < next.at),
+    );
+}
+
+/**
  * A picture being drawn, then the picture, then the button that uses it.
  *
  * The placeholder matters as much as the result: a redraw takes tens of
@@ -1318,6 +1352,46 @@ function Drawn({
                     </figcaption>
                 </figure>
             ))}
+        </div>
+    );
+}
+
+/**
+ * The slides a note redrew — evidence, not a choice.
+ *
+ * Deliberately unlike {@link Drawn} beside it, and the difference is the point.
+ * A photograph arrives as a candidate with the button that promotes it, because
+ * there is a decision to make. A slide has no alternative: `CarouselPanels`
+ * supersedes rather than duplicating, so by the time this renders the redrawn
+ * panel *is* slide two. Putting "Use this one" under it would invent a choice
+ * that does not exist.
+ *
+ * Smaller than the photograph for the same reason. This is here to answer "did
+ * my instruction reach the carousel", which a strip answers at a glance;
+ * judging a slide happens on the sequence viewer beside the post, where they
+ * are shown at a size worth judging and in the order they publish.
+ */
+function Slides({ produced }: { produced: Panel[] }) {
+    if (produced.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="mt-2">
+            <p className="mb-1.5 text-[11px] text-muted-foreground">
+                {produced.length} {produced.length === 1 ? 'slide' : 'slides'}{' '}
+                redrawn from the brief
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+                {produced.map((panel) => (
+                    <img
+                        key={panel.id}
+                        src={panel.url}
+                        alt={panel.alt}
+                        className="h-20 w-auto rounded-lg border object-cover"
+                    />
+                ))}
+            </div>
         </div>
     );
 }

@@ -181,6 +181,176 @@ final class VisualStyleTest extends TestCase
         $this->assertSame('#df7866', $style->accentType($style->colour));
     }
 
+    /**
+     * The palette is the "lighter accent" the docblock used to ask a human for.
+     *
+     * Same brand as the two tests above — forest, cream, terracotta — where the
+     * accent reads 2.22:1 on the fill and the 300px figure therefore falls back
+     * to the cream. Give the brief the rest of the brand's colours and the
+     * figure gets to be a colour again, without anybody retyping a field.
+     */
+    #[Test]
+    public function a_stat_reaches_into_the_palette_before_giving_up_on_colour(): void
+    {
+        $style = VisualStyle::fromBrief(new BrandBrief([
+            'brand_colour' => '#2f4f43',
+            'brand_ink' => '#f3efe6',
+            'brand_accent' => '#d6533c',
+            'brand_palette' => ['#df7866'],
+        ]));
+
+        // The accent itself is untouched: it still fills the rules and the ticks.
+        $this->assertSame('#d6533c', $style->accent);
+
+        // But the figure is now the brand's own lighter terracotta rather than
+        // the cream every other word on the panel is already set in.
+        $this->assertSame('#df7866', $style->accentType($style->colour));
+    }
+
+    /**
+     * And with nothing to reach for, it degrades exactly as it always did.
+     *
+     * The regression guard for every brief written before the column existed:
+     * an empty palette must leave the old path bit for bit, or adding a column
+     * would have changed the look of work already published.
+     */
+    #[Test]
+    public function an_empty_palette_degrades_to_the_ink_exactly_as_before(): void
+    {
+        $style = VisualStyle::fromBrief(new BrandBrief([
+            'brand_colour' => '#2f4f43',
+            'brand_ink' => '#f3efe6',
+            'brand_accent' => '#d6533c',
+            'brand_palette' => [],
+        ]));
+
+        $this->assertSame([], $style->palette);
+        $this->assertSame('#f3efe6', $style->accentType($style->colour));
+    }
+
+    /**
+     * A brand whose accent already reads never consults the palette at all.
+     *
+     * The property that makes this safe to add to briefs that are drawing work
+     * today: the list is only ever reached after the existing answer has failed
+     * the floor, so a palette cannot change a panel that was already correct.
+     */
+    #[Test]
+    public function an_accent_that_reads_is_kept_over_anything_in_the_palette(): void
+    {
+        $style = VisualStyle::fromBrief(new BrandBrief([
+            'brand_colour' => '#2f4f43',
+            'brand_ink' => '#f3efe6',
+            'brand_accent' => '#df7866',
+            // Higher contrast on the forest than the accent, and still ignored.
+            'brand_palette' => ['#ffffff'],
+        ]));
+
+        $this->assertSame('#df7866', $style->accentType($style->colour));
+    }
+
+    /**
+     * The palette is read the way every other colour here is read.
+     *
+     * It is a column an operator edits and a seeder writes, so anything that is
+     * not a hex is dropped rather than repaired — a bad value in this list would
+     * otherwise reach a renderer as a fill nobody chose.
+     */
+    #[Test]
+    public function the_palette_drops_anything_that_is_not_a_colour(): void
+    {
+        $style = VisualStyle::fromBrief(new BrandBrief([
+            'brand_colour' => '#2f4f43',
+            'brand_ink' => '#f3efe6',
+            'brand_accent' => '#d6533c',
+            'brand_palette' => ['nonsense', '#DF7866', 'df7866', '#abc', ''],
+        ]));
+
+        // Normalised and de-duplicated: the same colour written three ways is
+        // one colour, and the short form expands like everywhere else.
+        $this->assertSame(['#df7866', '#aabbcc'], $style->palette);
+    }
+
+    /**
+     * A face the renderer's image does not carry is refused, not passed through.
+     *
+     * The failure this prevents is the quiet one: Chromium falls back to
+     * whatever it has rather than erroring, so a panel set in a missing family
+     * renders in the wrong typeface and nothing reports it. Worse, it would look
+     * right to whoever reviewed it on a machine with the font installed.
+     */
+    #[Test]
+    public function a_typeface_the_renderer_does_not_carry_falls_back_to_the_house_face(): void
+    {
+        $style = VisualStyle::fromBrief(new BrandBrief([
+            'brand_typeface' => 'comic-sans',
+        ]));
+
+        $this->assertSame(VisualStyle::DEFAULT_TYPEFACE, $style->typeface);
+        $this->assertArrayHasKey($style->typeface, VisualStyle::TYPEFACES);
+    }
+
+    #[Test]
+    public function a_bundled_typeface_is_the_one_the_panels_are_set_in(): void
+    {
+        $style = VisualStyle::fromBrief(new BrandBrief(['brand_typeface' => 'poppins']));
+
+        $this->assertSame('poppins', $style->typeface);
+        $this->assertSame('Poppins', VisualStyle::TYPEFACES[$style->typeface]);
+    }
+
+    /**
+     * Every bundled face has the two weights the layouts actually set.
+     *
+     * The list and the files are declared in different places — a constant here,
+     * a directory the Dockerfile copies wholesale — so nothing but a test
+     * connects them. A face on the list with no files draws as a fallback and
+     * reports success, which is the same silent failure as the case above
+     * arrived at from the other end.
+     */
+    #[Test]
+    public function every_offered_typeface_has_files_to_draw_with(): void
+    {
+        foreach (array_keys(VisualStyle::TYPEFACES) as $slug) {
+            foreach ([400, 600] as $weight) {
+                $this->assertFileExists(
+                    resource_path("fonts/{$slug}/{$slug}-latin-{$weight}-normal.woff2"),
+                    "{$slug} is offered but has no {$weight} weight to draw with.",
+                );
+            }
+        }
+    }
+
+    /**
+     * A brand that opens on its own colour is not offered a photograph.
+     *
+     * The decision is the brief's rather than the model's, and the reason is
+     * structural: the copy is written before the picture exists, so a per-post
+     * choice would be a bet on an image nobody has seen.
+     */
+    #[Test]
+    public function a_brief_decides_whether_a_carousel_opens_on_its_photograph(): void
+    {
+        $this->assertSame(
+            'photo',
+            VisualStyle::fromBrief(new BrandBrief)->cover,
+            'The default has to stay what every carousel already draws.',
+        );
+
+        $this->assertSame(
+            'type',
+            VisualStyle::fromBrief(new BrandBrief(['carousel_cover' => 'type']))->cover,
+        );
+
+        // Anything else is the house answer, on the same terms as every other
+        // constrained field here: a renderer handed a value it does not know
+        // draws nothing rather than something.
+        $this->assertSame(
+            'photo',
+            VisualStyle::fromBrief(new BrandBrief(['carousel_cover' => 'collage']))->cover,
+        );
+    }
+
     #[Test]
     public function a_colour_comes_apart_into_channels_a_renderer_can_use(): void
     {

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Support\Brand\VisualStyle;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 /**
  * One saved edit of the Brand Brief.
@@ -43,6 +45,17 @@ class BrandBriefRequest extends FormRequest
             'brand_colour' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'brand_ink' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'brand_accent' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
+            // The brand's other colours, kept for the fallbacks to reach into.
+            // Eight, because that is what a site read hands back — see
+            // {@see \App\Onboarding\SiteInspection::swatches()} — and a cap the
+            // interface can actually show in one row.
+            'brand_palette' => ['nullable', 'array', 'max:8'],
+            'brand_palette.*' => ['string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
+            // Restricted to what is bundled: a family the renderer's image does
+            // not carry draws in whatever Chromium falls back to, and it would
+            // look right in review on a machine that has the font installed.
+            'brand_typeface' => ['nullable', 'string', Rule::in(array_keys(VisualStyle::TYPEFACES))],
+            'carousel_cover' => ['nullable', 'string', Rule::in(VisualStyle::COVERS)],
             'overlay_position' => ['nullable', 'string', 'in:top,centre,bottom'],
             'overlay_case' => ['nullable', 'string', 'in:sentence,upper'],
 
@@ -71,6 +84,10 @@ class BrandBriefRequest extends FormRequest
             'brand_colour' => 'brand colour',
             'brand_ink' => 'text colour on the brand colour',
             'brand_accent' => 'accent colour',
+            'brand_palette' => 'brand palette',
+            'brand_typeface' => 'typeface',
+            'carousel_cover' => 'carousel cover',
+            'brand_palette.*' => 'palette colour',
             'overlay_position' => 'overlay position',
             'overlay_case' => 'overlay case',
             'forbidden_topics' => 'topics to avoid',
@@ -93,6 +110,19 @@ class BrandBriefRequest extends FormRequest
             }
 
             $split[$field] = $this->lines(is_string($raw) ? $raw : '');
+        }
+
+        // An empty palette submits nothing at all, because it is a set of hidden
+        // inputs and a set with no members sends no fields. Absent would then
+        // reach {@see BrandBrief::revise()} as "leave this alone" and carry the
+        // old palette forward — so removing every colour could never stick.
+        //
+        // Safe to default here and nowhere else: this request *is* the brief
+        // form, which submits every field on every save, so absent genuinely
+        // means empty. `revise()` called from code keeps its carry-forward, and
+        // the onboarding agent depends on that.
+        if (! $this->has('brand_palette')) {
+            $split['brand_palette'] = [];
         }
 
         $this->merge($split);

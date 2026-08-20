@@ -546,6 +546,17 @@ class SocialPostController extends Controller
                 'alt' => $asset->alt,
                 'width' => $asset->width,
                 'height' => $asset->height,
+                // When it was drawn, which is how the conversation attributes a
+                // slide to the note that caused it — the same way it already
+                // attributes a photograph, and for the same reason: an asset
+                // carries no reference to the sentence that produced it.
+                //
+                // Needed here now that revising a picture redraws the slides
+                // too. Without it the chat reports one new picture on a post
+                // where seven assets changed, which is the silent machine §7
+                // exists to prevent, and the conversation would be least
+                // trustworthy on exactly the posts it does the most work for.
+                'created_at' => $asset->created_at?->toIso8601String(),
             ])
             ->values()
             ->all();

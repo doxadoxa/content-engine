@@ -152,12 +152,21 @@ class SiteAnalyst
     private function palette(string $url): ?array
     {
         try {
-            $png = $this->screenshots->of($url);
+            $site = $this->screenshots->inspect($url);
         } catch (Throwable) {
             return null;
         }
 
-        return $png === null ? null : SitePalette::fromPng($png)?->toArray();
+        if ($site === null) {
+            return null;
+        }
+
+        // The stylesheet first and the photograph second, matching
+        // {@see \App\Onboarding\Jobs\ReadSitePalette}. Onboarding reads the same
+        // site the Brand Brief's button reads, and the two answering differently
+        // for the same page is the kind of disagreement nobody reports and
+        // everybody stops trusting.
+        return (SitePalette::fromDeclared($site->colours) ?? SitePalette::fromPng($site->png))?->toArray();
     }
 
     private function blank(SiteSnapshot $snapshot): SiteAnalysis

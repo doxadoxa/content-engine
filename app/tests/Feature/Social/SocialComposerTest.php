@@ -7,9 +7,11 @@ namespace Tests\Feature\Social;
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
 use App\Ai\ModelRequest;
+use App\Enums\AssetRole;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\PipelineRunStatus;
+use App\Models\Asset;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
@@ -626,6 +628,40 @@ final class SocialComposerTest extends TestCase
         );
 
         $this->get("/social/posts/{$item->getKey()}")->assertNotFound();
+    }
+
+    /**
+     * A slide says when it was drawn, so the conversation can point at it.
+     *
+     * The screen attributes a picture to the note that caused it by time —
+     * assets carry no reference to the sentence that produced them. That worked
+     * for the photograph and could not work for the slides, because `panels()`
+     * did not send the timestamp. Revising a carousel's picture now redraws its
+     * panels, so a conversation without this reports one change on a post where
+     * seven things moved.
+     */
+    #[Test]
+    public function a_slide_carries_the_moment_it_was_drawn(): void
+    {
+        $item = $this->draft(ContentItemState::Draft, ['slides' => [
+            ['heading' => 'One', 'body' => ''],
+        ]]);
+
+        app(CurrentProject::class)->run($this->project, function () use ($item): void {
+            Asset::factory()->create([
+                'content_item_id' => $item->getKey(),
+                'role' => AssetRole::Inline,
+                'anchor' => 'slide-01',
+            ]);
+        });
+
+        $this->get("/social/posts/{$item->getKey()}")
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->has('post.panels', 1)
+                ->whereNot('post.panels.0.created_at', null)
+                ->etc()
+            );
     }
 
     /**

@@ -1847,6 +1847,123 @@ final class ContentStudioTest extends TestCase
         });
     }
 
+    /**
+     * Asking the Studio to change the picture changes all of them.
+     *
+     * The bug this guards was reported from the review screen: a seven-slide
+     * carousel was told to use the brief's fresh colours, and one photograph
+     * came back. {@see ContentStudioAssistant::reviseImage()} bought variants
+     * and stopped, so the six assets that actually read the brand's colours —
+     * the panels — kept a palette four brief versions old, and the single asset
+     * that was redrawn is the one the brief barely reaches.
+     */
+    #[Test]
+    public function revising_a_carousels_picture_redraws_its_slides_too(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => Http::response($this->png(), 200, [
+            'Content-Type' => 'image/png',
+        ])]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $carousel = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', 'instagram')
+                ->firstOrFail();
+
+            $before = Asset::query()
+                ->where('content_item_id', $carousel->getKey())
+                ->where('role', AssetRole::Inline)
+                ->whereNull('superseded_at')
+                ->pluck('id')
+                ->all();
+
+            $this->assertCount(2, $before);
+
+            // No instruction: the brief has already been revised by the time a
+            // redraw is queued, which is the path the review screen takes.
+            $result = app(ContentStudioAssistant::class)->reviseImage(
+                $carousel,
+                null,
+                1,
+                app(UnmeteredSession::class),
+            );
+
+            $this->assertSame(2, $result['panels']);
+
+            $after = Asset::query()
+                ->where('content_item_id', $carousel->getKey())
+                ->where('role', AssetRole::Inline)
+                ->whereNull('superseded_at')
+                ->pluck('id')
+                ->all();
+
+            // Still two live slides, and none of them the ones from before:
+            // superseded rather than duplicated, so the carousel does not grow
+            // a second slide two every time somebody edits it.
+            $this->assertCount(2, $after);
+            $this->assertSame([], array_intersect($before, $after));
+
+            $this->assertSame(
+                2,
+                Asset::query()
+                    ->where('content_item_id', $carousel->getKey())
+                    ->where('role', AssetRole::Inline)
+                    ->whereNotNull('superseded_at')
+                    ->count(),
+            );
+        });
+    }
+
+    /**
+     * And a post that is a photograph and a caption is left exactly alone.
+     *
+     * The guard on the other side: `drawPanels()` returns on an empty slide
+     * list, so adding it to the redraw path may not start inventing panels for
+     * every post that never had any.
+     */
+    #[Test]
+    public function revising_a_plain_posts_picture_draws_no_panels(): void
+    {
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        Http::fake(['*/render' => Http::response($this->png(), 200, [
+            'Content-Type' => 'image/png',
+        ])]);
+
+        $this->fakeStudio(answers: [
+            $this->proposal(dates: ['2026-08-04', '2026-08-12', '2026-08-19', '2026-08-26']),
+        ]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $plain = ContentItem::query()
+                ->where('type', ContentItemType::SocialPost)
+                ->where('channel_type', '!=', 'instagram')
+                ->firstOrFail();
+
+            $result = app(ContentStudioAssistant::class)->reviseImage(
+                $plain,
+                null,
+                1,
+                app(UnmeteredSession::class),
+            );
+
+            $this->assertSame(0, $result['panels']);
+            $this->assertSame(0, $plain->assets()->where('role', AssetRole::Inline)->count());
+        });
+    }
+
     #[Test]
     public function a_deployment_with_no_renderer_still_writes_the_post(): void
     {

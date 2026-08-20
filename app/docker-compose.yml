@@ -21,6 +21,19 @@ services:
       dockerfile: Dockerfile
       target: dev
     image: content-engine:dev
+    # Comes back on its own, like the datastores below.
+    #
+    # This used to be set on postgres and redis alone, and the asymmetry was not
+    # a small one: when Docker's daemon died on 19 August 2026 the data services
+    # came back and nothing that serves or works did. `docker compose ps` showed
+    # a stack that was half up, port 8091 was still held open by the daemon's
+    # port-forwarder so requests hung rather than being refused, and the tunnel
+    # in front of it looked like the thing that was broken.
+    #
+    # `unless-stopped` rather than `always`, so `docker compose stop` still
+    # means stopped. That is the difference between a policy that survives a
+    # crash and one that argues with you.
+    restart: unless-stopped
     # Everything from your .env reaches the container, so a key you add there
     # just works. The `environment` block below still wins where it is set,
     # which is how the host-facing values in .env (DB_HOST=127.0.0.1 and
@@ -112,6 +125,7 @@ services:
       context: .
       dockerfile: docker/renderer/Dockerfile
     image: content-engine-renderer:dev
+    restart: unless-stopped
     environment:
       RENDERER_PORT: 3020
     healthcheck:
@@ -128,6 +142,13 @@ services:
       dockerfile: Dockerfile
       target: dev
     image: content-engine:dev
+    # `depends_on` orders `compose up` and nothing else — the daemon bringing
+    # containers back after a reboot does not re-evaluate it. So this may well
+    # start before the app is healthy, fail to reach postgres, and exit. That is
+    # what the restart policy is for: it retries, with the daemon's own backoff,
+    # until the database is there. A worker that gives up once is the whole
+    # reason this line exists.
+    restart: unless-stopped
     env_file: *app-env-file
     environment:
       <<: *app-env
@@ -151,6 +172,13 @@ services:
       dockerfile: Dockerfile
       target: dev
     image: content-engine:dev
+    # The one this matters most for, because nothing downstream complains when
+    # it is gone. This container exited 1 around 14 August 2026 and stayed
+    # exited: `engine:tick` stopped firing, and with it every hourly and daily
+    # entry in routes/console.php. Five days of no research, no drafting, no
+    # publishing and no visibility sweep, on a stack whose dashboard was up the
+    # whole time — the article backlog was the first anyone knew of it.
+    restart: unless-stopped
     env_file: *app-env-file
     environment:
       <<: *app-env

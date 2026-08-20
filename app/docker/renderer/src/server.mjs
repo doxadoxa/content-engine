@@ -79,7 +79,115 @@ const read = (request) =>
  * every site this ever visits, which is a lot of somebody else's state to keep
  * in a container that also renders their brand's panels.
  */
-const screenshot = async ({ url, host, addresses, width, height, timeout }) => {
+/**
+ * What the page *declares*, as opposed to what it happens to look like.
+ *
+ * Counting pixels off a photograph answers "what is there most of", which is a
+ * different question from "what are this brand's colours" and answers it badly
+ * on the pages that matter. It quantises — a teal read off a screenshot comes
+ * back as the nearest sixteenth — and anything small enough disappears entirely,
+ * so a brand whose colour lives in a button and a logo is invisible to it at any
+ * threshold. That failure is documented at length in App\Support\Brand\SitePalette.
+ *
+ * A stylesheet has none of those problems. `--brand-teal: #1ab5b5` is exact, it
+ * is there whether it paints a hero or a hover state, and it says what the brand
+ * thinks its colours are rather than what a camera thinks. So this reads the
+ * cascade: the custom properties on the root first, because those are usually
+ * the brand's own tokens under their own names, and then every element's
+ * computed background, text and border colour.
+ *
+ * **Weighted, not merely listed.** A page declares dozens of colours and most of
+ * them are a border on a form control. Backgrounds carry their rendered area,
+ * text and borders carry a count, and a token carries its own weight for being a
+ * token at all — a name the brand chose to give a colour is the strongest signal
+ * on the page that it is one of theirs.
+ *
+ * **In the same visit as the photograph.** The page is already open and already
+ * pinned; a second load would double the wait for the operator, double what we
+ * take from somebody else's server, and could read a different page than the one
+ * in the picture.
+ */
+const INSPECT = `(() => {
+    const seen = new Map();
+
+    const hex = (value) => {
+        const text = String(value ?? '').trim().toLowerCase();
+
+        const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(text);
+        if (short) return '#' + short[1] + short[1] + short[2] + short[2] + short[3] + short[3];
+        if (/^#[0-9a-f]{6}$/.test(text)) return text;
+        if (/^#[0-9a-f]{8}$/.test(text)) {
+            // The last byte is alpha. Anything meaningfully see-through is not a
+            // flat colour and would be wrong to hand back as one.
+            return parseInt(text.slice(7, 9), 16) >= 230 ? text.slice(0, 7) : null;
+        }
+
+        const rgb = /^rgba?\\(\\s*([\\d.]+)[,\\s]+([\\d.]+)[,\\s]+([\\d.]+)(?:[,/\\s]+([\\d.]+))?/.exec(text);
+        if (!rgb) return null;
+        if (rgb[4] !== undefined && parseFloat(rgb[4]) < 0.9) return null;
+
+        return '#' + [rgb[1], rgb[2], rgb[3]]
+            .map((n) => Math.max(0, Math.min(255, Math.round(parseFloat(n)))).toString(16).padStart(2, '0'))
+            .join('');
+    };
+
+    const add = (value, role, weight) => {
+        const colour = hex(value);
+        if (!colour || !(weight > 0)) return;
+        const key = colour + '|' + role;
+        seen.set(key, (seen.get(key) || 0) + weight);
+    };
+
+    const root = getComputedStyle(document.documentElement);
+    for (const name of Array.from(root)) {
+        if (typeof name === 'string' && name.startsWith('--')) {
+            add(root.getPropertyValue(name), 'token', 1);
+        }
+    }
+
+    // Capped, because a large site is tens of thousands of nodes and this runs
+    // while an operator waits. The cap is in document order, which is the order
+    // a page puts its header, hero and first call to action in.
+    const elements = Array.from(document.querySelectorAll('*')).slice(0, 4000);
+
+    for (const element of elements) {
+        const box = element.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) continue;
+
+        const style = getComputedStyle(element);
+        if (style.visibility === 'hidden' || style.opacity === '0') continue;
+
+        // Clamped: one full-page wrapper would otherwise outweigh everything
+        // inside it by an order of magnitude and win on being the wrapper.
+        add(style.backgroundColor, 'background', Math.min(box.width, 1600) * Math.min(box.height, 1200));
+
+        const writes = Array.from(element.childNodes)
+            .some((node) => node.nodeType === 3 && node.textContent.trim().length > 0);
+
+        if (writes) add(style.color, 'text', 1);
+
+        if (parseFloat(style.borderTopWidth) > 0) add(style.borderTopColor, 'border', 1);
+    }
+
+    const family = (value) => String(value ?? '').split(',')[0].replace(/["']/g, '').trim();
+    const heading = document.querySelector('h1, h2');
+
+    return {
+        colours: Array.from(seen, ([key, weight]) => ({
+            hex: key.split('|')[0],
+            role: key.split('|')[1],
+            weight: Math.round(weight),
+        }))
+            .sort((a, b) => b.weight - a.weight)
+            .slice(0, 40),
+        fonts: Array.from(new Set([
+            heading ? family(getComputedStyle(heading).fontFamily) : '',
+            document.body ? family(getComputedStyle(document.body).fontFamily) : '',
+        ])).filter(Boolean),
+    };
+})()`;
+
+const screenshot = async ({ url, host, addresses, width, height, timeout, inspect }) => {
     if (!/^https?:\/\//i.test(url)) {
         throw new Error('Only HTTP and HTTPS addresses can be captured.');
     }
@@ -150,7 +258,42 @@ const screenshot = async ({ url, host, addresses, width, height, timeout }) => {
             fromSurface: true,
         });
 
-        return Buffer.from(value.data, 'base64');
+        const image = Buffer.from(value.data, 'base64');
+
+        if (!inspect) {
+            return { image, inspection: null };
+        }
+
+        // Read after the picture rather than before it, so a page that throws on
+        // this still yields the photograph the caller mainly came for. Same
+        // reason it is caught: the pixel census is a working fallback, and a
+        // stylesheet nobody can walk must degrade to it rather than fail the read.
+        let inspection = null;
+
+        try {
+            // Unwrapped twice, and the extra layer is Remotion's rather than the
+            // protocol's: `send()` hands back `{ value: <the CDP response> }`,
+            // which is why the capture above reads `value.data` for a field the
+            // devtools docs call `data`. The CDP response then wraps the return
+            // value in `result`, so the answer is at `.value.result.value`.
+            const { value } = await page._client().send('Runtime.evaluate', {
+                expression: INSPECT,
+                returnByValue: true,
+                awaitPromise: false,
+            });
+
+            if (value?.exceptionDetails) {
+                throw new Error(value.exceptionDetails.exception?.description
+                    ?? value.exceptionDetails.text
+                    ?? 'the page refused to be read');
+            }
+
+            inspection = value?.result?.value ?? null;
+        } catch (error) {
+            console.error('[renderer:inspect]', error);
+        }
+
+        return { image, inspection };
     } finally {
         await browser.close({ silent: true });
     }
@@ -167,16 +310,34 @@ createServer(async (request, response) => {
         try {
             const body = JSON.parse(await read(request));
 
-            const buffer = await screenshot({
+            const inspect = body.inspect === true;
+
+            const { image, inspection } = await screenshot({
                 url: String(body.url ?? ''),
                 host: String(body.host ?? ''),
                 addresses: body.addresses ?? [],
                 width: Number(body.width ?? 1280),
                 height: Number(body.height ?? 900),
                 timeout: Number(body.timeout ?? 20_000),
+                inspect,
             });
 
-            response.writeHead(200, { 'Content-Type': 'image/png' }).end(buffer);
+            // Two shapes, and the old one is still the default. A caller that
+            // wants only the picture gets the bytes exactly as before; asking to
+            // inspect is what moves the image into a JSON envelope, because the
+            // colours have to travel with it and base64 over loopback is cheaper
+            // than the second page load the alternative would cost.
+            if (!inspect) {
+                response.writeHead(200, { 'Content-Type': 'image/png' }).end(image);
+
+                return;
+            }
+
+            response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+                image: image.toString('base64'),
+                colours: inspection?.colours ?? [],
+                fonts: inspection?.fonts ?? [],
+            }));
         } catch (error) {
             console.error('[renderer:screenshot]', error);
 

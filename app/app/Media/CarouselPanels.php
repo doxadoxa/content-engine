@@ -71,6 +71,21 @@ class CarouselPanels
         $drawn = [];
         $total = count($slides);
 
+        // Read once rather than per slide: only the cover uses it, and a hero is
+        // most of a megabyte that would otherwise be loaded eight times to be
+        // thrown away seven.
+        // A brand that opens its carousels on its own colour does not read the
+        // photograph at all — not merely hides it. The picture is still bought
+        // and still published for every other format; it simply is not what
+        // slide one is drawn on.
+        $hero = $style->cover === 'photo' ? $this->coverPhoto($item) : null;
+        $photo = $hero['uri'] ?? null;
+
+        // From the same bytes that were just read. Deciding this per slide, or
+        // from a second read, would be a megabyte of disk and a second decode
+        // for an answer that cannot differ between slides of one carousel.
+        $anchor = $hero === null ? 'bottom' : PhotoAnchor::for($hero['bytes']);
+
         foreach ($slides as $index => $slide) {
             $position = $index + 1;
             $layout = SlideLayout::tryFrom((string) ($slide['layout'] ?? ''));
@@ -81,7 +96,7 @@ class CarouselPanels
                     // every carousel written before layouts existed. Those posts
                     // are redrawn as what they were, not reinterpreted.
                     composition: $layout?->composition() ?? 'panel',
-                    props: $this->props($layout, $slide, $position, $total, $style),
+                    props: $this->props($layout, $slide, $position, $total, $style, $photo, $anchor),
                     width: $playbook->imageWidth,
                     height: $playbook->imageHeight,
                 );
@@ -140,6 +155,67 @@ class CarouselPanels
     }
 
     /**
+     * The photograph the cover is set on, as bytes rather than as an address.
+     *
+     * **A data URI, and it has to be.** The renderer is pinned: every URL it
+     * opens is one the caller resolved and vetted, and Chromium inside it is
+     * restricted to those addresses precisely so a template cannot be talked
+     * into fetching something on the compose network. A `storage/` URL is
+     * exactly the shape that pin exists to refuse, so handing over the bytes is
+     * not a shortcut around the guard — it is the only way through it that does
+     * not weaken it. The renderer's own docblock already settles the trade for
+     * the return leg: "an image is a few hundred kilobytes; HTTP is the boring
+     * option and the one that survives the move."
+     *
+     * The chosen hero, not a candidate. `Variant` rows are what an operator is
+     * still deciding between, and a cover drawn on a picture nobody picked would
+     * change the moment they picked one.
+     *
+     * Null on every path that is not a photograph this can actually read — no
+     * hero, a file the disk has lost, an empty object. The cover then draws as
+     * it always did, which is a complete slide rather than a broken one.
+     */
+    /**
+     * @return array{bytes: string, uri: string}|null
+     */
+    private function coverPhoto(ContentItem $item): ?array
+    {
+        $hero = $item->assets()
+            ->where('role', AssetRole::Hero)
+            ->whereNull('superseded_at')
+            ->latest()
+            ->first();
+
+        if ($hero === null) {
+            return null;
+        }
+
+        $disk = Storage::disk($hero->disk);
+
+        if (! $disk->exists($hero->path)) {
+            return null;
+        }
+
+        $bytes = $disk->get($hero->path);
+
+        if (! is_string($bytes) || $bytes === '') {
+            return null;
+        }
+
+        // From the extension rather than sniffed: these are files this engine
+        // wrote itself, and a wrong type here is a picture that silently does
+        // not decode in the template.
+        $mime = str_ends_with(strtolower($hero->path), '.png') ? 'image/png' : 'image/jpeg';
+
+        // Both, because two different things want this picture: the template
+        // wants something an <img> can take, and PhotoAnchor wants pixels.
+        return [
+            'bytes' => $bytes,
+            'uri' => 'data:'.$mime.';base64,'.base64_encode($bytes),
+        ];
+    }
+
+    /**
      * One slide's props, as the layout that draws it expects them.
      *
      * The brand half is identical for every layout and the content half is not,
@@ -161,6 +237,8 @@ class CarouselPanels
         int $position,
         int $total,
         VisualStyle $style,
+        ?string $photo = null,
+        string $anchor = 'bottom',
     ): array {
         $heading = $style->write($slide['heading']);
 
@@ -186,6 +264,35 @@ class CarouselPanels
             'onAccent' => $style->readableOn($style->accent),
             'accentType' => $style->accentType($style->colour),
         ];
+
+        // The colour a highlighted run of the heading is drawn in, decided here
+        // for the same reason `accentType` is: the template knows it is setting
+        // type at 124px and cannot know whether this brand's accent survives on
+        // its own fill. A cover whose highlight is unreadable is worse than one
+        // with no highlight, because the words it picked out are the ones the
+        // sentence turns on.
+        $props['highlightInk'] = $style->accentType($style->colour);
+
+        // The slug names the directory the woff2 files sit in; the family is
+        // what CSS asks for. Both, because the template needs to @font-face one
+        // and set the other, and deriving either from the other in JSX would put
+        // the mapping in two places.
+        // The cover, and only the cover. The photograph used to publish as a
+        // frame of its own ahead of the panels — so the first thing anybody saw
+        // was a wordless picture and the hook that earns the swipe was second.
+        // Now it is the ground the hook is set on, which is the only arrangement
+        // where a carousel gets both.
+        if ($layout === SlideLayout::Cover && $photo !== null) {
+            $props['photo'] = $photo;
+            // Which end of the picture is empty enough to stand type on. See
+            // {@see PhotoAnchor}: the scrim was fixed to the foot, and the
+            // first photograph it met had its whole subject down there.
+            $props['photoAnchor'] = $anchor;
+        }
+
+        $props['typeface'] = $style->typeface;
+        $props['typefaceFamily'] = VisualStyle::TYPEFACES[$style->typeface]
+            ?? VisualStyle::TYPEFACES[VisualStyle::DEFAULT_TYPEFACE];
 
         foreach (($slide['fields'] ?? []) as $field => $value) {
             $props[$field] = is_string($value) ? $style->write($value) : $value;

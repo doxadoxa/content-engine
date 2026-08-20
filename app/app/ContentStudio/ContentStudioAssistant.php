@@ -329,7 +329,29 @@ class ContentStudioAssistant
      * Nothing here changes what the post currently ships. The candidates are
      * variants until somebody picks one.
      *
-     * @return array{variants: int, cost: int}
+     * **A carousel's slides are redrawn too, and used not to be.** This bought
+     * photograph variants and stopped, so on a seven-slide post "change the
+     * picture" changed one of seven — and it changed the one least able to
+     * answer what was usually being asked. The slides are the only assets that
+     * read the brief's colours ({@see CarouselPanels} draws them from
+     * {@see VisualStyle}); the photograph is a generated image where the brief
+     * barely reaches the prompt. So "use the fresh colours from the brief"
+     * landed on the single asset it could not affect, and left six showing a
+     * palette four brief versions old.
+     *
+     * They are redrawn from the project's *active* brief rather than the
+     * version the item is pinned to, which is the same choice the photograph
+     * below already makes. The pin is what the post was written from and stays
+     * true of its words; an operator asking for a redraw today is asking for
+     * today's brand, and a redraw that returned the retired palette would be
+     * indistinguishable from this bug.
+     *
+     * Free, and idempotent: panels render locally rather than being bought, and
+     * {@see CarouselPanels} supersedes rather than duplicates — "a redrawn panel
+     * is not an alternative anybody chooses between, it is simply the old slide
+     * two." Which is also why they are not variants: there is nothing to choose.
+     *
+     * @return array{variants: int, cost: int, panels: int}
      */
     public function reviseImage(
         ContentItem $item,
@@ -369,12 +391,16 @@ class ContentStudioAssistant
 
         $payload['visual'] = $fields;
 
+        // Read once and used twice, which is also the statement that both
+        // halves of this post are drawn from the same brand.
+        $brief = BrandBrief::activeFor($item->project);
+
         $made = $this->images->variants(
             $item,
             $playbook,
             SocialImagePrompt::fromFields($fields, $this->imageSubject($item)),
             $variants,
-            BrandBrief::activeFor($item->project),
+            $brief,
             $item->contentIdea?->kind->shot(),
         );
 
@@ -384,9 +410,16 @@ class ContentStudioAssistant
 
         $item->forceFill(['channel_payload' => $payload])->save();
 
+        // After the save, so the panels are drawn against the row as it now
+        // stands rather than as it was found. Silent on a post with no slides —
+        // `drawPanels()` returns on an empty list, which is every post that is
+        // a photograph and a caption.
+        $this->drawPanels($item, $playbook, $payload, $brief);
+
         return [
             'variants' => count($made),
             'cost' => array_sum(array_column($made, 'cost')),
+            'panels' => is_array($payload['slides'] ?? null) ? count($payload['slides']) : 0,
         ];
     }
 
@@ -1326,6 +1359,11 @@ class ContentStudioAssistant
             'Choose a layout for each slide, and choose it because the thought is that shape:',
             '- cover: the opening hook. Slide one is always this.',
             '- statement: one sentence that stands alone. Needs only a heading.',
+            '- On a cover or a statement you may also give `highlight`: two or three words copied '
+                .'exactly from that slide\'s heading, which are drawn in the brand\'s accent colour. '
+                .'Choose the words the sentence turns on, not its subject — in "the one thing your '
+                .'routine never reaches" that is "never reaches". Leave it out rather than colouring '
+                .'half the line; a highlight longer than a few words is just a second colour of text.',
             '- step: one move in a sequence. Heading and body. The numbering is added for you.',
             '- stat: one figure, shown at the size of the whole slide. Give `figure` short — '
                 .'"68%", "3x", "4.9" — and the heading is the line read under it.',
@@ -1348,6 +1386,21 @@ class ContentStudioAssistant
 
             'Vary the layouts. Four steps in a row is the format this replaces; if the middle of the '
                 .'carousel is all one shape, the argument is probably a list and would read better as one.',
+
+            // "Vary" on its own does not bind. A real answer came back as
+            // cover, contrast, step, step, checklist, checklist, cta — and only
+            // one of those repeats is a fault, which is why the rule names the
+            // exception rather than forbidding repetition outright.
+            // Written first as "do not repeat a layout, except step" — and the
+            // exception swallowed the rule: the next carousel came back as a
+            // cover and five consecutive steps, which is precisely the format
+            // the line above says this replaces. An exemption a model can lean
+            // on is an instruction to lean on it.
+            'Concretely: do not use the same layout on two slides in a row, and never on three. Steps '
+                .'may pair — two in a row read as a sequence because the numbers differ — but a third '
+                .'consecutive step is a slideshow. Two checklists in a row are the same slide twice. '
+                .'A how-to is not obliged to be steps end to end: the strongest middle is usually a '
+                .'contrast for the mistake, steps for the method, and a checklist for what to take away.',
 
             // The whole guard, said plainly. The parser enforces it too — see
             // ContentStudioAssistant::sourcedFigure() — but a model told the
@@ -1511,8 +1564,15 @@ class ContentStudioAssistant
         $slides = [];
         $step = 0;
 
+        // The layout the slide before settled on, so this one can refuse to be
+        // the same shape twice running. Carried rather than read back off
+        // `$slides` because what matters is the settled layout, and a slide
+        // that fell back is still what the reader sees.
+        $previous = null;
+        $run = 0;
+
         foreach ($usable as $index => ['heading' => $heading, 'raw' => $slide]) {
-            $layout = $this->slideLayout($slide, $index + 1, $count);
+            $layout = $this->slideLayout($slide, $index + 1, $count, $previous, $run);
             $fields = [];
 
             foreach ($layout->fields() as $field => $limit) {
@@ -1531,6 +1591,17 @@ class ContentStudioAssistant
                 }
             }
 
+            // A highlight the heading does not contain cannot be drawn: the
+            // renderer colours a run *of* the heading rather than printing a
+            // second string, so a paraphrase — the ordinary way a model gets
+            // this wrong — would silently colour nothing. Dropped rather than
+            // repaired, because the repair would be guessing which words were
+            // meant.
+            if (isset($fields['highlight'])
+                && mb_stripos($heading, $fields['highlight']) === false) {
+                unset($fields['highlight']);
+            }
+
             // The one list-valued field, so it is read here rather than being
             // given a character limit in fields() that would mean nothing.
             // Five, because a sixth tick slides off the frame.
@@ -1543,6 +1614,12 @@ class ContentStudioAssistant
             }
 
             $layout = $this->settleLayout($layout, $fields, $idea);
+
+            // Counted on the settled layout, not the requested one: a slide
+            // that fell back to statement is a statement on the screen, and
+            // the next slide has to know that.
+            $run = $layout === $previous ? $run + 1 : 1;
+            $previous = $layout;
 
             if ($layout === SlideLayout::Step) {
                 $fields['step'] = (string) ++$step;
@@ -1573,10 +1650,43 @@ class ContentStudioAssistant
      *
      * @param  array<string, mixed>  $slide
      */
-    private function slideLayout(array $slide, int $position, int $count): SlideLayout
-    {
+    private function slideLayout(
+        array $slide,
+        int $position,
+        int $count,
+        ?SlideLayout $previous = null,
+        int $run = 0,
+    ): SlideLayout {
         $allowed = SlideLayout::allowedAt($position, $count);
         $asked = SlideLayout::tryFrom(strtolower(trim((string) ($slide['layout'] ?? ''))));
+
+        // A run of one shape, capped. The prompt asks for this and asking is
+        // most of the work, but it is not all of it: told "vary the layouts" a
+        // model returned cover, contrast, step, step, checklist, checklist; told
+        // additionally that step was exempt from repeating, the next one
+        // returned a cover and five consecutive steps.
+        //
+        // Two for most layouts, because consecutive steps carry different
+        // numbers and read as a sequence rather than as the same slide twice.
+        // One for statement, which is also what every unrecognised layout falls
+        // to — so a model naming two layouts this engine does not have produces
+        // two identical slides without having asked for either.
+        $cap = $previous === SlideLayout::Statement ? 1 : 2;
+
+        if ($previous !== null && $run >= $cap) {
+            // Out of the fallback too, not merely out of the ask. Statement is
+            // what `$allowed[0]` *is* in the middle, so refusing the request and
+            // then falling back would land on it again — the repeat this exists
+            // to stop, arrived at by a different route.
+            $allowed = array_values(array_filter(
+                $allowed,
+                static fn (SlideLayout $layout): bool => $layout !== $previous,
+            ));
+
+            if ($asked === $previous) {
+                $asked = null;
+            }
+        }
 
         if ($asked !== null && in_array($asked, $allowed, true)) {
             return $asked;
@@ -1585,7 +1695,12 @@ class ContentStudioAssistant
         // The first permitted layout, which for the two fixed positions is the
         // only one. In the middle it is Statement — the layout that needs
         // nothing but the heading every slide already has.
-        return $allowed[0];
+        //
+        // Empty only if a fixed position offered nothing but statement, which
+        // no position does; the guard is here because a filtered list that
+        // turned out empty would otherwise be an undefined index rather than a
+        // slide.
+        return $allowed[0] ?? SlideLayout::Statement;
     }
 
     /**

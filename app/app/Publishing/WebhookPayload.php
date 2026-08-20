@@ -114,13 +114,31 @@ final class WebhookPayload
      */
     private static function images(ContentItem $unit): array
     {
+        // What the post ships, not what it was choosing between. Variants are
+        // live rows until one is promoted, so without this every rejected
+        // candidate went out in the payload and a receiver rendering `images`
+        // attached the drafts nobody picked.
+        $roles = [AssetRole::Hero, AssetRole::Inline];
+
+        // A carousel ships its panels and nothing else. The hero used to lead
+        // them — `orderBy('role')` puts `hero` before `inline` — so the first
+        // frame was a wordless photograph and the hook that earns the swipe was
+        // second, on the one frame that has to stop a scroll. The cover panel
+        // now draws *on* that photograph, so publishing it again would be the
+        // same picture twice: once with the hook and once without, in that
+        // order.
+        //
+        // The hero row stays exactly where it is. It is still what the operator
+        // picks between candidates on the review screen, and still the source
+        // {@see \App\Media\CarouselPanels} reads to draw the cover — it simply
+        // stops being a frame of its own.
+        if ($unit->assets()->where('role', AssetRole::Inline)->exists()) {
+            $roles = [AssetRole::Inline];
+        }
+
         /** @var list<array<string, mixed>> $images */
         $images = $unit->assets()
-            // What the post ships, not what it was choosing between. Variants
-            // are live rows until one is promoted, so without this every
-            // rejected candidate went out in the payload and a receiver
-            // rendering `images` attached the drafts nobody picked.
-            ->whereIn('role', [AssetRole::Hero, AssetRole::Inline])
+            ->whereIn('role', $roles)
             ->orderBy('role')
             ->get()
             ->map(static fn (Asset $asset): array => [

@@ -76,8 +76,13 @@ enum SlideLayout: string
     public function fields(): array
     {
         return match ($this) {
-            self::Cover => ['kicker' => 60],
-            self::Statement => [],
+            // `highlight` is a run of the heading drawn in the accent rather
+            // than a second string: the two layouts that set type at 100px and
+            // up are the only place a coloured word reads as emphasis instead
+            // of as a mistake, and they are the two that otherwise put the
+            // brand's accent nowhere near the words.
+            self::Cover => ['kicker' => 60, 'highlight' => 80],
+            self::Statement => ['highlight' => 80],
             self::Step => ['body' => 500],
             self::Stat => ['figure' => 12],
             self::Contrast => [
