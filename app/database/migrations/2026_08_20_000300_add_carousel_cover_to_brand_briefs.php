@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\ContentStudio\ContentStudioAssistant;
 use App\Support\Brand\VisualStyle;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
@@ -17,7 +18,7 @@ use Illuminate\Support\Facades\Schema;
  *
  * **The brief decides, not the model.** The obvious alternative is to let the
  * drafting model pick per post, and it cannot: the copy is written before the
- * photograph exists — {@see \App\ContentStudio\ContentStudioAssistant} drafts
+ * photograph exists — {@see ContentStudioAssistant} drafts
  * first and illustrates after — so the model would be choosing a cover for an
  * image it has never seen. It is also a consistency decision rather than an
  * editorial one. A brand whose carousels sometimes open on a photograph and
