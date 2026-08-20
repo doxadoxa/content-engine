@@ -25,6 +25,7 @@ import {
 } from '@/components/workspace-page';
 import { index } from '@/routes/approvals';
 import { approve, show } from '@/routes/content';
+import { show as showPost } from '@/routes/social/posts';
 import type { Paginated } from '@/types';
 
 type Draft = {
@@ -178,8 +179,18 @@ function DraftRow({ draft, onReject }: { draft: Draft; onReject: () => void }) {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                         <CardTitle className="text-base leading-snug break-words">
+                            {/* A post opens in the composer and an article in
+                                the unit card. One queue, two artefacts: the
+                                queue stays the operator's single five-minute
+                                habit (§7), and each row goes to the screen
+                                built for what it actually is rather than to a
+                                card that has to serve both. */}
                             <Link
-                                href={show(draft.id)}
+                                href={
+                                    draft.is_social
+                                        ? showPost(draft.id)
+                                        : show(draft.id)
+                                }
                                 className="hover:underline"
                             >
                                 {draft.title}

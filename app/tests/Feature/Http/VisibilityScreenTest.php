@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use App\Visibility\VisibilityReport;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -93,6 +94,85 @@ final class VisibilityScreenTest extends TestCase
                 ->where('by_locale.1.locale', 'ru')
                 ->where('by_locale.1.score', 100)
                 ->where('summary.score', 50));
+    }
+
+    /**
+     * An assistant that has stopped answering says so instead of sitting there.
+     *
+     * The report keeps the freshest answer per prompt *per platform*, so a
+     * platform whose calls are being refused does not vanish from the panel —
+     * it keeps serving whatever it last managed. That is the right storage
+     * behaviour and a terrible thing to render silently: on 19 August 2026 the
+     * headline averaged three assistants measured that morning with ChatGPT
+     * measured eleven days earlier, and every tile looked equally current.
+     */
+    #[Test]
+    public function an_assistant_left_behind_by_the_latest_sweep_is_marked_stale(): void
+    {
+        $one = LlmPrompt::factory()->for($this->project)->create(['text' => 'one', 'locale' => 'en']);
+        $two = LlmPrompt::factory()->for($this->project)->create(['text' => 'two', 'locale' => 'en']);
+
+        // Measured in this morning's sweep. Two answers, so it sorts first and
+        // the assertions below can name a row rather than search for one.
+        foreach ([$one, $two] as $prompt) {
+            LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+                'platform' => 'gemini',
+                'asked_on' => Carbon::today(),
+                'mentioned' => true,
+            ]);
+        }
+
+        // Refused ever since the vendor retired its model name, so its newest
+        // reading is eleven days old — and still inside the 30-day window the
+        // report reads, which is exactly why it is still on the screen.
+        LlmVisibilityAnswer::factory()->for($this->project)->for($one, 'prompt')->create([
+            'platform' => 'chat_gpt',
+            'asked_on' => Carbon::today()->subDays(11),
+            'mentioned' => true,
+        ]);
+
+        $this->actingAs($this->user)
+            ->get('/visibility')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('by_platform.0.platform', 'gemini')
+                ->where('by_platform.0.stale', false)
+                ->where('by_platform.1.platform', 'chat_gpt')
+                ->where('by_platform.1.stale', true)
+                ->where('by_platform.1.last_asked_on', Carbon::today()->subDays(11)->toDateString()));
+    }
+
+    /**
+     * And one merely bought a day later is not, which is the ordinary case.
+     *
+     * `max_answers_per_run` stops a sweep at the budget and the rest is bought
+     * on the next run, so a day of spread across the panel is the system doing
+     * what it was built to do. Flagging that would put a warning on a healthy
+     * screen every week until nobody read it.
+     */
+    #[Test]
+    public function an_assistant_finished_a_day_later_is_not_called_stale(): void
+    {
+        $prompt = LlmPrompt::factory()->for($this->project)->create(['text' => 'one', 'locale' => 'en']);
+
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'gemini',
+            'asked_on' => Carbon::today(),
+            'mentioned' => true,
+        ]);
+
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'chat_gpt',
+            'asked_on' => Carbon::today()->subDay(),
+            'mentioned' => true,
+        ]);
+
+        $this->actingAs($this->user)
+            ->get('/visibility')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('by_platform.0.stale', false)
+                ->where('by_platform.1.stale', false));
     }
 
     #[Test]

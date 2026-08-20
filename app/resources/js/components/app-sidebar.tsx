@@ -4,9 +4,10 @@ import {
     BookMarked,
     CalendarDays,
     Gauge,
+    House,
     Inbox,
     LayoutDashboard,
-    MessageSquareText,
+    LayoutList,
     MessagesSquare,
     Radio,
     Send,
@@ -14,6 +15,7 @@ import {
     Sun,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import AppLogoIcon from '@/components/app-logo-icon';
 import { ProjectSwitcher } from '@/components/project-switcher';
 import {
     Sidebar,
@@ -36,7 +38,12 @@ import { index as contentIndex } from '@/routes/content';
 import { index as deliveriesIndex } from '@/routes/deliveries';
 import { index as engageIndex } from '@/routes/engage';
 import { index as feedbackIndex } from '@/routes/feedback';
-import { index as studioIndex } from '@/routes/studio';
+import { index as homeIndex } from '@/routes/home';
+import {
+    create as socialCreate,
+    index as socialIndex,
+    plan as socialPlan,
+} from '@/routes/social';
 import { index as todayIndex } from '@/routes/today';
 import { index as visibilityIndex } from '@/routes/visibility';
 
@@ -46,10 +53,17 @@ import { index as visibilityIndex } from '@/routes/visibility';
  * Every link here goes to a page that does something today — a column of links
  * to pages that do not exist yet teaches an operator to distrust the menu.
  *
- * Three compact groups mirror the operator's mental model: make the work,
- * learn from what happened, and shape the current project. Cross-project and
- * owner-only administration lives in the project switcher instead of competing
- * with the daily workflow.
+ * Grouped by **product line**, because this engine does two jobs that share
+ * almost nothing. It writes articles for search and posts for social, and
+ * `ContentItem::scopeRoots()` excludes social posts outright — so Content plan,
+ * Feedback, Prompt analysis and Site audit are article screens however general
+ * their names sound. A single flat "Workflow" list put them beside the social
+ * screens with nothing saying which was which, and no amount of ordering fixes
+ * a label that does not say what it covers.
+ *
+ * Two screens serve both halves and sit in neither group: the approvals queue
+ * and the delivery log. Cross-project and owner-only administration lives in the
+ * project switcher instead of competing with the daily workflow.
  */
 export function AppSidebar() {
     const { url, props } = usePage();
@@ -66,12 +80,7 @@ export function AppSidebar() {
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
                             <Link href={dashboard()} prefetch>
-                                <div className="relative flex aspect-square size-8 items-center justify-center overflow-hidden rounded-[10px] bg-sidebar-primary text-sidebar-primary-foreground">
-                                    <span className="font-serif text-lg leading-none font-semibold tracking-[-0.12em]">
-                                        a
-                                    </span>
-                                    <span className="absolute right-[5px] bottom-[5px] size-1.5 rounded-full bg-[#d6533c]" />
-                                </div>
+                                <AppLogoIcon className="size-8 shrink-0" />
                                 <span className="text-base font-semibold tracking-[-0.04em]">
                                     Avyo
                                 </span>
@@ -87,15 +96,25 @@ export function AppSidebar() {
                 <SidebarGroup className="px-3 py-2">
                     <SidebarGroupContent>
                         <SidebarMenu>
-                            {/* Above the dashboard, deliberately. §7 says the
-                                project's day is "одна сводка и пять минут", and
-                                the first entry in the column is what an
-                                operator opens at eight in the morning. It is
-                                not the landing route, though: a project still
-                                launching has nothing to summarise and the
-                                dashboard is the only screen that shows the
-                                launch, so the reversible half of the decision
-                                is the one that got made. */}
+                            {/* First, because it is the only row that answers
+                                "what should I do" rather than "what happened".
+                                The dashboard stays below it: that one reports
+                                on the engine — runs, impressions, citations,
+                                health — which is a different question asked at
+                                a different time, and most of it is the article
+                                half this release does not touch. */}
+                            <NavLink
+                                href={homeIndex().url}
+                                icon={House}
+                                label="Home"
+                                current={url}
+                            />
+                            {/* §7's own summary: "одна сводка и пять минут".
+                                Still its own row rather than folded into Home,
+                                because three of its four sections are the
+                                Threads presence — the conversations, the plan's
+                                refusals, the trend — and none of that exists
+                                where the presence is off. */}
                             {social && (
                                 <NavLink
                                     href={todayIndex().url}
@@ -114,30 +133,38 @@ export function AppSidebar() {
                     </SidebarGroupContent>
                 </SidebarGroup>
 
+                {/*
+                    Grouped by product line, and that is the whole point of the
+                    labels. This engine does two different jobs — it writes
+                    articles for search and it writes posts for social — and
+                    they share almost nothing: `ContentItem::scopeRoots()`
+                    excludes social posts outright, so "Content plan", Feedback,
+                    Prompt analysis and Site audit are *articles only* however
+                    general their names sound. One flat "Workflow" list put them
+                    beside the social screens with nothing saying which was
+                    which, and the answer was not discoverable from the label.
+                */}
                 <SidebarGroup className="px-3 py-2">
                     <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
-                        Workflow
+                        Social
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
+                            {/* One entry, three tabs. This was two rows —
+                                "Social" and "Studio" — with nothing in the
+                                column explaining which to open, and the same
+                                month's work behind both. The monthly assistant
+                                is a view of this surface, not a place. */}
                             <NavLink
-                                href={studioIndex().url}
-                                icon={MessageSquareText}
-                                label="Studio"
+                                href={socialIndex().url}
+                                icon={LayoutList}
+                                label="Social"
                                 current={url}
+                                also={[socialCreate().url, socialPlan().url]}
                             />
-                            {/* First, deliberately: §7 makes the approvals
-                                queue the screen an operator opens every
-                                morning. */}
-                            <NavLink
-                                href={approvalsIndex().url}
-                                icon={Inbox}
-                                label="Approvals"
-                                current={url}
-                            />
-                            {/* Next to it, because it is the same duty at a
-                                different clock speed: §4.2 measures a reply in
-                                minutes where a draft is measured in days. */}
+                            {/* The same duty at a different clock speed: §4.2
+                                measures a reply in minutes where a draft is
+                                measured in days. */}
                             {social && (
                                 <NavLink
                                     href={engageIndex().url}
@@ -146,6 +173,16 @@ export function AppSidebar() {
                                     current={url}
                                 />
                             )}
+                        </SidebarMenu>
+                    </SidebarGroupContent>
+                </SidebarGroup>
+
+                <SidebarGroup className="px-3 py-2">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                        Articles
+                    </SidebarGroupLabel>
+                    <SidebarGroupContent>
+                        <SidebarMenu>
                             {/* One entry, not two. The calendar and the list
                                 are the same units in different shapes, and
                                 separate sections made an empty month look like
@@ -158,22 +195,6 @@ export function AppSidebar() {
                                 also={[contentIndex().url]}
                             />
                             <NavLink
-                                href={deliveriesIndex().url}
-                                icon={Send}
-                                label="Deliveries"
-                                current={url}
-                            />
-                        </SidebarMenu>
-                    </SidebarGroupContent>
-                </SidebarGroup>
-
-                <SidebarGroup className="px-3 py-2">
-                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
-                        Insights
-                    </SidebarGroupLabel>
-                    <SidebarGroupContent>
-                        <SidebarMenu>
-                            <NavLink
                                 href={feedbackIndex().url}
                                 icon={Activity}
                                 label="Feedback"
@@ -185,15 +206,44 @@ export function AppSidebar() {
                                 label="Prompt analysis"
                                 current={url}
                             />
-                            {/* Last of the three, and deliberately: the other
-                                two are about what the writing achieved, and
-                                this is about whether the site it lands on can
-                                be read at all. An operator reaches for it when
-                                one of the two above is disappointing. */}
+                            {/* Last, and deliberately: the other two are about
+                                what the writing achieved, and this is about
+                                whether the site it lands on can be read at all.
+                                An operator reaches for it when one of the two
+                                above is disappointing. */}
                             <NavLink
                                 href={auditIndex().url}
                                 icon={Gauge}
                                 label="Site audit"
+                                current={url}
+                            />
+                        </SidebarMenu>
+                    </SidebarGroupContent>
+                </SidebarGroup>
+
+                <SidebarGroup className="px-3 py-2">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                        Review
+                    </SidebarGroupLabel>
+                    <SidebarGroupContent>
+                        <SidebarMenu>
+                            {/* The two screens that genuinely serve both
+                                halves, which is why they are neither under
+                                Social nor under Articles. §7 makes the queue
+                                the screen an operator opens every morning and
+                                it stays one queue; what changed is where a row
+                                goes — a post opens the composer, an article the
+                                unit card. */}
+                            <NavLink
+                                href={approvalsIndex().url}
+                                icon={Inbox}
+                                label="Approvals"
+                                current={url}
+                            />
+                            <NavLink
+                                href={deliveriesIndex().url}
+                                icon={Send}
+                                label="Deliveries"
                                 current={url}
                             />
                         </SidebarMenu>

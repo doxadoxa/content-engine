@@ -28,7 +28,7 @@ final readonly class StudioCandidate
 {
     /**
      * @param  list<string>  $segments  the post, one entry per published segment
-     * @param  list<array{heading: string, body: string}>  $slides  carousel panels, empty for every other format
+     * @param  list<array{heading: string, body: string, layout: string, fields: array<string, mixed>}>  $slides  carousel panels, empty for every other format
      * @param  array<string, mixed>  $visual  the six art-direction fields, as the model returned them
      * @param  list<GuardFinding>  $findings  why this may not be published, empty when it may
      */

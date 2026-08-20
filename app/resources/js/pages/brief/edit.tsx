@@ -1,5 +1,6 @@
-import { Form, Head, usePage } from '@inertiajs/react';
-import { BookOpen, ChevronDown, History } from 'lucide-react';
+import { Form, Head, router, usePage, usePoll } from '@inertiajs/react';
+import { BookOpen, ChevronDown, History, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,12 @@ import {
     CollapsibleContent,
     CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -23,7 +30,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
-import { edit, update } from '@/routes/brief';
+import { edit, palette, update } from '@/routes/brief';
 
 type BriefContent = {
     id: string;
@@ -33,6 +40,15 @@ type BriefContent = {
     visual_language: string;
     brand_colour: string;
     brand_ink: string;
+    /** Empty where the brand has no accent, which means "use the ink". */
+    brand_accent: string;
+    /**
+     * The brand's other colours, heaviest first. Never drawn with directly —
+     * what the engine reaches into when the accent cannot carry type.
+     */
+    brand_palette: string[];
+    brand_typeface: string;
+    carousel_cover: string;
     overlay_position: string;
     overlay_case: string;
     forbidden_topics: string[];
@@ -50,10 +66,35 @@ type BriefVersion = BriefContent & {
     publications: number;
 };
 
+type PaletteOutcome = {
+    type: 'success' | 'info' | 'error';
+    message: string;
+};
+
 type Props = {
     brief: BriefContent | null;
     /** Newest first. */
     versions: BriefVersion[];
+    /** Colours read off the site during analysis. Null before there was a browser. */
+    palette: Palette | null;
+    /** A read is in flight. The screen polls while this is true. */
+    paletteReading: boolean;
+    /**
+     * What the last finished read said, or null if none has finished since the
+     * current one started. Printed rather than toasted: the read outlives the
+     * request that started it, so there is no response left to flash it on.
+     */
+    paletteOutcome: PaletteOutcome | null;
+    /**
+     * Every colour the site declares, heaviest first — not just the three a
+     * panel has slots for. Read off the stylesheet, so these are the brand's own
+     * values rather than the nearest sixteenth of a screenshot.
+     */
+    paletteColours: string[];
+    /** The typeface the site sets, where it names one. */
+    siteFont: string | null;
+    /** The faces the renderer's image carries, as slug and family name. */
+    typefaces: { slug: string; name: string }[];
 };
 
 /** Declaration order is the order the compiled prompt uses. */
@@ -75,10 +116,37 @@ const LIST_FIELDS = new Set<keyof BriefContent>([
     'competitors',
 ]);
 
-export default function BrandBriefEdit({ brief, versions }: Props) {
+export default function BrandBriefEdit({
+    brief,
+    versions,
+    palette,
+    paletteReading,
+    paletteOutcome,
+    paletteColours,
+    siteFont,
+    typefaces,
+}: Props) {
     const { auth } = usePage().props;
     const isOwner = auth.project?.role === 'owner';
     const nextVersion = (versions[0]?.version ?? 0) + 1;
+
+    // Only the three props the read touches, so a poll landing while somebody
+    // is halfway through editing the brief cannot replace the form under them.
+    const polling = usePoll(
+        2000,
+        { only: ['palette', 'paletteReading', 'paletteOutcome'] },
+        { autoStart: false, mode: 'rest' },
+    );
+
+    useEffect(() => {
+        if (paletteReading) {
+            polling.start();
+        } else {
+            polling.stop();
+        }
+
+        return polling.stop;
+    }, [paletteReading, polling]);
 
     if (auth.project === null) {
         return (
@@ -225,47 +293,106 @@ export default function BrandBriefEdit({ brief, versions }: Props) {
                                         The part something draws with rather
                                         than reads. Visual language above tells
                                         an image model what to make; these tell
-                                        the engine what colour to fill and where
-                                        to put the words when it lays out a
-                                        panel itself.
+                                        the engine what colour to fill, what to
+                                        emphasise with, and where to put the
+                                        words when it lays out a panel itself.
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent className="grid gap-4 sm:grid-cols-2">
+                                    <Colours
+                                        brief={brief}
+                                        palette={palette}
+                                        paletteReading={paletteReading}
+                                        paletteOutcome={paletteOutcome}
+                                        paletteColours={paletteColours}
+                                        siteFont={siteFont}
+                                        disabled={!isOwner}
+                                        errors={errors}
+                                    />
+
+                                    {/*
+                                     * Which of the faces the renderer carries
+                                     * this brand is set in. A select rather
+                                     * than a text field because the list is
+                                     * what the container has files for — a
+                                     * family it does not have draws in
+                                     * whatever Chromium falls back to, and it
+                                     * would look right to anyone reviewing on
+                                     * a machine that has the font installed.
+                                     */}
                                     <div className="grid gap-2">
-                                        <Label htmlFor="brand_colour">
-                                            Brand colour
+                                        <Label htmlFor="brand_typeface">
+                                            Typeface
                                         </Label>
-                                        <input
-                                            id="brand_colour"
-                                            name="brand_colour"
-                                            type="color"
+                                        <select
+                                            id="brand_typeface"
+                                            name="brand_typeface"
                                             defaultValue={
-                                                brief?.brand_colour ?? '#1a1a2e'
+                                                brief?.brand_typeface ??
+                                                'instrument-sans'
                                             }
                                             disabled={!isOwner}
-                                            className="h-9 w-full rounded-md border bg-background px-1"
-                                        />
+                                            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                                        >
+                                            {typefaces.map((face) => (
+                                                <option
+                                                    key={face.slug}
+                                                    value={face.slug}
+                                                >
+                                                    {face.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="text-xs text-muted-foreground">
+                                            {siteFont === null
+                                                ? 'What carousels and panels are set in.'
+                                                : typefaces.some(
+                                                        (face) =>
+                                                            face.name.toLowerCase() ===
+                                                            siteFont.toLowerCase(),
+                                                    )
+                                                  ? `Your site sets its type in ${siteFont}, which is on this list.`
+                                                  : `Your site sets its type in ${siteFont}, which the renderer does not carry yet.`}
+                                        </p>
                                         <InputError
-                                            message={errors.brand_colour}
+                                            message={errors.brand_typeface}
                                         />
                                     </div>
 
+                                    {/*
+                                     * Once per brand, never per post. The
+                                     * drafting model writes the copy before the
+                                     * photograph exists, so a per-post choice
+                                     * would be made blind — and carousels that
+                                     * sometimes open on a picture and sometimes
+                                     * on flat colour read as two accounts.
+                                     */}
                                     <div className="grid gap-2">
-                                        <Label htmlFor="brand_ink">
-                                            Text on that colour
+                                        <Label htmlFor="carousel_cover">
+                                            Carousel cover
                                         </Label>
-                                        <input
-                                            id="brand_ink"
-                                            name="brand_ink"
-                                            type="color"
+                                        <select
+                                            id="carousel_cover"
+                                            name="carousel_cover"
                                             defaultValue={
-                                                brief?.brand_ink ?? '#ffffff'
+                                                brief?.carousel_cover ?? 'photo'
                                             }
                                             disabled={!isOwner}
-                                            className="h-9 w-full rounded-md border bg-background px-1"
-                                        />
+                                            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                                        >
+                                            <option value="photo">
+                                                The post's photograph
+                                            </option>
+                                            <option value="type">
+                                                The brand colour
+                                            </option>
+                                        </select>
+                                        <p className="text-xs text-muted-foreground">
+                                            What slide one is drawn on. The hook
+                                            is on it either way.
+                                        </p>
                                         <InputError
-                                            message={errors.brand_ink}
+                                            message={errors.carousel_cover}
                                         />
                                     </div>
 
@@ -572,6 +699,482 @@ function VersionEntry({
         </Card>
     );
 }
+
+/**
+ * The three colours a renderer draws with, and the site's own suggestion.
+ *
+ * Controlled rather than `defaultValue`, which is the whole reason this is a
+ * component: an uncontrolled input cannot be filled in from outside, and the
+ * point of counting the colours off a screenshot is that one click puts them in
+ * the fields.
+ *
+ * **Suggested, never applied.** The palette arrives from site analysis as three
+ * values nobody has agreed to, and a wrong fill is not a visible error — it
+ * quietly becomes every carousel for a month. So it sits beside the fields as
+ * something to click, the same way the assistant's goal is approved rather than
+ * written straight into the month.
+ */
+function Colours({
+    brief,
+    palette,
+    paletteReading,
+    paletteOutcome,
+    paletteColours,
+    siteFont,
+    disabled,
+    errors,
+}: {
+    brief: BriefContent | null;
+    palette: Palette | null;
+    paletteReading: boolean;
+    paletteOutcome: PaletteOutcome | null;
+    paletteColours: string[];
+    siteFont: string | null;
+    disabled: boolean;
+    errors: Record<string, string>;
+}) {
+    const [colour, setColour] = useState(brief?.brand_colour ?? '#1a1a2e');
+    const [ink, setInk] = useState(brief?.brand_ink ?? '#ffffff');
+    const [accent, setAccent] = useState(brief?.brand_accent ?? '');
+    const [brandPalette, setBrandPalette] = useState<string[]>(
+        brief?.brand_palette ?? [],
+    );
+
+    // Capped where the request caps it, so the limit is felt as a full row
+    // rather than met as a validation error after saving.
+    const addToPalette = (hex: string) =>
+        setBrandPalette((current) =>
+            current.includes(hex) || current.length >= 8
+                ? current
+                : [...current, hex],
+        );
+
+    const assign: { label: string; apply: (hex: string) => void }[] = [
+        { label: 'Brand colour', apply: setColour },
+        { label: 'Text on that colour', apply: setInk },
+        { label: 'Accent', apply: setAccent },
+        { label: 'Add to palette', apply: addToPalette },
+    ];
+
+    const differs =
+        palette !== null &&
+        (palette.fill !== colour ||
+            palette.ink !== ink ||
+            (palette.accent ?? '') !== accent);
+
+    return (
+        <>
+            <div className="grid gap-2">
+                <Label htmlFor="brand_colour">Brand colour</Label>
+                <input
+                    id="brand_colour"
+                    name="brand_colour"
+                    type="color"
+                    value={colour}
+                    onChange={(event) => setColour(event.target.value)}
+                    disabled={disabled}
+                    className="h-9 w-full rounded-md border bg-background px-1"
+                />
+                <InputError message={errors.brand_colour} />
+            </div>
+
+            <div className="grid gap-2">
+                <Label htmlFor="brand_ink">Text on that colour</Label>
+                <input
+                    id="brand_ink"
+                    name="brand_ink"
+                    type="color"
+                    value={ink}
+                    onChange={(event) => setInk(event.target.value)}
+                    disabled={disabled}
+                    className="h-9 w-full rounded-md border bg-background px-1"
+                />
+                <InputError message={errors.brand_ink} />
+            </div>
+
+            <AccentField
+                value={accent}
+                ink={ink}
+                disabled={disabled}
+                error={errors.brand_accent}
+                onChange={setAccent}
+            />
+
+            {/*
+             * The rest of the brand, submitted with the form and never drawn
+             * with directly. It is what the engine looks through when the accent
+             * cannot carry type on the fill — until this existed the answer was
+             * the ink, and the emphasis on a statistic quietly became the same
+             * colour as the words around it.
+             *
+             * Hidden inputs rather than a control per colour: the row above is
+             * where colours are chosen, this is only where they are held, and
+             * the brief's own <Form> submits it with everything else.
+             */}
+            <div className="sm:col-span-2">
+                <Label className="text-sm">Rest of the palette</Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                    Not drawn with directly. The engine borrows from these when
+                    the accent is too close to the brand colour to be read.
+                </p>
+
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {brandPalette.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                            Empty — the engine falls back to the text colour, as
+                            it always has.
+                        </p>
+                    )}
+
+                    {brandPalette.map((hex) => (
+                        <span key={hex} className="contents">
+                            <input
+                                type="hidden"
+                                name="brand_palette[]"
+                                value={hex}
+                            />
+                            <button
+                                type="button"
+                                disabled={disabled}
+                                onClick={() =>
+                                    setBrandPalette((current) =>
+                                        current.filter((one) => one !== hex),
+                                    )
+                                }
+                                title={`Remove ${hex}`}
+                                className="flex items-center gap-1.5 rounded-full border py-0.5 pr-2 pl-0.5 transition-[color,background-color,scale] duration-150 ease-out hover:bg-muted active:scale-[0.96] disabled:pointer-events-none"
+                            >
+                                <Swatch colour={hex} />
+                                <code className="text-xs text-muted-foreground">
+                                    {hex}
+                                </code>
+                                <X
+                                    className="size-3 text-muted-foreground"
+                                    strokeWidth={1.5}
+                                    aria-hidden
+                                />
+                                <span className="sr-only">Remove {hex}</span>
+                            </button>
+                        </span>
+                    ))}
+                </div>
+                <InputError message={errors.brand_palette} />
+            </div>
+
+            <div className="rounded-2xl border border-dashed p-4 sm:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                        {palette !== null && (
+                            <span className="flex shrink-0 overflow-hidden rounded-lg border">
+                                <Swatch colour={palette.fill} />
+                                <Swatch colour={palette.ink} />
+                                {palette.accent !== null && (
+                                    <Swatch colour={palette.accent} />
+                                )}
+                            </span>
+                        )}
+                        {/*
+                         * Three things want to be said in one line, in order of
+                         * how fresh they are: that a read is happening now,
+                         * what the last one concluded, and — failing both —
+                         * what the swatches beside it are. The outcome outranks
+                         * the description because it is the answer to a
+                         * question the operator just asked, and it is the only
+                         * place a failure can appear at all now that the work
+                         * outlives the request that would have toasted it.
+                         */}
+                        <p
+                            className={`min-w-0 text-xs ${
+                                paletteOutcome?.type === 'error' &&
+                                !paletteReading
+                                    ? 'text-destructive'
+                                    : 'text-muted-foreground'
+                            }`}
+                        >
+                            {paletteReading
+                                ? 'Photographing your site and counting its colours…'
+                                : (paletteOutcome?.message ??
+                                  (palette === null
+                                      ? 'The engine can photograph your site and count the colours it uses.'
+                                      : palette.accent === null
+                                        ? 'Counted off a picture of your site — it uses one colour, so there is no accent to suggest.'
+                                        : 'Counted off a picture of your site.'))}
+                        </p>
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        {palette !== null && differs && !disabled && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    setColour(palette.fill);
+                                    setInk(palette.ink);
+                                    setAccent(palette.accent ?? '');
+
+                                    // Seeded only when the brief has none.
+                                    // Overwriting a palette somebody curated
+                                    // would make this button destructive in a
+                                    // way its label does not admit to.
+                                    if (brandPalette.length === 0) {
+                                        setBrandPalette(
+                                            paletteColours
+                                                .filter(
+                                                    (hex) =>
+                                                        hex !== palette.fill &&
+                                                        hex !== palette.ink &&
+                                                        hex !== palette.accent,
+                                                )
+                                                .slice(0, 8),
+                                        );
+                                    }
+                                }}
+                            >
+                                Use these
+                            </Button>
+                        )}
+                        {!disabled && (
+                            <ReadSite
+                                hasPalette={palette !== null}
+                                reading={paletteReading}
+                            />
+                        )}
+                    </div>
+                </div>
+
+                {/*
+                 * The rest of the brand, which the three fields above have no
+                 * room for. Read off the stylesheet rather than the photograph,
+                 * so these are the site's own values — the hexes it declares,
+                 * including the ones too small to survive a pixel census.
+                 *
+                 * Shown rather than applied, and shown with the hex spelled
+                 * out: the three slots are already filled by something that
+                 * reasoned about contrast, and what a person wants from the
+                 * rest is to put one somewhere specific.
+                 *
+                 * Which is why each swatch asks where rather than acting on a
+                 * click. A colour that silently overwrote a field would be the
+                 * "wrong fill quietly becomes every carousel" failure with one
+                 * extra click in front of it, and the field it should land in is
+                 * genuinely ambiguous — that ambiguity is what kept these
+                 * read-only until there was a menu to resolve it.
+                 */}
+                {(paletteColours.length > 0 || siteFont !== null) && (
+                    <div className="mt-3 flex flex-col gap-2 border-t pt-3 sm:col-span-2">
+                        {paletteColours.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                                <span className="text-xs text-muted-foreground">
+                                    Also on your site
+                                </span>
+                                {paletteColours.map((hex) => (
+                                    <DropdownMenu key={hex}>
+                                        <DropdownMenuTrigger
+                                            disabled={disabled}
+                                            className="flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 transition-colors hover:bg-muted disabled:pointer-events-none"
+                                        >
+                                            <Swatch colour={hex} />
+                                            <code className="text-xs text-muted-foreground">
+                                                {hex}
+                                            </code>
+                                            <span className="sr-only">
+                                                Use {hex}
+                                            </span>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="start">
+                                            {assign.map((target) => (
+                                                <DropdownMenuItem
+                                                    key={target.label}
+                                                    onSelect={() =>
+                                                        target.apply(hex)
+                                                    }
+                                                >
+                                                    {target.label}
+                                                </DropdownMenuItem>
+                                            ))}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                ))}
+                            </div>
+                        )}
+                        {siteFont !== null && (
+                            <p className="text-xs text-muted-foreground">
+                                Your site sets its type in {siteFont}. The
+                                engine draws panels in its own face — this is
+                                here so the brief and the site can be compared,
+                                not because anything reads it yet.
+                            </p>
+                        )}
+                    </div>
+                )}
+            </div>
+        </>
+    );
+}
+
+/**
+ * Photograph the site again and re-count its colours.
+ *
+ * `router.post` rather than a `<Form>`, because this sits inside the brief's own
+ * form and a nested form is invalid markup that browsers resolve by dropping
+ * one of them — usually not the one you meant.
+ *
+ * It reloads the page rather than patching state, which is the honest thing: the
+ * server decides whether anything was found, and the answer is printed beside
+ * the swatches where it can say "nothing came back from that page" as easily as
+ * it can say it worked.
+ *
+ * **Two kinds of busy, and both have to disable this.** `submitting` is the
+ * request that queues the work, which now returns in milliseconds; `reading` is
+ * the work itself, which the server reports and the screen polls for. Only the
+ * first was ever tracked here, and on its own it now clears almost immediately
+ * — leaving the button live while a browser is still open on the site, one
+ * click away from queueing a second one against it.
+ */
+function ReadSite({
+    hasPalette,
+    reading,
+}: {
+    hasPalette: boolean;
+    reading: boolean;
+}) {
+    const [submitting, setSubmitting] = useState(false);
+    const busy = submitting || reading;
+
+    return (
+        <Button
+            type="button"
+            variant={hasPalette ? 'ghost' : 'outline'}
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+                setSubmitting(true);
+                router.post(
+                    palette().url,
+                    {},
+                    {
+                        preserveScroll: true,
+                        onFinish: () => setSubmitting(false),
+                    },
+                );
+            }}
+        >
+            {busy
+                ? 'Reading your site…'
+                : hasPalette
+                  ? 'Read it again'
+                  : 'Read my site'}
+        </Button>
+    );
+}
+
+function Swatch({ colour }: { colour: string }) {
+    return (
+        <span
+            className="block size-7"
+            style={{ backgroundColor: colour }}
+            title={colour}
+        />
+    );
+}
+
+/**
+ * The accent, and the one thing a colour input cannot say.
+ *
+ * `<input type="color">` always has a value, so it has no way to express "this
+ * brand has not got an accent" — and that state has to be expressible, because
+ * it is the one every brief starts in and the one that keeps carousels looking
+ * exactly as they did before the field existed. A swatch alone would force every
+ * brand to have a third colour, and the ones that picked whatever the input
+ * happened to open on would be the worst off: a wrong accent is not a visible
+ * error, it just quietly ships on every carousel.
+ *
+ * So the checkbox owns the decision and the swatch owns the value, and a hidden
+ * field posts the empty string the server reads as "use the ink". The swatch
+ * keeps its colour while the box is ticked rather than resetting, so changing
+ * your mind twice does not lose the colour you chose.
+ */
+function AccentField({
+    value,
+    ink,
+    disabled,
+    error,
+    onChange,
+}: {
+    value: string;
+    ink: string;
+    disabled: boolean;
+    error?: string;
+    onChange: (next: string) => void;
+}) {
+    const none = value === '';
+
+    // What the swatch falls back to while the accent is switched off, so
+    // ticking the box and changing your mind does not lose the colour you
+    // picked. It is *only* the fallback — the swatch shows `value` whenever
+    // there is one.
+    //
+    // It used to be the swatch's own state, seeded once, and that was a second
+    // source of truth for the same field: pressing "Use these" moved the parent
+    // value and left the swatch on the old colour, so the form displayed
+    // terracotta and would have saved teal. A control that lies about what it
+    // is about to write is worse than one that looks stale.
+    const [remembered, setRemembered] = useState(none ? ink : value);
+
+    // Kept in step when the value changes from outside — the suggestion being
+    // applied, a version being loaded. React's documented way to adjust state
+    // from props: set it during render, and it re-renders before anything is
+    // painted rather than flashing the old colour first.
+    if (!none && value !== remembered) {
+        setRemembered(value);
+    }
+
+    const shown = none ? remembered : value;
+
+    return (
+        <div className="grid gap-2">
+            <Label htmlFor="brand_accent">Accent</Label>
+            <input type="hidden" name="brand_accent" value={value} />
+            <input
+                id="brand_accent"
+                type="color"
+                value={shown}
+                onChange={(event) => {
+                    setRemembered(event.target.value);
+                    onChange(event.target.value);
+                }}
+                disabled={disabled || none}
+                className="h-9 w-full rounded-md border bg-background px-1 disabled:opacity-45"
+            />
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                    type="checkbox"
+                    checked={none}
+                    onChange={(event) =>
+                        onChange(event.target.checked ? '' : remembered)
+                    }
+                    disabled={disabled}
+                    className="size-3.5"
+                />
+                Same as the text colour
+            </label>
+            <p className="text-xs text-muted-foreground">
+                What a carousel emphasises with — the figure on a statistic, the
+                half of a comparison that matters.
+            </p>
+            <InputError message={error} />
+        </div>
+    );
+}
+
+/** Colours counted off a screenshot of the site. Suggestions, never applied. */
+type Palette = {
+    fill: string;
+    ink: string;
+    /** Null where the site uses a single colour and there is no second one. */
+    accent: string | null;
+};
 
 type Change = {
     key: string;

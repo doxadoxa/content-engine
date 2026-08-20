@@ -21,8 +21,10 @@ use App\Pipelines\Jobs\RunStepJob;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 final class OnboardingWizardTest extends TestCase
@@ -78,6 +80,163 @@ final class OnboardingWizardTest extends TestCase
             ->get('/onboarding')
             ->assertOk()
             ->assertInertia(fn ($page) => $page->where('draft.id', $project->getKey()));
+    }
+
+    /**
+     * The engine looks at the site instead of only reading it.
+     *
+     * Site analysis has always parsed text, so "what does this brand look like"
+     * was a model's guess from the copy and the Brand Brief's colours had to be
+     * typed in by hand. A picture answers it by counting.
+     */
+    #[Test]
+    public function analysing_a_site_reads_its_colours_off_a_picture_of_it(): void
+    {
+        $operator = User::factory()->create();
+        $this->fakeModel();
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+
+        Http::fake(['*/screenshot' => Http::response(
+            $this->pagePng(),
+            200,
+            ['Content-Type' => 'image/png'],
+        )]);
+
+        // A host that resolves, because the guard this goes through does real
+        // DNS and refuses what it cannot resolve. The fake reader ignores the
+        // address, so the site being read is still Cleaning Point's.
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://example.com'])
+            ->assertOk();
+
+        $palette = Project::query()->firstOrFail()->site_analysis['palette'];
+
+        // The header's green, not the page's white — the most common colour on
+        // a marketing site is the one thing that is certainly not the brand's.
+        $this->assertNotNull($palette);
+        $this->assertSame('#204040', $palette['fill']);
+
+        // The renderer is handed the addresses the guard already resolved, so
+        // Chromium cannot do its own DNS from inside the compose network.
+        Http::assertSent(static fn ($request): bool => str_contains($request->url(), '/screenshot')
+            && $request['host'] === 'example.com'
+            && $request['addresses'] !== []);
+    }
+
+    /**
+     * A host that cannot be pinned is not photographed.
+     *
+     * `allow_unresolved_hosts` lets a plain fetch through on trust, and cURL
+     * simply fails it. A browser is a different proposition: without addresses
+     * there is nothing to pin Chromium to, and an unpinned browser inside the
+     * compose network resolves `postgres` and `horizon` as happily as anything
+     * else. So there is no request at all — not a request that fails.
+     */
+    #[Test]
+    public function a_host_with_no_resolved_address_is_never_handed_to_the_browser(): void
+    {
+        $operator = User::factory()->create();
+        $this->fakeModel();
+        config([
+            'content_studio.renderer.url' => 'http://renderer:3020',
+            'security.outbound.allow_unresolved_hosts' => true,
+        ]);
+
+        Http::fake(['*/screenshot' => Http::response($this->pagePng(), 200)]);
+
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://nothing.invalid'])
+            ->assertOk();
+
+        $this->assertNull(Project::query()->firstOrFail()->site_analysis['palette']);
+        Http::assertNothingSent();
+    }
+
+    /**
+     * A missing browser costs the colours and nothing else.
+     *
+     * The capability is optional in the same way the panel renderer is: a
+     * deployment without it analyses sites exactly as it did before. Making the
+     * whole analysis conditional on an optional service would be the tail
+     * wagging the dog.
+     */
+    #[Test]
+    public function a_deployment_with_no_renderer_still_analyses_the_site(): void
+    {
+        $operator = User::factory()->create();
+        $this->fakeModel();
+        config(['content_studio.renderer.url' => null]);
+
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://cleaningpoint.pt'])
+            ->assertOk()
+            ->assertJsonPath('project.name', 'Cleaning Point');
+
+        $this->assertNull(Project::query()->firstOrFail()->site_analysis['palette']);
+    }
+
+    /**
+     * A renderer that will not answer is not a failed onboarding.
+     *
+     * Every reason the picture can fail — the service down, the site refusing a
+     * browser, a page too slow — is a reason to have no suggestion, never a
+     * reason to lose an interpretation of the copy that already succeeded and
+     * was already paid for.
+     */
+    #[Test]
+    public function a_screenshot_that_fails_costs_the_suggestion_and_not_the_analysis(): void
+    {
+        $operator = User::factory()->create();
+        $this->fakeModel();
+        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+
+        Http::fake(['*/screenshot' => Http::response(['message' => 'net::ERR_ABORTED'], 502)]);
+
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://cleaningpoint.pt'])
+            ->assertOk()
+            ->assertJsonPath('project.name', 'Cleaning Point');
+
+        $this->assertNull(Project::query()->firstOrFail()->site_analysis['palette']);
+    }
+
+    /**
+     * The brief offers the colours; it never applies them.
+     *
+     * A wrong fill is not a visible error — it silently becomes every carousel
+     * for a month — so this is the same shape as the month's goal: the engine
+     * proposes and a person agrees.
+     */
+    #[Test]
+    public function the_brief_is_offered_the_sites_colours_rather_than_given_them(): void
+    {
+        $operator = User::factory()->create();
+        $project = Project::factory()->create([
+            'site_analysis' => ['palette' => [
+                'fill' => '#2f4f43',
+                'ink' => '#f3efe6',
+                'accent' => '#d6533c',
+            ]],
+        ]);
+        $project->users()->attach($operator, ['role' => 'owner']);
+
+        $this->actingAs($operator)
+            ->withSession(['project_id' => $project->getKey()])
+            ->get('/brief')
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('palette.fill', '#2f4f43')
+                ->where('palette.accent', '#d6533c')
+                ->etc()
+            );
+
+        app(CurrentProject::class)->run($project, function (): void {
+            // Nothing was written. The brief keeps the house values until
+            // somebody clicks the suggestion.
+            $brief = BrandBrief::activeFor(app(CurrentProject::class)->get());
+
+            $this->assertNotSame('#2f4f43', $brief?->brand_colour);
+        });
     }
 
     #[Test]
@@ -512,5 +671,33 @@ final class OnboardingWizardTest extends TestCase
         $gateway->willAnswer(array_fill(0, $times, self::ANSWER));
 
         $this->app->instance(ModelGateway::class, $gateway);
+    }
+
+    /**
+     * A marketing page as PNG bytes: white, with a green band across the top.
+     *
+     * Generated rather than a captured fixture, so the test states the shape it
+     * is asserting about instead of depending on what one real site looked like
+     * on one day.
+     */
+    private function pagePng(): string
+    {
+        $image = imagecreatetruecolor(320, 240);
+        $white = imagecolorallocate($image, 255, 255, 255);
+        $green = imagecolorallocate($image, 47, 79, 67);
+
+        if ($white === false || $green === false) {
+            throw new RuntimeException('The test image ran out of colours.');
+        }
+
+        imagefilledrectangle($image, 0, 0, 320, 240, $white);
+        imagefilledrectangle($image, 0, 0, 320, 70, $green);
+
+        ob_start();
+        imagepng($image);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($image);
+
+        return $bytes;
     }
 }

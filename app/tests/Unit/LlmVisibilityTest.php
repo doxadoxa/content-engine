@@ -149,10 +149,17 @@ final class LlmVisibilityTest extends TestCase
     #[Test]
     public function it_asks_the_configured_model_and_turns_web_search_on(): void
     {
-        // `-chat-latest` is what the ChatGPT product serves. Measuring a cheap
-        // mini model instead would report what a mini model says about the
-        // brand, which is not what any customer is shown.
-        config()->set('visibility.platforms.chat_gpt.model', 'gpt-5.3-chat-latest');
+        // `gpt-5.6-terra` is the flagship the ChatGPT product serves. Measuring
+        // a cheap mini model instead would report what a mini model says about
+        // the brand, which is not what any customer is shown.
+        //
+        // A name DataForSEO still offers, which matters more here than anywhere
+        // else in the suite: the request is faked, so any string at all passes
+        // this assertion. What sat here was `gpt-5.3-chat-latest`, which the
+        // vendor accepted in early August and has since retired — and a test
+        // that cannot fail on the name is the last place to keep an example
+        // that no longer works, because it reads as the one to copy.
+        config()->set('visibility.platforms.chat_gpt.model', 'gpt-5.6-terra');
 
         $this->fakeAnswer([['items' => [['sections' => [['text' => 'ok']]]]]]);
 
@@ -160,7 +167,7 @@ final class LlmVisibilityTest extends TestCase
 
         $sent = Http::recorded()[0][0]->data()[0];
 
-        $this->assertSame('gpt-5.3-chat-latest', $sent['model_name']);
+        $this->assertSame('gpt-5.6-terra', $sent['model_name']);
         // Without web search the assistant answers about the brand from
         // training data, which measures what it remembered months ago rather
         // than what it would tell a customer today.

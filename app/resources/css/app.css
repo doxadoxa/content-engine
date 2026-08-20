@@ -199,10 +199,17 @@
 
     /*
      * The signed-in product carries the same Avyo system as the public site:
-     * warm paper, dark forest, editorial tomato and cobalt accents. Scoping
-     * the tokens to the shell keeps emails and the public auth screens free to
-     * make their own contrast decisions while every workspace screen inherits
-     * one coherent component palette.
+     * warm paper, dark forest, editorial tomato and cobalt accents. Scoping the
+     * tokens to the shell keeps emails free to make their own contrast
+     * decisions while every workspace screen inherits one coherent component
+     * palette.
+     *
+     * The sign-in screens are inside this scope too, and were not. They read
+     * `--brand-ink` and `--brand-violet` while sitting outside it, so those
+     * resolved to the older near-black and violet at `:root` — a person signed
+     * in and arrived in a palette with nothing in common with the one they had
+     * just been looking at. Emails stay outside because a mail client is not a
+     * place a stylesheet can rely on anything; a login form is.
      */
     .product-shell {
         --brand-ink: #17352f;
@@ -212,6 +219,18 @@
         --brand-coral: #3155a5;
         --brand-violet-wash: #f2d9d0;
         --brand-border: #d8cebd;
+
+        /*
+         * What reads on the forest panel, in both schemes.
+         *
+         * Deliberately not `--brand-canvas`, which is the page's paper and
+         * therefore flips to near-black in dark mode — using it here would put
+         * dark text on a dark green panel for exactly the people who chose dark
+         * mode. The panel is forest in both schemes by design (see the logo's
+         * `tone="cream"` for the same decision), so what sits on it is a
+         * constant rather than a theme value.
+         */
+        --brand-on-ink: #f3ecdd;
         --background: #f3ecdd;
         --foreground: #17352f;
         --card: #fffaf0;

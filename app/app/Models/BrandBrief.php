@@ -33,6 +33,10 @@ use Illuminate\Support\Facades\DB;
  * @property string $visual_language
  * @property string $brand_colour
  * @property string $brand_ink
+ * @property string $brand_accent
+ * @property list<string> $brand_palette
+ * @property string $brand_typeface
+ * @property string $carousel_cover
  * @property string $overlay_position
  * @property string $overlay_case
  * @property list<string> $forbidden_topics
@@ -72,6 +76,15 @@ class BrandBrief extends Model
     public const array VISUAL_FIELDS = [
         'brand_colour',
         'brand_ink',
+        'brand_accent',
+        // Ordered by weight on the page. Versioned with the rest, so a post
+        // published last month can still say which palette drew it.
+        'brand_palette',
+        // A key of VisualStyle::TYPEFACES, so it names a face the renderer's
+        // image actually carries rather than one Chromium would fall back from.
+        'brand_typeface',
+        // `photo` or `type`. A consistency decision, made once per brand.
+        'carousel_cover',
         'overlay_position',
         'overlay_case',
     ];
@@ -109,6 +122,10 @@ class BrandBrief extends Model
         'visual_language' => '',
         'brand_colour' => VisualStyle::DEFAULT_COLOUR,
         'brand_ink' => VisualStyle::DEFAULT_INK,
+        'brand_accent' => VisualStyle::DEFAULT_ACCENT,
+        'brand_palette' => '[]',
+        'brand_typeface' => VisualStyle::DEFAULT_TYPEFACE,
+        'carousel_cover' => VisualStyle::DEFAULT_COVER,
         'overlay_position' => VisualStyle::DEFAULT_POSITION,
         'overlay_case' => VisualStyle::DEFAULT_CASE,
         'forbidden_topics' => '[]',
@@ -244,6 +261,7 @@ class BrandBrief extends Model
         return [
             'version' => 'integer',
             'is_active' => 'boolean',
+            'brand_palette' => 'array',
             'forbidden_topics' => 'array',
             'examples_liked' => 'array',
             'examples_disliked' => 'array',
@@ -288,12 +306,27 @@ class BrandBrief extends Model
         return $clean;
     }
 
-    /** The house value for a visual field an operator cleared. */
-    private static function visualDefault(string $field): string
+    /**
+     * The house value for a visual field an operator cleared.
+     *
+     * @return string|list<string>
+     */
+    private static function visualDefault(string $field): string|array
     {
         return match ($field) {
             'brand_colour' => VisualStyle::DEFAULT_COLOUR,
             'brand_ink' => VisualStyle::DEFAULT_INK,
+            // Empty, which VisualStyle reads as "the ink". Clearing the accent
+            // is how an operator says they have not got one, and it has to be
+            // expressible — the other visual fields have no such state.
+            'brand_accent' => VisualStyle::DEFAULT_ACCENT,
+            // The one visual field that is a list, so its empty is a list too.
+            // Nothing to reach for is a real answer here — it is the state every
+            // brief written before this column had, and the fallbacks are built
+            // to read it as "carry on exactly as before".
+            'brand_palette' => [],
+            'brand_typeface' => VisualStyle::DEFAULT_TYPEFACE,
+            'carousel_cover' => VisualStyle::DEFAULT_COVER,
             'overlay_position' => VisualStyle::DEFAULT_POSITION,
             default => VisualStyle::DEFAULT_CASE,
         };

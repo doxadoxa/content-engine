@@ -24,6 +24,9 @@ use Illuminate\Support\Collection;
  */
 final class VisibilityReport
 {
+    /** How far behind the newest reading a platform falls before it is called out. */
+    private const int STALE_AFTER_DAYS = 3;
+
     /** @param Collection<int, LlmVisibilityAnswer> $answers */
     private function __construct(
         private readonly Collection $answers,
@@ -156,7 +159,29 @@ final class VisibilityReport
     }
 
     /**
-     * @return list<array{platform: string, score: float|null, answered: int, mentions: int}>
+     * The score broken out by assistant, each carrying the day it was measured.
+     *
+     * **Why the date is part of the row.** {@see latest()} keeps the freshest
+     * answer per prompt *per platform*, which is right — a budget cap that stops
+     * a sweep part-way must not throw away the half already paid for. What it
+     * also means is that a platform which has stopped answering does not drop
+     * out of the panel. It keeps contributing its last good reading, and a
+     * reading from eleven days ago renders identically to one from this
+     * morning.
+     *
+     * That is not hypothetical. On 19 August 2026 this returned four assistants
+     * with nineteen answers each, and ChatGPT's nineteen were from the 8th: the
+     * vendor had retired the model name in between, every sweep since had been
+     * refused, and the headline was three assistants measured that morning
+     * averaged with one measured eleven days earlier. Nothing on the screen
+     * could have told anybody.
+     *
+     * So each row says when it was taken, and says so relative to the newest
+     * reading in the report rather than to today — a panel where everything is
+     * a fortnight old is a different fact, and {@see lastAskedOn} is where the
+     * screen already says it.
+     *
+     * @return list<array{platform: string, score: float|null, answered: int, mentions: int, last_asked_on: string|null, stale: bool}>
      */
     public function byPlatform(): array
     {
@@ -165,11 +190,16 @@ final class VisibilityReport
         foreach ($this->answers->groupBy('platform') as $platform => $group) {
             $answered = $group->whereNotNull('mentioned')->count();
 
+            /** @var Carbon|null $askedOn */
+            $askedOn = $group->max('asked_on');
+
             $rows[] = [
                 'platform' => (string) $platform,
                 'score' => $answered === 0 ? null : round($group->where('mentioned', true)->count() / $answered * 100, 1),
                 'answered' => $answered,
                 'mentions' => $group->where('mentioned', true)->count(),
+                'last_asked_on' => $askedOn?->toDateString(),
+                'stale' => $this->isBehind($askedOn),
             ];
         }
 
@@ -291,6 +321,26 @@ final class VisibilityReport
         }
 
         return $rows;
+    }
+
+    /**
+     * Whether this platform's freshest reading trails the report's own.
+     *
+     * The threshold has to clear the ordinary spread inside one sweep without
+     * reaching the gap between two. `max_answers_per_run` deliberately stops a
+     * sweep short and the rest is bought on the next run — "often the next day",
+     * as {@see latest()} puts it — so a lag of a day or two is the system
+     * working. A weekly cadence puts a missed sweep at seven. Three sits in that
+     * gap, near enough to the bottom of it that a platform quietly dropping out
+     * is caught on the first sweep it misses rather than the second.
+     */
+    private function isBehind(?Carbon $askedOn): bool
+    {
+        if ($askedOn === null || $this->lastAskedOn === null) {
+            return false;
+        }
+
+        return $askedOn->lt($this->lastAskedOn->copy()->subDays(self::STALE_AFTER_DAYS));
     }
 
     /** @param array{url?: string, title?: string} $citation */

@@ -15,16 +15,21 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\FeedbackController;
 use App\Http\Controllers\GoogleConnectionController;
+use App\Http\Controllers\HomeController;
 use App\Http\Controllers\InteractionController;
 use App\Http\Controllers\MeteringController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SiteAuditController;
+use App\Http\Controllers\SocialCreateController;
+use App\Http\Controllers\SocialOverviewController;
+use App\Http\Controllers\SocialPostController;
 use App\Http\Controllers\ThreadsConnectionController;
 use App\Http\Controllers\ThreadsWebhookController;
 use App\Http\Controllers\VisibilityController;
 use App\Http\Middleware\AuthenticatePullApi;
 use App\Http\Middleware\VerifyThreadsSignature;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -46,6 +51,11 @@ Route::get('/', fn () => Inertia::render('marketing'))->name('home');
 $social = (bool) config('social.enabled');
 
 Route::middleware(['auth'])->group(function () use ($social): void {
+    // Where somebody starts: a chip to type into, the activation checklist,
+    // and what is waiting today. Beside the dashboard rather than instead of
+    // it — see HomeController for why the two answer different questions.
+    Route::get('home', HomeController::class)->name('home.index');
+
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 
     // Creating a project is a wizard, not a form (§3.1): URL in, a reading of
@@ -108,6 +118,11 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     Route::get('brief', [BrandBriefController::class, 'edit'])->name('brief.edit');
     Route::put('brief', [BrandBriefController::class, 'update'])
         ->middleware('project.owner')->name('brief.update');
+    // Owner-only and rate limited, because each press drives a real browser at
+    // somebody else's website. Same permission as editing the brief: it changes
+    // what the brief offers.
+    Route::post('brief/palette', [BrandBriefController::class, 'palette'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('brief.palette');
 
     // §7's own screen: one summary, five minutes, four sections. No
     // `project.owner`, by the same reasoning as `content.approve` and
@@ -158,9 +173,44 @@ Route::middleware(['auth'])->group(function () use ($social): void {
 
     Route::get('calendar', CalendarController::class)->name('calendar.index');
 
-    // The assistant is the intent interface over the same monthly plan. Its
-    // POSTs stop at proposals and reviewable drafts; none is a publish route.
-    Route::get('studio', [ContentStudioController::class, 'index'])->name('studio.index');
+    // The social surface (§4.2 of `studio-rethink-spec.md`). Not behind
+    // `$social`, and the controller says why at length: that flag is about
+    // having a Threads presence, and this board reads the ideas and drafts the
+    // Studio writes on every installation.
+    Route::get('social', [SocialOverviewController::class, 'index'])->name('social.index');
+    Route::post('social/goal', [SocialOverviewController::class, 'store'])->name('social.goal.store');
+
+    // Where a post comes from: the month's unwritten ideas, the reasons the
+    // world handed us, and a blank sheet. The signals shelf is the only thing
+    // in this engine that brings anything in from outside our own site.
+    Route::get('social/create', SocialCreateController::class)->name('social.create');
+
+    // The composer. Four steps forward instead of four levels of nesting, and
+    // its last step posts to `content.approve` above — there is one approval
+    // gate in this engine and this is not a second one.
+    Route::get('social/posts/{item}', [SocialPostController::class, 'show'])->name('social.posts.show');
+    Route::patch('social/posts/{item}', [SocialPostController::class, 'update'])->name('social.posts.update');
+    // Describe what is wrong; the engine works out whether that is the words,
+    // the picture, or both. Throttled: every call is a model call, and the
+    // picture half puts a paid redraw on the queue.
+    Route::post('social/posts/{item}/edit', [SocialPostController::class, 'edit'])
+        ->middleware('throttle:20,1')->name('social.posts.edit');
+
+    // The monthly assistant, which is a *tab of the social surface* rather than
+    // a place of its own. It was a top-level "Studio" beside "Social" for one
+    // release and the pair was indefensible: two entries in the column, no
+    // sentence explaining which to open, and the same month's work behind both.
+    //
+    // The old path still answers, permanently rather than as a courtesy — it is
+    // in browser histories and in the docs, and a 404 there teaches an operator
+    // that the menu lies.
+    Route::get('social/plan', [ContentStudioController::class, 'index'])->name('social.plan');
+    Route::get('studio', function (Request $request) {
+        // The query string comes too. `Route::redirect()` drops it, and the one
+        // parameter this screen takes is the month — so a bookmarked
+        // `/studio?month=2026-09` would have silently landed on today.
+        return redirect()->route('social.plan', $request->query());
+    })->name('studio.index');
     Route::post('studio/propose', [ContentStudioController::class, 'propose'])
         ->middleware('throttle:10,1')->name('studio.propose');
     Route::post('studio/plans/{plan}/refine', [ContentStudioController::class, 'refine'])
@@ -169,6 +219,20 @@ Route::middleware(['auth'])->group(function () use ($social): void {
         ->name('studio.accept');
     Route::post('studio/plans/{plan}/generate', [ContentStudioController::class, 'generate'])
         ->middleware('throttle:10,1')->name('studio.generate');
+    // One idea, on demand. Throttled like the batch above rather than like the
+    // text actions: it buys a pool of model calls and a picture per channel,
+    // which is the same money the weekly button spends, one idea at a time.
+    Route::post('studio/ideas/{idea}/generate', [ContentStudioController::class, 'generateIdea'])
+        ->middleware('throttle:10,1')->name('studio.ideas.generate');
+    // An idea somebody typed, written on the spot. Throttled like the two
+    // above: it writes the row and immediately buys the same drafting run.
+    Route::post('studio/ideas', [ContentStudioController::class, 'storeIdea'])
+        ->middleware('throttle:10,1')->name('studio.ideas.store');
+    // What an idea is called, what its point is, and what it should be made
+    // as — the three things somebody adjusts before pressing Create. Not
+    // throttled with the two above: it spends nothing.
+    Route::patch('studio/ideas/{idea}', [ContentStudioController::class, 'updateIdea'])
+        ->name('studio.ideas.update');
     // Throttled harder than the text actions: every call here buys pictures
     // from a provider, and a stuck button should cost a few cents rather than
     // a few dollars.

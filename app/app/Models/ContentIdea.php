@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\ChannelType;
+use App\Enums\ContentFormat;
 use App\Enums\PostKind;
 use App\Models\Concerns\BelongsToProject;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -23,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string $title
  * @property string $pillar
  * @property PostKind $kind
+ * @property ContentFormat|null $content_format
  * @property string $thesis
  * @property list<string> $evidence
  * @property string $goal
@@ -43,6 +46,7 @@ class ContentIdea extends Model
         'title',
         'pillar',
         'kind',
+        'content_format',
         'thesis',
         'evidence',
         'goal',
@@ -76,12 +80,19 @@ class ContentIdea extends Model
         $production = [];
 
         foreach ($this->channels as $channel) {
+            $type = ChannelType::tryFrom($channel);
+            // What this channel can actually make of the chosen format. A
+            // carousel asked for on Threads becomes a single image rather than
+            // being refused — the format is an intent about the idea, and an
+            // idea goes to more than one channel.
+            $made = $type === null ? ContentFormat::Text : $this->format()->on($type);
+
             $production[$channel] = match ($channel) {
-                'threads' => ['format' => 'post', 'visual' => 'image'],
-                'x' => ['format' => 'post_or_thread', 'visual' => 'image'],
-                'instagram' => $this->instagramFormat() === 'carousel'
+                'threads' => ['format' => 'post', 'visual' => $made->visual()],
+                'x' => ['format' => 'post_or_thread', 'visual' => $made->visual()],
+                'instagram' => $made === ContentFormat::Carousel
                     ? ['format' => 'carousel', 'visual' => 'slides']
-                    : ['format' => 'image_post', 'visual' => 'image'],
+                    : ['format' => 'image_post', 'visual' => $made->visual()],
                 default => ['format' => 'post', 'visual' => 'none'],
             };
         }
@@ -101,7 +112,24 @@ class ContentIdea extends Model
      */
     public function instagramFormat(): string
     {
-        return $this->kind->instagramFormat();
+        return $this->format()->on(ChannelType::Instagram) === ContentFormat::Carousel
+            ? 'carousel'
+            : 'image';
+    }
+
+    /**
+     * What this idea is made as: what somebody chose, or what the kind implies.
+     *
+     * The fallback is the rule that used to be the only rule — a how-to is a
+     * carousel and everything else is a single image — so an idea nobody has
+     * opened behaves exactly as it did before the column existed.
+     */
+    public function format(): ContentFormat
+    {
+        return $this->content_format
+            ?? ($this->kind->instagramFormat() === 'carousel'
+                ? ContentFormat::Carousel
+                : ContentFormat::Image);
     }
 
     /** @return array<string, string> */
@@ -110,6 +138,7 @@ class ContentIdea extends Model
         return [
             'proposal_version' => 'integer',
             'kind' => PostKind::class,
+            'content_format' => ContentFormat::class,
             'evidence' => 'array',
             'channels' => 'array',
             'scheduled_for' => 'date',

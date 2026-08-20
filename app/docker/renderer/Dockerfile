@@ -40,7 +40,18 @@ RUN npm install --omit=dev --no-audit --no-fund
 
 # Fetched at build so the first render is fast and so a machine with no network
 # can still start the service.
-RUN npx remotion browser ensure
+#
+# Through the library rather than the CLI. `npx remotion browser ensure` is what
+# the documentation says and it cannot work here: the `remotion` package ships no
+# such binary — `@remotion/cli` does, and this image deliberately does not install
+# it. npx then fails with "could not determine executable to run", which reads
+# like a network problem and is not one. `ensureBrowser` is exported by
+# `@remotion/renderer`, which is already a dependency because the server calls it.
+#
+# Awaited explicitly. It resolves after a ~150MB download, and a bare call would
+# let the build step exit successfully the moment the promise was created —
+# leaving an image that looks built and fetches its browser at first render.
+RUN node -e "require('@remotion/renderer').ensureBrowser().then(() => console.log('browser ready'))"
 
 # The brand's own typeface, taken from the app rather than duplicated into this
 # directory: a browser loads WOFF2 natively, so the files the site already ships

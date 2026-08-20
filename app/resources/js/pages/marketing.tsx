@@ -17,6 +17,7 @@ import {
     WandSparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import AppLogoIcon from '@/components/app-logo-icon';
 import { login } from '@/routes';
 
 type Feature = {
@@ -116,15 +117,10 @@ const faq = [
 function BrandMark({ inverse = false }: { inverse?: boolean }) {
     return (
         <span className="inline-flex items-center gap-2.5">
-            <span
-                className={`relative flex size-8 items-center justify-center overflow-hidden rounded-[10px] ${inverse ? 'bg-white text-[#17352f]' : 'bg-[#17352f] text-white'}`}
-                aria-hidden="true"
-            >
-                <span className="text-[18px] leading-none font-semibold tracking-[-0.12em]">
-                    a
-                </span>
-                <span className="absolute right-[6px] bottom-[6px] size-1.5 rounded-full bg-[#3155a5]" />
-            </span>
+            <AppLogoIcon
+                tone={inverse ? 'cream' : 'ink'}
+                className="size-8 shrink-0"
+            />
             <span className="text-[19px] font-semibold tracking-[-0.04em]">
                 Avyo
             </span>
@@ -163,9 +159,10 @@ function ProductPreview() {
                     <div className="grid min-h-[430px] grid-cols-[58px_1fr] sm:min-h-[560px] sm:grid-cols-[190px_1fr]">
                         <aside className="border-r border-[#e2ded8] bg-white px-2 py-4 sm:px-4 sm:py-5">
                             <div className="mb-6 flex items-center gap-2 px-1 sm:px-2">
-                                <span className="flex size-7 items-center justify-center rounded-lg bg-[#17352f] text-xs font-semibold text-white">
-                                    a
-                                </span>
+                                <AppLogoIcon
+                                    tone="ink"
+                                    className="size-7 shrink-0"
+                                />
                                 <span className="hidden text-sm font-semibold sm:block">
                                     Avyo
                                 </span>

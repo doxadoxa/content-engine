@@ -11,11 +11,34 @@ export async function postJson<T>(
     url: string,
     body: unknown,
 ): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
+    return sendJson<T>('POST', url, body);
+}
+
+/**
+ * The same, for an edit to something that already exists.
+ *
+ * Separate from {@see postJson} only in the verb, and worth having rather than
+ * a `method` argument on the caller's side: the two read differently at the
+ * call site, and a screen that PATCHes where it meant to POST creates a second
+ * row instead of changing one.
+ */
+export async function patchJson<T>(
+    url: string,
+    body: unknown,
+): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
+    return sendJson<T>('PATCH', url, body);
+}
+
+async function sendJson<T>(
+    method: 'POST' | 'PATCH',
+    url: string,
+    body: unknown,
+): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
     let response: Response;
 
     try {
         response = await fetch(url, {
-            method: 'POST',
+            method,
             headers: {
                 'Content-Type': 'application/json',
                 Accept: 'application/json',

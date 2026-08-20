@@ -57,8 +57,8 @@ class VisibilityController extends Controller
     }
 
     /**
-     * @param  list<array{platform: string, score: float|null, answered: int, mentions: int}>  $rows
-     * @return list<array{platform: string, label: string, score: float|null, answered: int, mentions: int}>
+     * @param  list<array{platform: string, score: float|null, answered: int, mentions: int, last_asked_on: string|null, stale: bool}>  $rows
+     * @return list<array{platform: string, label: string, score: float|null, answered: int, mentions: int, last_asked_on: string|null, stale: bool}>
      */
     private function labelled(array $rows): array
     {
