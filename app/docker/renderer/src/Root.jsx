@@ -1,5 +1,4 @@
 import { Composition } from 'remotion';
-import { Panel } from './Panel.jsx';
 import {
     Checklist,
     Contrast,
@@ -9,6 +8,7 @@ import {
     Stat,
     Step,
 } from './Layouts.jsx';
+import { Panel } from './Panel.jsx';
 
 /**
  * What this service can draw.
