@@ -371,7 +371,14 @@ class ContentStudioController extends Controller
             // carries it through every later refinement — which is why this is
             // written *and generated* in one action rather than left to sit at
             // a version the next refine would drop it from.
-            'proposal_version' => max(1, $plan->assistant_version),
+            //
+            // The plan's version, not `max(1, …)`. A month nobody has proposed
+            // for is created here by `firstOrCreate()` and sits at 0, so the
+            // floor of one wrote the idea to a version {@see ActionBoard::cards()}
+            // does not read — and this action redirects to that very board
+            // promising the idea is on it. It was not, and would not be until
+            // an assistant proposal happened to arrive.
+            'proposal_version' => $plan->assistant_version,
             'idea_key' => $this->ideaKey($plan, $validated['title']),
             'title' => $validated['title'],
             'kind' => $kind,

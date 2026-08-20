@@ -21,6 +21,7 @@ use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\Project;
 use App\Models\User;
+use App\Social\ActionBoard;
 use App\Social\ActivationChecklist;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -164,7 +165,18 @@ final class HomeTest extends TestCase
             // idea does not require a proposal to exist first.
             $plan = ContentPlan::query()->firstOrFail();
             $this->assertSame('2026-08', $plan->month->format('Y-m'));
-            $this->assertSame(1, $idea->proposal_version);
+
+            // Whatever version the board reads, and this used to assert a bare
+            // 1 — which pinned the bug rather than the behaviour. A month with
+            // no proposal sits at 0, so a floor of one wrote the idea to a
+            // version `ActionBoard::cards()` does not select, and this action
+            // redirects to that very board.
+            $this->assertSame($plan->assistant_version, $idea->proposal_version);
+
+            $this->assertTrue(
+                ActionBoard::cards($plan)->keyBy('id')->has($idea->getKey()),
+                'A typed idea has to be on the board this action sends you to.',
+            );
         });
     }
 

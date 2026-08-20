@@ -2332,10 +2332,16 @@ class ContentStudioAssistant
      */
     private function preserveDraftedIdeas(ContentPlan $plan, array $proposed): array
     {
-        if ($plan->assistant_version === 0) {
-            return $proposed;
-        }
-
+        // No early return at version 0, and that is the other half of the same
+        // bug. A month with no proposal is not a month with no content: an
+        // operator can write an idea straight onto it, and this action drafts it
+        // immediately. Returning here dropped exactly those ideas the first time
+        // the assistant proposed — the idea was visible, then a proposal arrived
+        // and took it away.
+        //
+        // Removing the guard changes nothing else: with nothing drafted at the
+        // plan's version, `$drafted` comes back empty and the next line returns
+        // `$proposed` anyway.
         $draftedKeys = $this->draftsByIdeaKey($plan)->keys()->all();
         $drafted = $plan->contentIdeas()
             ->where('proposal_version', $plan->assistant_version)

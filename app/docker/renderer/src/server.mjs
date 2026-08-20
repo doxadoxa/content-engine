@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
+import { isPrivateDestination } from './private-destination.mjs';
 
 /**
  * The renderer, as a service the engine calls rather than a binary it shells to.
@@ -217,6 +218,38 @@ const screenshot = async ({ url, host, addresses, width, height, timeout, inspec
     try {
         const page = await browser.newPage({ logLevel: 'error' });
         await page.setViewport({ width, height, deviceScaleFactor: 1 });
+
+        // Every request the page makes, judged before it leaves. The resolver
+        // pin covers the address bar; this covers the hundred other requests a
+        // page makes after it loads. See `isPrivateDestination` for why the
+        // rule is "not inside" rather than "only the pinned host".
+        //
+        // `.catch()` on each resolution rather than an await: a paused request
+        // whose frame has already gone throws, and an unhandled rejection here
+        // takes the whole renderer down with it — a hostile page could close a
+        // frame mid-flight and stop the service for everyone.
+        const client = page._client();
+        let refused = 0;
+
+        client.on('Fetch.requestPaused', (event) => {
+            const deny = isPrivateDestination(event.request.url);
+
+            if (deny) {
+                refused++;
+            }
+
+            client
+                .send(
+                    deny ? 'Fetch.failRequest' : 'Fetch.continueRequest',
+                    deny
+                        ? { requestId: event.requestId, errorReason: 'AccessDenied' }
+                        : { requestId: event.requestId },
+                )
+                .catch(() => undefined);
+        });
+
+        await client.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
+
         await page.goto({ url, timeout });
 
         // The pin covers one hostname; a redirect names another, and Chromium
@@ -259,6 +292,13 @@ const screenshot = async ({ url, host, addresses, width, height, timeout, inspec
         });
 
         const image = Buffer.from(value.data, 'base64');
+
+        // Said out loud, because a refusal is a fact about the page somebody is
+        // about to look at: a site reaching for an internal host is worth
+        // knowing even when the picture came out fine.
+        if (refused > 0) {
+            console.log(`[renderer:screenshot] refused ${refused} request(s) to private destinations`);
+        }
 
         if (!inspect) {
             return { image, inspection: null };
