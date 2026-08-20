@@ -11,18 +11,22 @@ use ReflectionClass;
 use Tests\TestCase;
 
 /**
- * Three numbers in three files that have to stay in order.
+ * Four numbers in four files that have to stay in order.
  *
- * A step's timeout, the worker's, and the queue's `retry_after` each belong to
- * a different layer and each is edited by somebody thinking about that layer
- * alone. They are only correct in relation to each other, and nothing in the
- * three files makes that relation checkable — which is why it had broken twice
- * before this test existed:
+ * A step's timeout, the model call's, the worker's, and the queue's
+ * `retry_after` each belong to a different layer and each is edited by somebody
+ * thinking about that layer alone. They are only correct in relation to each
+ * other, and nothing in the four files makes that relation checkable — which is
+ * why it had broken three times before this test covered it:
  *
  *   - `AskAssistants` asked for 1800 while the worker killed at 900, so the
  *     paid sweep its docblock exists to protect was being cut in half anyway;
  *   - `ApplyContentStudioAction` asked for exactly the worker's 900, a tie, so
- *     which one fired was a race.
+ *     which one fired was a race;
+ *   - `ApplyContentStudioAction` was then sized down to 300 against a
+ *     `models.timeout` of 300, and a step with no room to start a single call
+ *     is a step that fails every time it is asked to make one. It did, for
+ *     five runs over six days, reported to the operator as a provider outage.
  *
  * **What each number does, since the failure is that they read alike.** A step
  * timeout is a deadline the pipeline enforces: it fails the step and records
@@ -74,6 +78,32 @@ final class PipelineTimeoutChainTest extends TestCase
                 "The {$queue} worker runs to {$worker}s and Redis re-delivers at {$retryAfter}s. "
                     .'Inverted, the queue hands a still-running job to a second worker — see the '
                     .'paragraph above retry_after in config/queue.php about duplicated publishes.',
+            );
+        }
+    }
+
+    /**
+     * The expensive queue is the pool that exists for model calls, so every
+     * step on it has to be able to start one. `StepContext` refuses a call it
+     * cannot finish before the step's own deadline, which means the budget a
+     * step needs is not "the work" but "the work plus a whole model timeout" —
+     * and a step sized for the work alone does not fail slowly, it fails on the
+     * first call in under a second.
+     */
+    #[Test]
+    public function every_expensive_step_has_room_to_start_a_model_call(): void
+    {
+        $call = (int) config('models.timeout');
+        $expensive = (string) config('pipeline.queues.expensive');
+
+        foreach ($this->stepsByQueue()[$expensive] ?? [] as $class => $timeout) {
+            $this->assertGreaterThan(
+                $call,
+                $timeout,
+                "{$class} asks for {$timeout}s and one model call may take {$call}s "
+                    .'(MODEL_TIMEOUT in config/models.php). StepContext refuses to start a call '
+                    .'that could outlive the step, so this step would fail on its first one, in '
+                    .'about as long as the refusal takes to throw.',
             );
         }
     }

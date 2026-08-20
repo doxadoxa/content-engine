@@ -659,6 +659,10 @@ class PipelineRunner
             return null;
         }
 
+        // `exception` is the step's own sentence, which for the steps that
+        // wrap a provider error is a sentence written for the customer: it
+        // says a run failed and nothing about why. `caused_by` is the why, and
+        // it is here rather than on the row because the row is rendered.
         Log::warning('Pipeline step failed', [
             'run_id' => $run->getKey(),
             'step' => $step::key(),
@@ -666,6 +670,7 @@ class PipelineRunner
             'will_retry' => $willRetry,
             'retryable' => $retryable,
             'exception' => $e->getMessage(),
+            'caused_by' => $this->errors->causes($e),
         ]);
 
         if (! $willRetry) {

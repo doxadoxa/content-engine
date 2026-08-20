@@ -42,8 +42,10 @@ use App\Support\Tenancy\ProjectManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia;
@@ -868,6 +870,15 @@ final class ContentStudioTest extends TestCase
         );
         $this->app->instance(ModelGateway::class, $fake);
 
+        /** @var list<array<string, mixed>> $logged */
+        $logged = [];
+
+        Log::listen(function (MessageLogged $event) use (&$logged): void {
+            if ($event->message === 'Pipeline step failed') {
+                $logged[] = $event->context;
+            }
+        });
+
         $this->postJson('/studio/propose', ['month' => '2026-08'])
             ->assertStatus(202)
             ->assertJsonPath('operation.status', 'failed')
@@ -890,6 +901,16 @@ final class ContentStudioTest extends TestCase
                 (string) json_encode([$run->error, $step->error]),
             );
         });
+
+        // Withheld from the customer, not thrown away. The operator's copy is
+        // the log line, and it is the only place the provider's own words
+        // survive — which is why the first five of these failures could not be
+        // diagnosed at all.
+        $this->assertNotEmpty($logged);
+        $this->assertStringContainsString(
+            'secret upstream details',
+            (string) json_encode($logged[0]['caused_by'] ?? []),
+        );
     }
 
     #[Test]
