@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Publishing;
 
 use App\Enums\AssetRole;
+use App\Enums\ContentFormat;
 use App\Enums\WebhookEvent;
 use App\Models\Asset;
 use App\Models\ContentItem;
@@ -132,7 +133,21 @@ final class WebhookPayload
         // picks between candidates on the review screen, and still the source
         // {@see \App\Media\CarouselPanels} reads to draw the cover — it simply
         // stops being a frame of its own.
-        if ($unit->assets()->where('role', AssetRole::Inline)->exists()) {
+        // **The format, not the mere existence of inline assets.** Written first
+        // as "has any inline row", which is true of every illustrated article:
+        // {@see \App\Media\HeroImage::inline()} draws a picture per section with
+        // exactly this role, and there are thirty-nine such articles in the
+        // development database alone. That condition therefore stripped the hero
+        // from every one of them — an article header, gone from the payload, on
+        // a change whose entire subject was carousels.
+        //
+        // And still only when the panels are actually there. A carousel whose
+        // slides all failed to draw has no cover to have absorbed the
+        // photograph, so suppressing the hero would publish a post with no
+        // pictures at all rather than one with the wrong first frame.
+        $isCarousel = ($unit->channel_payload['format'] ?? null) === ContentFormat::Carousel->value;
+
+        if ($isCarousel && $unit->assets()->where('role', AssetRole::Inline)->exists()) {
             $roles = [AssetRole::Inline];
         }
 
