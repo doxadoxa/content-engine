@@ -85,11 +85,18 @@ final class VisualBriefGuard
     /**
      * Evidence that work is happening, in the words a brief actually uses.
      *
-     * Three families, any one of which is enough: what the work leaves behind,
-     * what the work is, and what it left. The third is there for
-     * {@see PostKind::Proof}, whose shot may legitimately be the *after* — a
-     * surface with nothing on it but the light — and which the first two
-     * families would refuse for being clean.
+     * Four families, any one of which is enough: what the work leaves behind,
+     * what the work is, what it left, and who it was for. The third is there
+     * for {@see PostKind::Proof}, whose shot may legitimately be the *after* —
+     * a surface with nothing on it but the light.
+     *
+     * **The fourth is the correction to this rule's first draft.** Requiring
+     * dirt or contact made grime the price of admission for every picture, and
+     * a month of them is a forensic series: gloved hands, close crops, things
+     * nobody wants to look at, in aid of a service somebody buys to enjoy
+     * their home. A room being lived in is evidence too — the point of the
+     * work rather than the work — so a child at a wiped table counts, while
+     * the hand-places-a-mug shot that started all this still does not.
      *
      * Stems rather than words: "wipe" has to answer for "wipes", "wiping" and
      * "wiped", and listing the conjugations is how a list like this goes stale.
@@ -101,6 +108,12 @@ final class VisualBriefGuard
         'wipe', 'scrub', 'brush', 'sweep', 'mop', 'rinse', 'scrape', 'polish', 'buff', 'dry',
         'vacuum', 'wring', 'lift', 'wash', 'spray', 'dissolve', 'loosen', 'peel', 'strip',
         'cleaned', 'cleaning', 'freshly', 'gleam', 'shine', 'reflect', 'spotless',
+        // Who the work was for. Occupied, not merely present: a person has to
+        // be doing something a person does, or this becomes the loophole that
+        // lets a hand and a mug back through.
+        'child', 'toddler', 'kid', 'family', 'guest', 'neighbour', 'dog', 'cat',
+        'breakfast', 'dinner', 'supper', 'eating', 'reading', 'playing', 'homework', 'napping',
+        'asleep', 'cooking', 'barefoot', 'laughing', 'arriving', 'unpacking',
     ];
 
     /**

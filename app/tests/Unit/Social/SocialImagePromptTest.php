@@ -69,6 +69,54 @@ final class SocialImagePromptTest extends TestCase
         // in every picture of a regenerated set, one of them hanging off a
         // lacquered door. Nothing in the lived-in clause names an object now.
         $this->assertStringNotContainsString('cable', $prompt);
+
+        // A slice of toast came back baked inside the cloth being wiped with.
+        // The fusion rule was scoped to hardware; adjacent objects merge too.
+        $this->assertStringContainsString('one whole object of one material', $prompt);
+    }
+
+    /**
+     * The brand's own description of its pictures goes last, and says so.
+     *
+     * It used to sit in the middle claiming to override "the style above" while
+     * five absolute rules followed it — and the absolutes won. That is how a
+     * brief asking for "professional cleaning teams" produced a month of
+     * disembodied hands.
+     */
+    #[Test]
+    public function the_brands_own_visual_language_has_the_last_word(): void
+    {
+        $brief = new BrandBrief(['visual_language' => 'professional cleaning teams, warm and premium']);
+
+        $prompt = SocialImagePrompt::fromFields(['subject' => 'a cloth on a sill'], 'x')
+            ->build(ChannelPlaybook::for(ChannelType::Threads), $brief);
+
+        $this->assertStringContainsString('this wins: professional cleaning teams', $prompt);
+        $this->assertTrue(
+            mb_strpos($prompt, 'professional cleaning teams') > mb_strpos($prompt, 'Nothing malformed'),
+            'The brand line has to come after the house rules it is allowed to overrule.',
+        );
+    }
+
+    /**
+     * People are allowed in the frame.
+     *
+     * `NO_MACHINERY` aimed at dishwashers and took the human with it: "one
+     * thing at arm's length" is a distance nobody fits into, which is why a
+     * home-cleaning brand's month came back as gloved hands with nobody
+     * attached.
+     */
+    #[Test]
+    public function a_person_may_be_the_subject(): void
+    {
+        $prompt = SocialImagePrompt::fromFields(['subject' => 'a cloth on a sill'], 'x')
+            ->build(ChannelPlaybook::for(ChannelType::Threads));
+
+        $this->assertStringContainsString('A person may be the subject', $prompt);
+        $this->assertStringNotContainsString("arm's length", $prompt);
+        // The stock-photo ban stays; it just stops taking faces with it.
+        $this->assertStringContainsString('nobody posed for the camera', $prompt);
+        $this->assertStringNotContainsString('Nobody looking into the lens', $prompt);
     }
 
     #[Test]
@@ -132,7 +180,10 @@ final class SocialImagePromptTest extends TestCase
             ->build(ChannelPlaybook::for(ChannelType::Threads), $brief);
 
         $this->assertStringContainsString('Muted greens, no gloss', $prompt);
-        $this->assertStringContainsString('overrides the style above', $prompt);
+        $this->assertStringContainsString('where any instruction above disagrees with this, this wins', $prompt);
+        // Last, so that the claim is true of the text and not only of the
+        // sentence making it. See the_brands_own_visual_language_has_the_last_word.
+        $this->assertStringEndsWith('always a real workspace.', $prompt);
     }
 
     #[Test]
@@ -163,7 +214,8 @@ final class SocialImagePromptTest extends TestCase
         ], 'x')->build(ChannelPlaybook::for(ChannelType::Instagram));
 
         $this->assertStringContainsString('no text, no lettering, no numbers, no logos', $prompt);
-        $this->assertStringContainsString('Nobody looking into the lens.', $prompt);
-        $this->assertStringEndsWith('no people pointing at screens.', $prompt);
+        // The stock-photo refusal, which no longer costs the picture its people.
+        $this->assertStringContainsString('nobody posed for the camera', $prompt);
+        $this->assertStringEndsWith('somebody presenting themselves to it is an advertisement.', $prompt);
     }
 }

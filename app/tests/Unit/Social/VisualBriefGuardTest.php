@@ -221,6 +221,43 @@ final class VisualBriefGuardTest extends TestCase
         ], PostKind::Behind));
     }
 
+    /**
+     * The point of the work counts as much as the work.
+     *
+     * The first draft of the emptiness rule wanted dirt or contact, and a month
+     * of that is a forensic series — gloved hands and grime, for a service
+     * people buy so they can enjoy their home. A room being used is evidence of
+     * why the cleaning happened.
+     */
+    #[Test]
+    public function it_allows_the_home_being_lived_in(): void
+    {
+        $this->assertSame([], VisualBriefGuard::check([
+            'subject' => 'a child eating breakfast at a kitchen table in the morning sun',
+            'action' => 'she reaches across the table for the fruit while the room wakes up around her',
+            'location' => 'a Lisbon apartment kitchen',
+        ], PostKind::Take));
+    }
+
+    /**
+     * But not as a loophole.
+     *
+     * The mug shot is a person and an object and no work, which is exactly what
+     * the fourth family could have let back through. A person has to be doing
+     * something a person does.
+     */
+    #[Test]
+    public function a_person_and_an_object_is_still_not_a_photograph(): void
+    {
+        $complaints = VisualBriefGuard::check([
+            'subject' => 'a pair of hands placing a ceramic mug onto a clean kitchen counter',
+            'action' => 'the hands set down the mug after use',
+        ], PostKind::Take);
+
+        $this->assertCount(1, $complaints);
+        $this->assertStringContainsString('Nothing is happening', $complaints[0]);
+    }
+
     /** No brief at all is not this guard's complaint to make. */
     #[Test]
     public function it_says_nothing_about_an_empty_brief(): void

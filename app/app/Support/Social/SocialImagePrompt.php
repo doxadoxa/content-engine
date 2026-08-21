@@ -143,7 +143,10 @@ final readonly class SocialImagePrompt
         .'furniture floating off the floor, no repeated or mirrored objects, no extra or missing '
         .'fingers, no melted edges between surfaces. Where two surfaces meet, the join stays a join: no '
         .'trench, slot, channel or cavity opening into a worktop, no gap cut through a solid surface, no '
-        .'seam that turns into a hole.';
+        .'seam that turns into a hole. Every object is one whole object of one material and stays '
+        .'separate from what it touches — nothing baked into anything else, and the thing in the hand is '
+        .'only that thing: a cloth is cloth all the way through, with no food, packaging or second '
+        .'object fused inside it.';
 
     /**
      * The one instruction that outranks the model's own subject.
@@ -154,10 +157,18 @@ final readonly class SocialImagePrompt
      * the same cavity. Softening the background was not enough, because the
      * brief had asked for the appliance as the *scene* — the defect was in the
      * subject, so the subject is where it has to be refused.
+     *
+     * **It used to refuse people along with them, which was never the point.**
+     * "One thing at arm's length" is a distance, and at that distance nobody
+     * fits: the rule aimed at dishwashers took the human out of every frame,
+     * and a month of a home-cleaning brand's pictures came back as gloved
+     * hands and grime with no one attached. The failure this guards against is
+     * *machinery rendered as architecture*, not company in the room.
      */
     private const string NO_MACHINERY = 'Do not build the frame around an appliance, a run of cabinetry '
-        .'or a room. Fill it with one thing at arm\'s length — a surface, a cloth, a tool, hands at '
-        .'work — and let everything structural sit far behind it and out of focus.';
+        .'or an empty room. Build it around one thing near the camera — a surface, a cloth, a tool, a '
+        .'person at work, somebody using the room — and let everything structural sit behind that and '
+        .'out of focus. A person may be the subject, and may fill the frame.';
 
     /**
      * What makes the frame worth stopping on.
@@ -236,7 +247,6 @@ final readonly class SocialImagePrompt
             "Location: {$this->location}",
             "Style: {$this->style}",
             $shot === null || trim($shot) === '' ? null : 'What this picture has to show: '.trim($shot),
-            $visual === '' ? null : "Brand visual language, which overrides the style above where they disagree: {$visual}",
             'Camera: '.self::CAMERA,
             "Light: {$this->light}",
             self::INTEREST,
@@ -251,8 +261,20 @@ final readonly class SocialImagePrompt
             'Not in this image: no text, no lettering, no numbers, no logos, no watermarks, no user '
                 .'interface, no charts — and nothing whose purpose is to carry them: no clipboards, '
                 .'checklists, forms, notebooks, paperwork, labels turned to the camera, signage, phones, '
-                .'tablets or screens, blank or otherwise. Nobody looking into the lens. No stock-photo '
-                .'staging, no handshakes, no people pointing at screens.',
+                .'tablets or screens, blank or otherwise. No stock-photo staging: nobody posed for the '
+                .'camera, nobody holding a product up for it, no handshakes, no people pointing at '
+                .'screens. Somebody caught mid-task who happens to be facing the camera is a '
+                .'photograph; somebody presenting themselves to it is an advertisement.',
+            // Last, and the only thing here that may overrule what is above it.
+            // The order used to say otherwise: this line sat in the middle
+            // claiming to override "the style above" while five absolute rules
+            // followed it, and the absolutes won. That is how a brief asking
+            // for "professional cleaning teams" produced eleven months of
+            // disembodied hands — the brand asked for people and the house
+            // rules quietly refused, with nothing anywhere recording the
+            // disagreement.
+            $visual === '' ? null : 'The brand this is for describes its own pictures as follows, and '
+                ."where any instruction above disagrees with this, this wins: {$visual}",
         ]));
     }
 
