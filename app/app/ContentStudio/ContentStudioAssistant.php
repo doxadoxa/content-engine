@@ -36,6 +36,7 @@ use App\Support\Social\ContentMix;
 use App\Support\Social\PostFormat;
 use App\Support\Social\SocialImagePrompt;
 use App\Support\Social\StudioPostGuard;
+use App\Support\Social\VisualBriefGuard;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Carbon;
@@ -1154,7 +1155,21 @@ class ContentStudioAssistant
                 ));
 
                 try {
-                    $pool[] = $this->parseCandidate($answer->text, $playbook, $idea, $angle);
+                    // The picture brief is enforced on the first attempt only.
+                    // It is a correction, and the correction has been made by
+                    // the time the second answer arrives: refusing that one too
+                    // would spend the candidate to fix its photograph, and a
+                    // post whose picture is weak is worth more than no post.
+                    // An unillustrated draft is already survivable — see
+                    // `illustrate()`, which swallows a provider that will not
+                    // draw — so the picture may not be what loses the words.
+                    $pool[] = $this->parseCandidate(
+                        $answer->text,
+                        $playbook,
+                        $idea,
+                        $angle,
+                        enforceVisual: $attempt === 1,
+                    );
 
                     continue 2;
                 } catch (InvalidAssistantResponse $e) {
@@ -1247,6 +1262,17 @@ class ContentStudioAssistant
             $idea->kind->brief(),
             $brief?->compileToPrompt(),
             "The idea this post comes from: {$idea->title}\nThe thesis it has to keep: {$idea->thesis}",
+            // The title above is working notes. It is the *idea's* title, it is
+            // never published — a reader on any of these channels sees the post
+            // and nothing else — and posts kept arriving written as its second
+            // half: "Routine care holds the baseline; a deep clean goes beyond
+            // usual cleaning" is a sentence that only parses under a headline
+            // asking when routine stops being enough. A post that needs the
+            // note to make sense is a post that reaches the reader broken.
+            'That title and thesis are working notes, not part of the post. The reader never sees them. '
+                .'Do not answer the title, continue from it, or assume it set anything up — whatever the '
+                .'post needs the reader to know, the post itself has to say. Read your first sentence as '
+                .'someone would meet it, with nothing above it.',
         ]));
     }
 
@@ -1328,7 +1354,28 @@ class ContentStudioAssistant
                 .'vague brief produces a stock picture. Describe something small and near rather than a '
                 .'whole room: hands, a tool, one surface, one object being used. Do not use the words '
                 .'premium, elegant, editorial, luxury, pristine, sleek or minimalist — they produce a '
-                .'showroom. Never ask for text, words or logos in the image.',
+                .'showroom.',
+            // The requirement the picture is judged against, given to the party
+            // that writes the brief. It used to reach the image provider only,
+            // appended after six fields written without knowledge of it, and a
+            // provider handed a subject and a contradicting requirement draws
+            // the subject: a `proof` post whose shot has to show a boundary
+            // between cleaned and uncleaned came back as a hand holding a cloth
+            // near a door, because that is what its own brief had asked for.
+            'What this picture has to show: '.$idea->kind->shot().' Write the six fields so they deliver '
+                .'that. If the thought behind this post has nothing photographable in it, do not reach '
+                .'for an object that stands in for the idea — find the moment of real work that the '
+                .'thought is about, and brief that.',
+            // Not "no text" — no text-carriers. Told to keep words out of the
+            // frame, the model kept asking for the prop and disclaiming its
+            // content: "a checklist-style clipboard with no legible writing",
+            // "a tablet showing an unlabeled checklist interface". Both drew
+            // exactly what was asked for, and an empty form photographs as
+            // something nobody filled in.
+            'Never ask for text, words, numbers or logos in the image, and never ask for an object whose '
+                .'whole purpose is to carry them: no clipboards, checklists, forms, notebooks, paperwork, '
+                .'labels facing the camera, signage, phones, tablets or screens. A picture cannot show a '
+                .'standard by photographing a list of it.',
             'Reply with JSON and nothing else: '.$shape,
         ]));
     }
@@ -1424,12 +1471,17 @@ class ContentStudioAssistant
      * about everything else. A malformed `visual` object costs the candidate
      * its art direction and {@see SocialImagePrompt} its defaults, not the
      * candidate itself.
+     *
+     * `$enforceVisual` adds a third strict thing, and it is the only
+     * conditional one — see the call site in {@see writePool()} for why it is
+     * asked of a first answer and forgiven on a second.
      */
     private function parseCandidate(
         string $text,
         ChannelPlaybook $playbook,
         ContentIdea $idea,
         string $angle,
+        bool $enforceVisual = true,
     ): StudioCandidate {
         $decoded = $this->decodeObject($text);
 
@@ -1439,6 +1491,16 @@ class ContentStudioAssistant
 
         $visual = is_array($decoded['visual'] ?? null) ? $decoded['visual'] : [];
         $channel = $playbook->channel->value;
+
+        // Raised as an invalid answer rather than scored down, because the
+        // retry that follows is the whole remedy: the writer is the only party
+        // that knows what the post is about, and told what is wrong with its
+        // brief it writes a better one.
+        $complaints = $enforceVisual ? VisualBriefGuard::check($visual, $idea->kind) : [];
+
+        if ($complaints !== []) {
+            throw new InvalidAssistantResponse(implode(' ', $complaints));
+        }
 
         if ($playbook->isCaptionChannel()) {
             return $this->parseCaption($decoded, $playbook, $idea, $angle, $visual);

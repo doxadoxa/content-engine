@@ -37,6 +37,34 @@ final class SocialImagePromptTest extends TestCase
         $this->assertStringNotContainsString('the fallback', $prompt);
     }
 
+    /**
+     * The house rules that came out of reviewing the first month's pictures.
+     *
+     * Each one is a specific thing that came back wrong, and each is appended
+     * after the model's six fields so a brief cannot talk its way past it.
+     */
+    #[Test]
+    public function the_house_rules_the_first_month_earned_are_all_in_there(): void
+    {
+        $prompt = SocialImagePrompt::fromFields(
+            ['subject' => 'a cloth lifting grime from a windowsill'],
+            'x',
+        )->build(ChannelPlaybook::for(ChannelType::Threads));
+
+        // Worktops came back chipped and split, in pictures selling upkeep.
+        $this->assertStringContainsString('Used, not broken', $prompt);
+        $this->assertStringContainsString('nothing chipped, cracked, gouged', $prompt);
+        $this->assertStringNotContainsString('worn edges', $prompt);
+
+        // A brief asking for "the groove where the tap meets the countertop"
+        // was drawn as a trench cut through the stone.
+        $this->assertStringContainsString('the join stays a join', $prompt);
+
+        // Banning the words left the props in the frame, blank.
+        $this->assertStringContainsString('no clipboards', $prompt);
+        $this->assertStringContainsString('blank or otherwise', $prompt);
+    }
+
     #[Test]
     public function the_crop_it_composes_for_is_the_channel_s(): void
     {

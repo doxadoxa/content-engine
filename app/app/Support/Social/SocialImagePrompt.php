@@ -94,11 +94,31 @@ final readonly class SocialImagePrompt
      * Perfection is the tell: matched objects, cleared surfaces, unmarked
      * finishes, symmetrical framing. Asking for the opposite is more reliable
      * than asking for "realistic", which the model reads as "high resolution".
+     *
+     * "Worn edges" used to be in this list and it is the clause that had to go.
+     * To an image model that is a licence to damage the set, and it took it:
+     * worktops came back chipped, gouged and split down the corner. For most
+     * brands that is a wasted picture. For this one it is an argument against
+     * the service — the promise is a home that is looked after, and the picture
+     * was showing one falling apart. Hence {@see NO_DAMAGE}, which the list
+     * above cannot be allowed to outvote.
      */
-    private const string IMPERFECTION = 'Real and imperfect: worn edges, a cable that was not tidied, '
-        .'objects that do not match, a surface that has been used. Framing slightly off-centre as a '
-        .'person would hold it. Not a showroom, not a catalogue, not a magazine set, nothing arranged '
-        .'for the camera.';
+    private const string IMPERFECTION = 'Real and lived-in: a cable that was not tidied, objects that do '
+        .'not match, a cloth left where it was put down, a surface that is clearly in daily use. Framing '
+        .'slightly off-centre as a person would hold it. Not a showroom, not a catalogue, not a magazine '
+        .'set, nothing arranged for the camera.';
+
+    /**
+     * The line between "used" and "broken", which the model does not draw itself.
+     *
+     * Every signal of life this brand can show is something cleaning removes:
+     * dust, marks, residue, crumbs, water spots. Everything cleaning cannot fix
+     * — a chip, a crack, a split edge — is a different photograph, about a home
+     * nobody is maintaining, published by the company paid to maintain it.
+     */
+    private const string NO_DAMAGE = 'Used, not broken: nothing chipped, cracked, gouged, split, peeling '
+        .'or in disrepair, no damaged furniture or worktops. What shows here is dirt, dust, marks and '
+        .'residue — the things cleaning removes — on surfaces that are otherwise sound.';
 
     /**
      * The failure modes these models actually have, named individually.
@@ -114,7 +134,9 @@ final readonly class SocialImagePrompt
     private const string ARTIFACTS = 'Nothing malformed: no duplicated or fused handles, hinges, taps or '
         .'switches, no hardware with an impossible design, no doors or walls that do not line up, no '
         .'furniture floating off the floor, no repeated or mirrored objects, no extra or missing '
-        .'fingers, no melted edges between surfaces.';
+        .'fingers, no melted edges between surfaces. Where two surfaces meet, the join stays a join: no '
+        .'trench, slot, channel or cavity opening into a worktop, no gap cut through a solid surface, no '
+        .'seam that turns into a hole.';
 
     /**
      * The one instruction that outranks the model's own subject.
@@ -212,11 +234,18 @@ final readonly class SocialImagePrompt
             "Light: {$this->light}",
             self::INTEREST,
             self::IMPERFECTION,
+            self::NO_DAMAGE,
             self::NO_MACHINERY,
             self::ARTIFACTS,
+            // The objects, not only their content. Banning the words alone left
+            // the props in the frame with nothing written on them, which is how
+            // a post about naming a standard came back as a photograph of a
+            // blank form.
             'Not in this image: no text, no lettering, no numbers, no logos, no watermarks, no user '
-                .'interface, no charts. Nobody looking into the lens. No stock-photo staging, no '
-                .'handshakes, no people pointing at screens.',
+                .'interface, no charts — and nothing whose purpose is to carry them: no clipboards, '
+                .'checklists, forms, notebooks, paperwork, labels turned to the camera, signage, phones, '
+                .'tablets or screens, blank or otherwise. Nobody looking into the lens. No stock-photo '
+                .'staging, no handshakes, no people pointing at screens.',
         ]));
     }
 

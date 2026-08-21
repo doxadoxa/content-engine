@@ -2083,7 +2083,7 @@ final class ContentStudioTest extends TestCase
 
         // The director is shown the brief as it stands, not a growing prompt.
         $this->assertStringContainsString('Too clean. Show the actual residue.', (string) $revised);
-        $this->assertStringContainsString('a printed content calendar', (string) $revised);
+        $this->assertStringContainsString('a hand drawing a cloth through the dust', (string) $revised);
 
         app(CurrentProject::class)->run($this->project, function () use ($draft): void {
             $payload = $draft->fresh()->channel_payload;
@@ -2092,7 +2092,10 @@ final class ContentStudioTest extends TestCase
             $this->assertSame('hard low sun raking across it', $payload['visual']['light']);
             // Fields the note said nothing about keep what they had, or a
             // revision would quietly undo every earlier one.
-            $this->assertSame('a hand crossing out one row and writing a date beside it', $payload['visual']['action']);
+            $this->assertSame(
+                'the cloth lifts a clean line through the grime and leaves the rest of it there',
+                $payload['visual']['action'],
+            );
             $this->assertSame('Too clean. Show the actual residue.', $payload['visual_notes'][0]['said']);
         });
     }
@@ -2485,6 +2488,125 @@ final class ContentStudioTest extends TestCase
         });
     }
 
+    /**
+     * The reader never sees the idea's title, so the post may not lean on it.
+     *
+     * The title and thesis are in the prompt because the writer needs to know
+     * what it is writing about. What that produced was posts written as the
+     * title's second half — "Routine care holds the baseline; a deep clean goes
+     * beyond usual cleaning" only parses under a headline asking when routine
+     * stops being enough — and on the channel there is no headline.
+     */
+    #[Test]
+    public function the_writer_is_told_the_post_stands_without_its_title(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $drafts = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft',
+        ));
+
+        $this->assertNotSame([], $drafts);
+
+        foreach ($drafts as $call) {
+            $this->assertStringContainsString('working notes, not part of the post', $call->instructions);
+            $this->assertStringContainsString('The reader never sees them', $call->instructions);
+        }
+    }
+
+    /**
+     * The requirement the picture is judged against, given to the party that
+     * writes the brief rather than only to the provider that draws it.
+     */
+    #[Test]
+    public function the_writer_is_told_what_the_picture_has_to_show(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $drafts = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft',
+        ));
+
+        $this->assertNotSame([], $drafts);
+
+        foreach ($drafts as $call) {
+            $this->assertStringContainsString('What this picture has to show:', $call->prompt);
+            // The prop rule, in the contract as well as in the provider prompt.
+            $this->assertStringContainsString('no clipboards, checklists, forms', $call->prompt);
+        }
+    }
+
+    /**
+     * A weak picture brief costs one more call, never the post.
+     *
+     * The first answer is refused with the reason and the writer asked again;
+     * a second answer is taken whatever its brief looks like. The alternative —
+     * refusing both — spends a written, fact-checked candidate to fix its
+     * photograph, and an unillustrated draft is already something this pipeline
+     * survives.
+     */
+    #[Test]
+    public function a_weak_picture_brief_is_corrected_once_and_then_accepted(): void
+    {
+        $seen = 0;
+
+        $fake = $this->fakeStudio(draft: function (ModelRequest $request) use (&$seen): ?string {
+            if ($this->channelOf($request) !== 'x') {
+                return null;
+            }
+
+            $seen++;
+
+            // Always the same refusable brief: a prop, and no work in the frame.
+            return (string) json_encode([
+                'segments' => ['A compact X post.'],
+                'link' => null,
+                'chain_reason' => null,
+                'visual' => [
+                    'subject' => 'a hand resting on a clipboard beside a mug',
+                    'composition' => 'overhead',
+                    'action' => 'the hand holds the clipboard still',
+                    'location' => 'a kitchen',
+                ],
+            ]);
+        });
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $corrections = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft'
+                && str_contains($call->prompt, 'Your previous answer was invalid')
+                && str_contains($call->prompt, 'clipboard'),
+        ));
+
+        // Every X candidate was refused once and asked again — and the second
+        // answer, identical, was kept.
+        $this->assertNotSame([], $corrections);
+        $this->assertSame($seen, count($corrections) * 2);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $x = ContentItem::query()->where('channel_type', 'x')->firstOrFail();
+
+            $this->assertSame(
+                'a hand resting on a clipboard beside a mug',
+                $x->channel_payload['visual']['subject'],
+            );
+        });
+    }
+
     #[Test]
     public function every_channel_gets_a_directed_picture_at_its_own_crop(): void
     {
@@ -2521,7 +2643,7 @@ final class ContentStudioTest extends TestCase
                     $this->assertStringContainsString($element, $call['prompt']);
                 }
 
-                $this->assertStringContainsString('a printed content calendar', $call['prompt']);
+                $this->assertStringContainsString('a hand drawing a cloth through the dust', $call['prompt']);
                 $this->assertStringContainsString('no text, no lettering', $call['prompt']);
                 // The sentence that produced the stock illustrations.
                 $this->assertStringNotContainsString('article titled', $call['prompt']);
@@ -2706,14 +2828,25 @@ final class ContentStudioTest extends TestCase
         ]));
     }
 
-    /** @return array<string, string> */
+    /**
+     * A picture brief a real model answer would survive.
+     *
+     * It used to be a printed calendar on a desk beside a laptop, which is
+     * three of the things {@see VisualBriefGuard} now refuses: a prop that
+     * exists to carry words, a screen, and no work in the frame. Left as it
+     * was, every draft call in this file spent its first answer being corrected
+     * — the tests still passed, and quietly asserted twice the model calls they
+     * meant to.
+     *
+     * @return array<string, string>
+     */
     private function visual(): array
     {
         return [
-            'subject' => 'a printed content calendar covered in pencil corrections',
-            'composition' => 'overhead, the page filling the frame at a slight angle',
-            'action' => 'a hand crossing out one row and writing a date beside it',
-            'location' => 'a shared desk with two cold coffees and a laptop pushed aside',
+            'subject' => 'a hand drawing a cloth through the dust along the back edge of a shared desk',
+            'composition' => 'overhead, the desk edge filling the frame at a slight angle',
+            'action' => 'the cloth lifts a clean line through the grime and leaves the rest of it there',
+            'location' => 'a shared desk with two cold coffees pushed aside',
             'style' => 'photorealistic editorial photography, unstyled',
             'light' => 'window light from the left, shallow depth of field',
         ];
