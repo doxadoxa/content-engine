@@ -48,6 +48,19 @@ class FetchKeywords extends AbstractStep
         // step that decides what a project could write about, and it should be
         // deciding against what the site publishes today.
         $this->library->refresh($context->project);
+
+        // And then read what the pages actually say. Separate from the refresh
+        // above because it costs model calls: the refresh is a sitemap and some
+        // head tags, this is the evidence corpus the planner writes from, and
+        // it belongs at a call site with a run to charge it to. Bounded per
+        // pass, so a large site fills in over several weeks rather than in one
+        // long crawl.
+        $harvested = $this->library->harvest($context->project, $context);
+
+        if ($harvested > 0) {
+            $context->remember('site_library.pages_harvested', $harvested);
+        }
+
         $this->topics->index($context->project);
 
         $seeds = $this->seeds($context);

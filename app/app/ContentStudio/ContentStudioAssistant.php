@@ -24,12 +24,14 @@ use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\Project;
 use App\Models\SitePage;
+use App\Onboarding\ProjectLaunch;
 use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Pipelines\Steps\SocialDraft\DraftCandidates;
 use App\Pipelines\Steps\SocialDraft\FactCheckPost;
 use App\Pipelines\Steps\SocialDraft\GuardFinding;
 use App\Social\PublishedCadence;
 use App\Support\Brand\VisualStyle;
+use App\Support\Corpus\SiteLibrary;
 use App\Support\Social\ChannelPlaybook;
 use App\Support\Social\ChannelPostScore;
 use App\Support\Social\ContentMix;
@@ -85,7 +87,13 @@ class ContentStudioAssistant
         ChannelType::Instagram->value,
     ];
 
-    public function __construct(private readonly SocialImage $images) {}
+    /** Pages read inside a proposal that found no corpus. See {@see ensureFacts()}. */
+    private const int FACTS_ON_DEMAND = 20;
+
+    public function __construct(
+        private readonly SocialImage $images,
+        private readonly SiteLibrary $library,
+    ) {}
 
     public function initialProposal(
         Project $project,
@@ -477,6 +485,8 @@ class ContentStudioAssistant
         // — so neither can be prevented by a better instruction alone: the
         // model has to see its own month. This is the same correction loop
         // {@see writePool()} runs on a candidate, for the same reason.
+        $this->ensureFacts($project, $models);
+
         $correction = null;
         $proposal = null;
         $findings = [];
@@ -622,6 +632,26 @@ class ContentStudioAssistant
             'You are the content strategist inside a structured content engine.',
             'Make the first useful move. Read the supplied site and brand context, then propose a month instead of asking a blank set of questions.',
             'Separate facts found in the supplied context from assumptions. Never invent a customer, result, price, statistic, launch, or personal experience.',
+
+            // The rule that turns "never invent" from a gag into an
+            // instruction. Told only what it may not do, and handed a list of
+            // its own article titles, the planner wrote evidence like
+            // "Cleaning Point has an article titled X" — a sitemap presented as
+            // fact, and the reason a month of posts said nothing.
+            'Your facts come from `what_the_business_says_about_itself`: the pages where this business '
+                .'states what it sells, for how much, in what time, and what is included. Quote what is '
+                .'specific there — a price, a duration, a material, a room, an inclusion, an area '
+                .'covered — and put it in the idea\'s `evidence`. An idea whose evidence names something '
+                .'checkable is worth ten that do not.',
+            'Two things are not evidence and may not be written as any. That this business has published '
+                .'an article, or that its site covers a subject — a list of titles is a sitemap, not a '
+                .'fact about cleaning, plumbing or software. And anything from those articles '
+                .'themselves: they are opinions this business published, and increasingly they are '
+                .'written by this engine, so citing one is citing us. `existing_site_articles` is there '
+                .'to tell you what has already been covered, and for nothing else.',
+            'Where the business says nothing checkable about a subject, say so by choosing a different '
+                .'subject. Do not reach for the framing instead — a post whose only content is a way of '
+                .'looking at something is the post this instruction exists to prevent.',
             'Threads should invite a real conversation. X should make a compact, useful argument. Instagram should have a visual reason to exist.',
 
             // The kinds, and the reason they are the first thing decided about
@@ -743,6 +773,13 @@ class ContentStudioAssistant
             'brand_brief' => $brief?->compileToPrompt(),
             'original_business_data' => $project->original_data,
             'existing_site_articles' => $pages,
+            // What the business says about itself, in its own words, from the
+            // pages where it states its offer. The planner had none of this: it
+            // was given article titles and a 1.2 KB self-description, told
+            // never to invent a fact, and asked for thirty posts — so it wrote
+            // "Cleaning Point has an article titled X" and called that
+            // evidence. See product/read-what-the-business-says-spec.md.
+            'what_the_business_says_about_itself' => $this->businessFacts(),
             'already_planned_titles' => $planned,
             'current_proposal' => $plan->assistant_version > 0 ? [
                 'summary' => $plan->assistant_summary,
@@ -760,6 +797,69 @@ class ContentStudioAssistant
             $context,
             JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         );
+    }
+
+    /**
+     * Read the site now if nobody has read it yet.
+     *
+     * The corpus is normally filled by research, which runs weekly and harvests
+     * sixty pages at a time. That is the right home for it and the wrong thing
+     * to depend on: {@see ProjectLaunch::begin()} dispatches
+     * research and the first Studio proposal *at the same time*, so on a new
+     * project the proposal races the harvest and generally wins — and a month
+     * planned without facts is not re-planned when the facts arrive. Every
+     * project migrated into this feature has the same empty corpus for the same
+     * reason.
+     *
+     * So the proposal is made self-sufficient rather than ordered after
+     * research. The contours stay independent, which is the property
+     * `ProjectLaunch` is built around, and an operator proposing a month out of
+     * band gets the same answer as one whose research happened to run first.
+     *
+     * Bounded well below the weekly harvest: this is inside a step with a
+     * deadline, each page is an HTTP request, and twenty commercial pages is
+     * already more than {@see businessFacts()} will pass on. Only when there is
+     * nothing at all — a corpus with one page in it is research's business to
+     * grow, not this method's.
+     */
+    private function ensureFacts(Project $project, ModelSession $models): void
+    {
+        if (SitePage::query()->commercial()->exists()) {
+            return;
+        }
+
+        $this->library->harvest($project, $models, self::FACTS_ON_DEMAND);
+    }
+
+    /**
+     * The commercial pages, as text the planner may quote from.
+     *
+     * Bounded twice. Twelve pages because a small business states its whole
+     * offer in fewer and a large one repeats itself, and 1,500 characters
+     * because a services page says what it sells in its first screen and
+     * spends the rest reassuring. Together that is the part of the prompt
+     * carrying facts, and it is smaller than the list of article titles it
+     * sits beside.
+     *
+     * Empty is a real answer and is left empty rather than padded: a site with
+     * no commercial pages gives the planner nothing to be specific about, and
+     * the honest consequence is a vaguer month rather than an invented one.
+     *
+     * @return list<array{url: string, title: string, says: string}>
+     */
+    private function businessFacts(): array
+    {
+        $facts = [];
+
+        foreach (SitePage::query()->commercial()->limit(12)->get() as $page) {
+            $facts[] = [
+                'url' => $page->url,
+                'title' => $page->title,
+                'says' => Str::limit((string) $page->body, 1500),
+            ];
+        }
+
+        return $facts;
     }
 
     /**

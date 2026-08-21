@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Support\Corpus;
 
+use App\Ai\Contracts\ModelSession;
+use App\Enums\SitePageKind;
+use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\SitePage;
 use App\Support\Http\PublicHttpClient;
@@ -32,13 +35,137 @@ class SiteLibrary
     /** Pages actually fetched per refresh. A crawl is a different product. */
     private const int MAX_READS = 60;
 
+    /** Pages whose kind is decided per harvest. The same politeness ceiling. */
+    private const int MAX_HARVEST = 60;
+
+    /**
+     * How long a commercial page's text is trusted before it is read again.
+     *
+     * These are the pages that carry prices, durations and coverage, which is
+     * exactly the material that changes and exactly the material a post states
+     * as fact. Read once and never again, the engine would publish last
+     * quarter's hourly rate indefinitely and nothing would notice — a stale
+     * fact is more damaging than the vagueness this whole change replaced,
+     * because it is specific and wrong.
+     *
+     * Thirty days is the floor; a sitemap that dates the page overrides it —
+     * see {@see toHarvest()} — so a site that says when it changed is re-read
+     * when it changes rather than on a timer.
+     */
+    private const int REHARVEST_AFTER_DAYS = 30;
+
+    /**
+     * Of a commercial page, stored.
+     *
+     * A services page states its offer in the first screen and spends the rest
+     * on reassurance. Six thousand characters is the offer plus room, and it is
+     * what lands in a planning prompt beside eleven others.
+     */
+    private const int MAX_BODY_CHARS = 6000;
+
     private const int REFRESH_AFTER_DAYS = 7;
 
     public function __construct(
         private readonly CurrentProject $current,
         private readonly PublicHttpClient $http,
         private readonly PublicHttpTarget $targets,
+        private readonly PageClassifier $classifier,
     ) {}
+
+    /**
+     * Read the pages nobody has read, and decide what each one is.
+     *
+     * Separate from {@see refresh()} and separately callable because it is the
+     * paid half: it makes model calls, so it belongs at a call site with a run
+     * to hang the cost on rather than inside the lazy staleness check that
+     * {@see for()} performs. A deployment that never calls this keeps exactly
+     * the library it had.
+     *
+     * **Unclassified rather than unread is the queue.** `read_at` marks a page
+     * whose title was fetched, which most articles already have; `page_kind`
+     * marks a page somebody has actually looked at. Non-articles go first
+     * because they are the ones that have never been fetched at all and the
+     * ones the evidence corpus is made of.
+     *
+     * @return int the number of pages classified
+     */
+    public function harvest(Project $project, ModelSession $models, ?int $limit = null): int
+    {
+        $limit = $limit ?? self::MAX_HARVEST;
+
+        return $this->current->run($project, function () use ($project, $models, $limit): int {
+            $sitemap = $project->sitemap_url;
+
+            if ($sitemap === null || $sitemap === '') {
+                return 0;
+            }
+
+            $pages = $this->toHarvest($project, $limit);
+
+            if ($pages === []) {
+                return 0;
+            }
+
+            $read = [];
+
+            foreach ($pages as $page) {
+                $text = $this->readBody($page->url, $sitemap);
+
+                if ($text === '') {
+                    // Nothing came back, so there is nothing to judge. Marked
+                    // rather than left, or every harvest starts by re-fetching
+                    // the same dead URLs.
+                    $page->forceFill(['page_kind' => SitePageKind::Other, 'read_at' => now()])->save();
+
+                    continue;
+                }
+
+                $read[$page->getKey()] = [
+                    'url' => $page->url,
+                    'title' => $page->title,
+                    'text' => $text,
+                    'page' => $page,
+                ];
+            }
+
+            if ($read === []) {
+                return 0;
+            }
+
+            $kinds = $this->classifier->classify(
+                array_map(
+                    static fn (array $row): array => [
+                        'url' => $row['url'],
+                        'title' => $row['title'],
+                        'text' => $row['text'],
+                    ],
+                    $read,
+                ),
+                $models,
+            );
+
+            foreach ($read as $key => $row) {
+                $kind = $kinds[$key] ?? SitePageKind::fallback();
+
+                /** @var SitePage $page */
+                $page = $row['page'];
+
+                $page->forceFill([
+                    'page_kind' => $kind,
+                    // Only the commercial pages keep what they said. An
+                    // editorial body is an interpretation, and once the journal
+                    // is written by this engine it is our own — see
+                    // SitePageKind::Editorial.
+                    'body' => $kind === SitePageKind::Commercial
+                        ? Str::limit(Str::squish($row['text']), self::MAX_BODY_CHARS, '')
+                        : null,
+                    'read_at' => now(),
+                ])->save();
+            }
+
+            return count($read);
+        });
+    }
 
     /**
      * Refresh the library if it is stale, and return what is in it.
@@ -142,6 +269,86 @@ class SiteLibrary
         $this->current->run($project, fn () => $this->rebuild($project));
     }
 
+    /**
+     * The pages worth reading, nearest the business first.
+     *
+     * Two queues in one list. **Never read** is the obvious one. **Read too
+     * long ago** is the one that is easy to leave out and expensive to leave
+     * out: a commercial page is where the price lives, and a price read once
+     * is a price the engine repeats after the business has changed it. Only
+     * commercial pages are re-read — an editorial page's body is not stored,
+     * so there is nothing about it to go stale.
+     *
+     * Three narrowings, each removing pages that cannot carry evidence:
+     *
+     *   - **Ours are skipped.** A page this engine published is not the
+     *     business speaking, it is this engine speaking, and citing it closes a
+     *     loop nobody would see close.
+     *   - **One locale.** `/en/services`, `/pt/services`, `/ru/services` and
+     *     `/uk/services` are the same facts four times, and four times is four
+     *     times the prompt for no additional fact.
+     *   - **Unread before stale, and non-articles before articles.** A page
+     *     never seen beats a page seen a month ago, and a services page beats
+     *     both.
+     *
+     * @return list<SitePage>
+     */
+    private function toHarvest(Project $project, int $limit): array
+    {
+        $ours = ContentItem::query()
+            ->whereNotNull('public_url')
+            ->pluck('public_url')
+            ->all();
+
+        $candidates = SitePage::query()
+            ->when($ours !== [], fn ($query) => $query->whereNotIn('url', $ours))
+            ->where(fn ($query) => $query
+                ->whereNull('page_kind')
+                ->orWhere(fn ($stale) => $stale
+                    ->where('page_kind', SitePageKind::Commercial)
+                    ->where(fn ($since) => $since
+                        ->whereColumn('published_at', '>', 'read_at')
+                        ->orWhere('read_at', '<', now()->subDays(self::REHARVEST_AFTER_DAYS))
+                        ->orWhereNull('read_at'))))
+            ->orderByRaw('page_kind is not null')
+            ->orderBy('is_article')
+            ->orderBy('url')
+            ->get()
+            ->all();
+
+        return array_slice($this->inSiteLocale($project, array_values($candidates)), 0, $limit);
+    }
+
+    /**
+     * The candidates that are in the locale this project writes from.
+     *
+     * Decided against the **whole** library rather than against the candidates,
+     * which is the entire subtlety. {@see inLocale()} falls back to returning
+     * everything when nothing matches, because on a single-language site every
+     * page is the right one — and after the first harvest the unread remainder
+     * of a multilingual site is precisely the pages that are *not* the default
+     * locale. Asked about that remainder alone, the fallback fires, decides the
+     * site is monolingual and hands back every translation, which then becomes
+     * commercial evidence in four languages.
+     *
+     * @param  list<SitePage>  $candidates
+     * @return list<SitePage>
+     */
+    private function inSiteLocale(Project $project, array $candidates): array
+    {
+        $everything = array_values(SitePage::query()->orderBy('url')->get()->all());
+        $allowed = [];
+
+        foreach ($this->inLocale($everything, $project->default_locale) as $page) {
+            $allowed[$page->url] = true;
+        }
+
+        return array_values(array_filter(
+            $candidates,
+            static fn (SitePage $page): bool => isset($allowed[$page->url]),
+        ));
+    }
+
     private function rebuild(Project $project): void
     {
         $sitemap = $project->sitemap_url;
@@ -237,6 +444,50 @@ class SiteLibrary
                 'read_at' => now(),
             ])->save();
         }
+    }
+
+    /**
+     * The readable text of a page, with the furniture taken out.
+     *
+     * Not a parser. Script, style, nav, header and footer are cut because every
+     * page on a site carries the same ones and they would be the bulk of every
+     * excerpt; everything else becomes text. A services page states its offer in
+     * prose and a price in a table, and both survive tag-stripping — which is
+     * the whole requirement, and the reason this is thirty lines rather than a
+     * dependency.
+     */
+    private function readBody(string $url, string $siteOrigin): string
+    {
+        try {
+            $response = $this->http->request(
+                'GET',
+                $url,
+                ['User-Agent' => 'ContentEngine/1.0 (+library)'],
+                15,
+                3,
+                $siteOrigin,
+            )->response;
+        } catch (ConnectionException|UnsafePublicUrl $e) {
+            Log::info('A site page could not be read', ['url' => $url, 'reason' => $e->getMessage()]);
+
+            return '';
+        }
+
+        if ($response->failed()) {
+            return '';
+        }
+
+        $html = (string) preg_replace(
+            '#<(script|style|nav|header|footer|noscript|svg)\b[^>]*>.*?</\1>#is',
+            ' ',
+            $response->body(),
+        );
+
+        // Block elements become a space rather than nothing, or "50€per hour"
+        // is what the model is asked to read a price out of.
+        $html = (string) preg_replace('#<(br|/p|/div|/li|/h[1-6]|/tr|/td)[^>]*>#i', ' ', $html);
+
+        return Str::squish(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5));
     }
 
     /**
