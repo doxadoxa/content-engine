@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
+use App\ContentStudio\ContentStudioAssistant;
 use App\Models\ContentIdea;
 use App\Support\Social\ContentMix;
 
@@ -51,6 +52,24 @@ enum PostKind: string
     /** The work itself — process, standards, the parts customers never see. */
     case Behind = 'behind';
 
+    /**
+     * Somebody at home, in a home that has been looked after.
+     *
+     * The one kind whose subject is a person rather than the work, and the one
+     * the other five could not be talked into being. Reviewing the first month
+     * of pictures, the complaint was that the set is cold — no people, no soul
+     * — and the cause was structural rather than a matter of wording: a `take`
+     * argues, a `how_to` instructs, a `proof` demonstrates, a `behind` shows
+     * the unglamorous part and an `offer` sells. Every one of them is about the
+     * service. A reader is not buying a service, they are buying an evening
+     * back, and nothing in the calendar was allowed to say so.
+     *
+     * Kept honest by what it may not do: it is not a tip with a person added,
+     * and it does not end by pointing at the company. If it argues, it is a
+     * `take`; if it shows a result, it is a `proof`. See {@see brief()}.
+     */
+    case Life = 'life';
+
     /** A direct offer. Capped rather than targeted; see {@see ContentMix}. */
     case Offer = 'offer';
 
@@ -61,8 +80,67 @@ enum PostKind: string
             self::HowTo => 'How-to',
             self::Proof => 'Proof',
             self::Behind => 'Behind the scenes',
+            self::Life => 'Life at home',
             self::Offer => 'Offer',
         };
+    }
+
+    /**
+     * One line, for the model that is choosing between them.
+     *
+     * Distinct from {@see brief()}, which is the register a writer works in
+     * and runs to a paragraph. This is the planner's vocabulary: it appears in
+     * the proposal instructions as a list, and its whole job is to let a
+     * strategist tell six things apart while assigning one to each idea.
+     *
+     * It exists because that list used to be typed out in
+     * {@see ContentStudioAssistant} as five hardcoded
+     * bullets beginning "The five:". Adding a sixth case here did not add it
+     * there, so the planner was handed a mix asking for "about 3 life" and no
+     * statement of what a life post is — and it did the reasonable thing and
+     * planned none at all, twice, through the correction loop. A list of the
+     * cases of an enum belongs to the enum.
+     */
+    public function summary(): string
+    {
+        return match ($this) {
+            self::Take => 'an opinion you are willing to be disagreed with about.',
+            self::HowTo => 'teaching — how the thing is actually done.',
+            self::Proof => 'a result, a case, a before and after, from the supplied evidence only.',
+            self::Behind => 'the work customers never see — the standard, the step everybody skips.',
+            self::Life => 'somebody at home in a space that has been looked after, and the ordinary '
+                .'thing the space lets them do. Not a tip with a person in it, and it does not '
+                .'mention the service beyond once in passing. This is the reason anybody buys the '
+                .'others.',
+            self::Offer => 'a direct offer. Rare, and capped.',
+        };
+    }
+
+    /**
+     * The kinds and what they are, as the planner's own list.
+     *
+     * @return list<string>
+     */
+    public static function vocabulary(): array
+    {
+        return array_map(
+            static fn (self $kind): string => "- {$kind->value}: {$kind->summary()}",
+            self::cases(),
+        );
+    }
+
+    /** Where each kind goes, as one line of the planner's instructions. */
+    public static function routing(): string
+    {
+        $routes = array_map(
+            static fn (self $kind): string => $kind->value.' → '.implode(
+                ', ',
+                array_map(static fn (ChannelType $channel): string => $channel->value, $kind->channels()),
+            ),
+            self::cases(),
+        );
+
+        return implode('. ', $routes).'.';
     }
 
     /**
@@ -84,6 +162,10 @@ enum PostKind: string
      *     Threads, because "here is what actually happened" is a conversation.
      *   - **Behind** — the same two, for the same reason: it is visual, and it
      *     invites a reply.
+     *   - **Life** — Instagram, where a moment in a home is the whole post,
+     *     and Threads, where it is the one kind that reliably gets answered:
+     *     people reply to a room they recognise. Not X, which rewards the
+     *     compact argument and treats a warm observation as filler.
      *   - **Offer** — Instagram alone. An offer on Threads or X with no
      *     conversational frame is «самопродвижение без разговорной рамки», the
      *     one shape §2 names with no working version.
@@ -97,6 +179,7 @@ enum PostKind: string
             self::HowTo => [ChannelType::Instagram, ChannelType::X],
             self::Proof => [ChannelType::Instagram, ChannelType::Threads],
             self::Behind => [ChannelType::Instagram, ChannelType::Threads],
+            self::Life => [ChannelType::Instagram, ChannelType::Threads],
             self::Offer => [ChannelType::Instagram],
         };
     }
@@ -136,6 +219,13 @@ enum PostKind: string
             self::Behind => 'This is a behind-the-scenes post. Show the part of the work customers never '
                 .'see: the standard, the step everybody skips, what goes wrong and what it takes to get '
                 .'right. It should read like somebody who does this describing it, not like marketing.',
+            self::Life => 'This is a post about somebody at home, and the home is one that has been '
+                .'looked after. Write one small true moment — a room at a particular hour, a thing '
+                .'somebody can do again because the space is ready for it. The cleaning is why the '
+                .'moment is possible and is not the subject of the post: mention it once at most, or '
+                .'not at all. This is the one kind that may not teach. No steps, no tips, no checklist, '
+                .'no "here is how", and no ending that turns back to the company. If you find yourself '
+                .'advising, you are writing the wrong kind.',
             self::Offer => 'This is an offer post, and it is the one post of the month that is allowed to '
                 .'be one. Say plainly what is on offer, who it is for and what happens next. No hype, no '
                 .'urgency that is not real.',
@@ -166,6 +256,13 @@ enum PostKind: string
             self::Behind => $channel === ChannelType::Instagram
                 ? ['story', 'before_after', 'question']
                 : ['observation', 'caption', 'take'],
+            // `moment` rather than `story`: Instagram's story shape ends in
+            // what it taught and one thing to do, and a shape outranks a
+            // register — so the pool was spending calls writing how-tos with a
+            // person in them.
+            self::Life => $channel === ChannelType::Instagram
+                ? ['moment', 'question']
+                : ['observation', 'caption', 'question'],
             self::Offer => ['story', 'framework', 'caption', 'observation'],
         };
     }
@@ -203,6 +300,10 @@ enum PostKind: string
                 .'work stops. The change is the subject.',
             self::Behind => 'Show the part nobody photographs: the dirt itself, what came off, the '
                 .'awkward corner, the tool worn from use. Unglamorous and specific.',
+            self::Life => 'Show a person in the room, using it. Somebody occupied with something '
+                .'ordinary — eating, reading, getting out of the door, a child at a table — in a space '
+                .'that is plainly cared for. Nobody cleaning, no cloth, no gloves, no product: this is '
+                .'the after, hours later, when the work is invisible and the point of it is not.',
             self::Offer => 'Show the outcome somebody is buying — the finished state, at the scale a '
                 .'person would notice it.',
         };

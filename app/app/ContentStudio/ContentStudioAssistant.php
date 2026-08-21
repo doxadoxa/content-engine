@@ -630,21 +630,23 @@ class ContentStudioAssistant
             // which is what it did — because "useful" is the safest thing a
             // model can be, and the channels do not reward safe.
             'Every idea has a kind, and the kind is a decision you make before the subject, not a label '
-                .'you add after. The five:',
-            '- take: an opinion you are willing to be disagreed with about.',
-            '- how_to: teaching — how the thing is actually done.',
-            '- proof: a result, a case, a before and after, from the supplied evidence only.',
-            '- behind: the work customers never see — the standard, the step everybody skips.',
-            '- offer: a direct offer. Rare, and capped.',
+                .'you add after. The kinds:',
+            // Derived, because this list was typed out here and went stale the
+            // first time a case was added: `life` reached the planner only as a
+            // token inside the mix arithmetic — "about 3 life" — with nothing
+            // anywhere saying what one is, and the planner reasonably wrote a
+            // month of the five it had been told about, twice, through the
+            // correction loop.
+            ...PostKind::vocabulary(),
 
             // The channel rule. An idea that goes everywhere is an idea written
             // once and trimmed twice, which is the cross-posting this whole
             // engine argues against — arranged at the planning step, where no
             // amount of care in the drafting step can undo it.
             'The kind decides where the idea belongs, and no idea goes to all three channels. '
-                .'take → threads, x. how_to → instagram, x. proof → instagram, threads. '
-                .'behind → instagram, threads. offer → instagram. Give the channels of the kind you chose, '
-                .'and pick a kind because the idea is that, not because you wanted the channels.',
+                .PostKind::routing()
+                .' Give the channels of the kind you chose, and pick a kind because the idea is that, '
+                .'not because you wanted the channels.',
 
             'Write every idea angle for the channels it is actually going to. Give each channel a distinct '
                 .'execution, not one shared paragraph.',
@@ -672,7 +674,13 @@ class ContentStudioAssistant
                 .'month against it and repeat it back unchanged.',
 
             'Return JSON only, with exactly this shape:',
-            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"take|how_to|proof|behind|offer","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
+            // The kind alternation is derived for the reason the vocabulary above
+            // is: this enumeration was the third place the five kinds were
+            // typed out, and a model handed a mix asking for a kind its output
+            // contract forbids resolves the contradiction in favour of the
+            // contract. It happened to comply anyway on the run that added
+            // `life`, which is worse than failing — the drift was invisible.
+            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"'.implode('|', PostKind::values()).'","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
             'Use only dates inside the requested month. Spread the ideas across the month. Keep questions to the two or three unknowns that would materially change the plan.',
         ]);
     }

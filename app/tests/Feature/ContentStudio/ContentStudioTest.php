@@ -283,10 +283,18 @@ final class ContentStudioTest extends TestCase
     #[Test]
     public function a_month_of_nothing_but_tips_is_sent_back_before_it_is_stored(): void
     {
+        // Eight ideas rather than the fixture's four, because a target is a
+        // percentage of the month and four is too few for most of them to
+        // round to one: at that size only `how_to` is asked for at all, so a
+        // month of nothing but how-tos is a balanced month and there is
+        // nothing here to test.
+        $month = ['2026-08-03', '2026-08-04', '2026-08-06', '2026-08-11',
+            '2026-08-13', '2026-08-19', '2026-08-21', '2026-08-26'];
+
         $fake = $this->fakeModel([
-            // Twenty how-tos: exactly the plan this release was written about.
-            $this->proposal(kinds: ['how_to']),
-            $this->proposal(kinds: ['how_to', 'take', 'proof', 'behind']),
+            // Nothing but tips: exactly the plan this release was written about.
+            $this->proposal(dates: $month, kinds: ['how_to']),
+            $this->proposal(dates: $month, kinds: ['how_to', 'take', 'proof', 'behind', 'life']),
         ]);
 
         $this->postJson('/studio/propose', ['month' => '2026-08'])
@@ -304,7 +312,10 @@ final class ContentStudioTest extends TestCase
             $kinds = ContentIdea::query()->orderBy('scheduled_for')->pluck('kind')->all();
 
             $this->assertSame(
-                [PostKind::HowTo, PostKind::Take, PostKind::Proof, PostKind::Behind],
+                [
+                    PostKind::HowTo, PostKind::Take, PostKind::Proof, PostKind::Behind,
+                    PostKind::Life, PostKind::HowTo, PostKind::Take, PostKind::Proof,
+                ],
                 $kinds,
             );
         });
@@ -315,9 +326,12 @@ final class ContentStudioTest extends TestCase
     {
         // Both asks come back the same. An operator who clicks Propose and gets
         // nothing cannot act; an imbalance they can see, they can refine.
+        $month = ['2026-08-03', '2026-08-04', '2026-08-06', '2026-08-11',
+            '2026-08-13', '2026-08-19', '2026-08-21', '2026-08-26'];
+
         $this->fakeModel([
-            $this->proposal(kinds: ['how_to']),
-            $this->proposal(kinds: ['how_to']),
+            $this->proposal(dates: $month, kinds: ['how_to']),
+            $this->proposal(dates: $month, kinds: ['how_to']),
         ]);
 
         $this->postJson('/studio/propose', ['month' => '2026-08'])
@@ -330,7 +344,10 @@ final class ContentStudioTest extends TestCase
 
             $this->assertNotSame([], $findings);
             $this->assertStringContainsString('no take', $findings[0]);
-            $this->assertSame(4, ContentIdea::query()->count());
+            // The register this release added is missing too, and the operator
+            // sees that in the same sentence rather than on the next attempt.
+            $this->assertStringContainsString('no life', $findings[0]);
+            $this->assertSame(8, ContentIdea::query()->count());
         });
     }
 
@@ -3027,8 +3044,12 @@ final class ContentStudioTest extends TestCase
                 // idea reaches all three channels any more — a how_to goes to
                 // Instagram and X, a take to Threads and X — so a batch that
                 // exercises every channel needs two ideas in the window.
-                $dates ?? ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26'],
-                [1, 2, 3, 4],
+                $dates ??= ['2026-08-03', '2026-08-04', '2026-08-19', '2026-08-26'],
+                // Derived rather than the literal [1, 2, 3, 4] this used to be:
+                // a caller passing more dates than that got `null` for every
+                // index past the fourth, which surfaces as a TypeError inside
+                // the closure rather than as anything about the fixture.
+                range(1, count($dates)),
             ),
         ], JSON_UNESCAPED_SLASHES);
     }

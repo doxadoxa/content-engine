@@ -108,12 +108,48 @@ final class VisualBriefGuard
         'wipe', 'scrub', 'brush', 'sweep', 'mop', 'rinse', 'scrape', 'polish', 'buff', 'dry',
         'vacuum', 'wring', 'lift', 'wash', 'spray', 'dissolve', 'loosen', 'peel', 'strip',
         'cleaned', 'cleaning', 'freshly', 'gleam', 'shine', 'reflect', 'spotless',
-        // Who the work was for. Occupied, not merely present: a person has to
-        // be doing something a person does, or this becomes the loophole that
-        // lets a hand and a mug back through.
-        'child', 'toddler', 'kid', 'family', 'guest', 'neighbour', 'dog', 'cat',
-        'breakfast', 'dinner', 'supper', 'eating', 'reading', 'playing', 'homework', 'napping',
-        'asleep', 'cooking', 'barefoot', 'laughing', 'arriving', 'unpacking',
+        // Who the work was for, as verbs. Occupied, not merely present: a
+        // person has to be doing something a person does, or this becomes the
+        // loophole that lets a hand and a mug back through.
+        'eating', 'reading', 'playing', 'napping', 'asleep', 'cooking', 'barefoot',
+        'laughing', 'arriving', 'unpacking',
+    ];
+
+    /**
+     * The nouns of a room in use, matched whole.
+     *
+     * Separated from {@see WORK_STEMS} because those are stem-matched so a verb
+     * can conjugate, and a noun given four trailing letters stops being the
+     * noun: `guest` finds "guestroom", `child` finds "childproof". A guest room
+     * with nobody in it is the brief this rule exists to refuse.
+     */
+    private const array LIVED_IN = [
+        'child', 'children', 'toddler', 'kid', 'kids', 'family', 'guest', 'guests',
+        'dog', 'dogs', 'cat', 'cats', 'breakfast', 'dinner', 'supper', 'homework',
+    ];
+
+    /**
+     * Somebody, as opposed to a pair of hands.
+     *
+     * Nouns only. "Hand" is deliberately absent — see {@see absenceComplaint()}
+     * — and so are pronouns, which describe whoever the nouns already named and
+     * would let "they were left on the table" count as company.
+     *
+     * **Matched whole, and every plural spelled out.** These were first checked
+     * with {@see mentionsStem()}, which allows four trailing letters so that
+     * "wipe" answers for "wiping" — and on nouns that is a hole rather than a
+     * convenience: `guest` found "guestroom" and `man` found "mantel", so an
+     * empty guest room with a clock on the mantelpiece read as two people and
+     * passed the one check written to refuse exactly that. A verb conjugates; a
+     * room is not a person because it is named after one.
+     */
+    private const array PEOPLE = [
+        'person', 'people', 'somebody', 'someone', 'anyone',
+        'woman', 'women', 'man', 'men', 'girl', 'girls', 'boy', 'boys',
+        'child', 'children', 'toddler', 'toddlers', 'kid', 'kids', 'teenager', 'teenagers',
+        'couple', 'family', 'guests', 'housemate', 'housemates', 'flatmate', 'flatmates',
+        'resident', 'residents', 'neighbour', 'neighbours', 'parent', 'parents',
+        'mother', 'father', 'daughter', 'son', 'grandmother', 'grandfather',
     ];
 
     /**
@@ -205,17 +241,29 @@ final class VisualBriefGuard
     }
 
     /**
-     * A brief with no work in it, which an `offer` is allowed to be.
+     * A brief with no work in it, which two kinds are allowed to be.
      *
      * {@see PostKind::Offer} asks for the finished state — the outcome somebody
      * is buying — and a finished state has by definition no dirt in it and
      * nobody scrubbing. Applying this rule to it would refuse the one kind
      * whose picture is supposed to be clean.
+     *
+     * {@see PostKind::Life} is exempt from the *work* half for the same reason
+     * and answers to a different rule instead. Its shot forbids the cloth, the
+     * gloves and the product on purpose — it is the after, hours later, when
+     * the work is invisible — so every honest `life` brief fails a test that
+     * looks for contact or residue. What it must not be is the failure this
+     * whole class was written about: a styled corner with nobody in it. So for
+     * that kind the question is not "is work happening" but "is anybody here".
      */
     private static function emptinessComplaint(string $fields, PostKind $kind): ?string
     {
         if ($kind === PostKind::Offer) {
             return null;
+        }
+
+        if ($kind === PostKind::Life) {
+            return self::absenceComplaint($fields);
         }
 
         foreach (self::WORK_STEMS as $stem) {
@@ -224,9 +272,35 @@ final class VisualBriefGuard
             }
         }
 
+        foreach (self::LIVED_IN as $word) {
+            if (self::mentions($fields, $word)) {
+                return null;
+            }
+        }
+
         return 'Nothing is happening in this photograph. It describes objects and a place, but not the '
             .'work, what the work is removing, or what it has changed — so there is nothing in the frame '
             .'worth stopping on. Name the residue, the contact or the difference.';
+    }
+
+    /**
+     * Nobody home, in the one kind that is about somebody being home.
+     *
+     * A pair of hands does not satisfy this and that is the point: hands are
+     * what the other kinds show, and a month of them with nobody attached is
+     * the complaint that produced {@see PostKind::Life} in the first place.
+     */
+    private static function absenceComplaint(string $fields): ?string
+    {
+        foreach (self::PEOPLE as $word) {
+            if (self::mentions($fields, $word)) {
+                return null;
+            }
+        }
+
+        return 'There is nobody in this photograph, and this is the one kind of post that is about '
+            .'somebody. An empty room that has been tidied is a catalogue page. Put a person in the '
+            .'frame — who they are, and what they are in the middle of doing.';
     }
 
     /** Whole word, `\p{L}`-bounded for the reason {@see StudioPostGuard} gives. */

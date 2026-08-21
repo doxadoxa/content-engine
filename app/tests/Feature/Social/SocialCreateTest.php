@@ -111,7 +111,7 @@ final class SocialCreateTest extends TestCase
                 ->has('ideas', 1)
                 ->where('ideas.0.title', 'Not written yet')
                 ->has('signals', 0)
-                ->has('kinds', 5)
+                ->has('kinds', 6)
             );
     }
 

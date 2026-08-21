@@ -27,10 +27,11 @@ final class ContentMixTest extends TestCase
     public function a_balanced_month_passes(): void
     {
         $month = [
-            ...array_fill(0, 6, PostKind::HowTo),
-            ...array_fill(0, 5, PostKind::Take),
-            ...array_fill(0, 4, PostKind::Proof),
+            ...array_fill(0, 5, PostKind::HowTo),
+            ...array_fill(0, 4, PostKind::Take),
+            ...array_fill(0, 3, PostKind::Proof),
             ...array_fill(0, 3, PostKind::Behind),
+            ...array_fill(0, 3, PostKind::Life),
             ...array_fill(0, 2, PostKind::Offer),
         ];
 
@@ -43,10 +44,11 @@ final class ContentMixTest extends TestCase
         $mix = ContentMix::fromConfig();
 
         $base = [
-            ...array_fill(0, 8, PostKind::HowTo),
-            ...array_fill(0, 6, PostKind::Take),
-            ...array_fill(0, 4, PostKind::Proof),
-            ...array_fill(0, 2, PostKind::Behind),
+            ...array_fill(0, 7, PostKind::HowTo),
+            ...array_fill(0, 5, PostKind::Take),
+            ...array_fill(0, 3, PostKind::Proof),
+            ...array_fill(0, 3, PostKind::Behind),
+            ...array_fill(0, 2, PostKind::Life),
         ];
 
         // Twenty ideas, ten percent, so two. A month with none of them is a
@@ -68,8 +70,9 @@ final class ContentMixTest extends TestCase
         $instruction = $mix->instruction(20);
 
         $this->assertSame(2, $mix->offerLimit(20));
-        $this->assertStringContainsString('about 6 how_to', $instruction);
-        $this->assertStringContainsString('about 5 take', $instruction);
+        $this->assertStringContainsString('about 5 how_to', $instruction);
+        $this->assertStringContainsString('about 4 take', $instruction);
+        $this->assertStringContainsString('about 3 life', $instruction);
         $this->assertStringContainsString('At most 2 of them may be an offer post', $instruction);
         $this->assertStringNotContainsString('%', $instruction);
     }

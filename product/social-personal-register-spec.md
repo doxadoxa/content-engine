@@ -1,5 +1,12 @@
 # A register where somebody is in the room
 
+**Built 21 August 2026.** `PostKind::Life`, a 15% share of the mix, its own
+channels, angles, brief and shot, and an inverted rule in `VisualBriefGuard`.
+The open question at the bottom was settled in favour of both halves: the
+sixth kind *and* people allowed into the other five, the second of which PR #9
+had already done. What is still outstanding is the brand-brief edit, which is
+not a code change — see the end of this document.
+
 Written 21 August 2026, out of the session that fixed the Studio's pictures.
 That work is in PR #9 and it is worth reading first, because this spec exists
 because of what that work could *not* reach: every fix there was to how a
@@ -103,7 +110,10 @@ else's decision to make. It also cannot be judged on seven posts — a register
 is either carrying a month or it is not, and that is a month of output to look
 at.
 
-## Open question, worth settling before building
+## Open question — settled
+
+*Kept as written, because the reasoning is the reason the answer is "both".*
+
 
 Is the personal register a *post kind*, or is it a property of the brand's voice
 that should show up across all five? A cleaning company's `Proof` post could
@@ -114,3 +124,19 @@ calendar and leaves the other 85% exactly as cold as it is now.
 
 My inclination is the sixth kind *and* letting people into the other five —
 #9 has already done the second half.
+
+**Decided: both.** The sixth kind exists because a mix is the only mechanism
+this engine has for guaranteeing a share of anything, and 15% of the calendar
+is the difference between a register that ships and one that is theoretically
+available. The other five keep the people PR #9 let in. The quarantine worry
+in the paragraph above is real and is answered by the second half, not by
+refusing the first.
+
+One thing the build surfaced that this spec did not predict: the guard had to
+be *inverted* for this kind rather than relaxed. `Life`'s shot forbids the
+cloth, the gloves and the product on purpose — it is the after, hours later,
+when the work is invisible — so every honest brief fails a rule looking for
+contact or residue. For `life` the question is not "is work happening" but "is
+anybody here", and a pair of hands does not answer it. Hands are what the other
+five show, and a month of them with nobody attached is the complaint the whole
+register answers.
