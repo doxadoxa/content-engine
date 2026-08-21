@@ -39,6 +39,22 @@ class SiteLibrary
     private const int MAX_HARVEST = 60;
 
     /**
+     * How long a commercial page's text is trusted before it is read again.
+     *
+     * These are the pages that carry prices, durations and coverage, which is
+     * exactly the material that changes and exactly the material a post states
+     * as fact. Read once and never again, the engine would publish last
+     * quarter's hourly rate indefinitely and nothing would notice — a stale
+     * fact is more damaging than the vagueness this whole change replaced,
+     * because it is specific and wrong.
+     *
+     * Thirty days is the floor; a sitemap that dates the page overrides it —
+     * see {@see toHarvest()} — so a site that says when it changed is re-read
+     * when it changes rather than on a timer.
+     */
+    private const int REHARVEST_AFTER_DAYS = 30;
+
+    /**
      * Of a commercial page, stored.
      *
      * A services page states its offer in the first screen and spends the rest
@@ -73,16 +89,18 @@ class SiteLibrary
      *
      * @return int the number of pages classified
      */
-    public function harvest(Project $project, ModelSession $models): int
+    public function harvest(Project $project, ModelSession $models, ?int $limit = null): int
     {
-        return $this->current->run($project, function () use ($project, $models): int {
+        $limit = $limit ?? self::MAX_HARVEST;
+
+        return $this->current->run($project, function () use ($project, $models, $limit): int {
             $sitemap = $project->sitemap_url;
 
             if ($sitemap === null || $sitemap === '') {
                 return 0;
             }
 
-            $pages = $this->unclassified($project);
+            $pages = $this->toHarvest($project, $limit);
 
             if ($pages === []) {
                 return 0;
@@ -252,9 +270,16 @@ class SiteLibrary
     }
 
     /**
-     * The pages worth looking at, nearest the business first.
+     * The pages worth reading, nearest the business first.
      *
-     * Three narrowings, each of which removes pages that cannot carry evidence:
+     * Two queues in one list. **Never read** is the obvious one. **Read too
+     * long ago** is the one that is easy to leave out and expensive to leave
+     * out: a commercial page is where the price lives, and a price read once
+     * is a price the engine repeats after the business has changed it. Only
+     * commercial pages are re-read — an editorial page's body is not stored,
+     * so there is nothing about it to go stale.
+     *
+     * Three narrowings, each removing pages that cannot carry evidence:
      *
      *   - **Ours are skipped.** A page this engine published is not the
      *     business speaking, it is this engine speaking, and citing it closes a
@@ -262,27 +287,66 @@ class SiteLibrary
      *   - **One locale.** `/en/services`, `/pt/services`, `/ru/services` and
      *     `/uk/services` are the same facts four times, and four times is four
      *     times the prompt for no additional fact.
-     *   - **Non-articles first.** They are the ones never fetched under the old
-     *     rule, and the ones a services page is.
+     *   - **Unread before stale, and non-articles before articles.** A page
+     *     never seen beats a page seen a month ago, and a services page beats
+     *     both.
      *
      * @return list<SitePage>
      */
-    private function unclassified(Project $project): array
+    private function toHarvest(Project $project, int $limit): array
     {
         $ours = ContentItem::query()
             ->whereNotNull('public_url')
             ->pluck('public_url')
             ->all();
 
-        $pages = SitePage::query()
-            ->whereNull('page_kind')
+        $candidates = SitePage::query()
             ->when($ours !== [], fn ($query) => $query->whereNotIn('url', $ours))
+            ->where(fn ($query) => $query
+                ->whereNull('page_kind')
+                ->orWhere(fn ($stale) => $stale
+                    ->where('page_kind', SitePageKind::Commercial)
+                    ->where(fn ($since) => $since
+                        ->whereColumn('published_at', '>', 'read_at')
+                        ->orWhere('read_at', '<', now()->subDays(self::REHARVEST_AFTER_DAYS))
+                        ->orWhereNull('read_at'))))
+            ->orderByRaw('page_kind is not null')
             ->orderBy('is_article')
             ->orderBy('url')
             ->get()
             ->all();
 
-        return array_slice($this->inLocale(array_values($pages), $project->default_locale), 0, self::MAX_HARVEST);
+        return array_slice($this->inSiteLocale($project, array_values($candidates)), 0, $limit);
+    }
+
+    /**
+     * The candidates that are in the locale this project writes from.
+     *
+     * Decided against the **whole** library rather than against the candidates,
+     * which is the entire subtlety. {@see inLocale()} falls back to returning
+     * everything when nothing matches, because on a single-language site every
+     * page is the right one — and after the first harvest the unread remainder
+     * of a multilingual site is precisely the pages that are *not* the default
+     * locale. Asked about that remainder alone, the fallback fires, decides the
+     * site is monolingual and hands back every translation, which then becomes
+     * commercial evidence in four languages.
+     *
+     * @param  list<SitePage>  $candidates
+     * @return list<SitePage>
+     */
+    private function inSiteLocale(Project $project, array $candidates): array
+    {
+        $everything = array_values(SitePage::query()->orderBy('url')->get()->all());
+        $allowed = [];
+
+        foreach ($this->inLocale($everything, $project->default_locale) as $page) {
+            $allowed[$page->url] = true;
+        }
+
+        return array_values(array_filter(
+            $candidates,
+            static fn (SitePage $page): bool => isset($allowed[$page->url]),
+        ));
     }
 
     private function rebuild(Project $project): void

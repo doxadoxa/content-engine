@@ -24,12 +24,14 @@ use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\Project;
 use App\Models\SitePage;
+use App\Onboarding\ProjectLaunch;
 use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Pipelines\Steps\SocialDraft\DraftCandidates;
 use App\Pipelines\Steps\SocialDraft\FactCheckPost;
 use App\Pipelines\Steps\SocialDraft\GuardFinding;
 use App\Social\PublishedCadence;
 use App\Support\Brand\VisualStyle;
+use App\Support\Corpus\SiteLibrary;
 use App\Support\Social\ChannelPlaybook;
 use App\Support\Social\ChannelPostScore;
 use App\Support\Social\ContentMix;
@@ -85,7 +87,13 @@ class ContentStudioAssistant
         ChannelType::Instagram->value,
     ];
 
-    public function __construct(private readonly SocialImage $images) {}
+    /** Pages read inside a proposal that found no corpus. See {@see ensureFacts()}. */
+    private const int FACTS_ON_DEMAND = 20;
+
+    public function __construct(
+        private readonly SocialImage $images,
+        private readonly SiteLibrary $library,
+    ) {}
 
     public function initialProposal(
         Project $project,
@@ -477,6 +485,8 @@ class ContentStudioAssistant
         // — so neither can be prevented by a better instruction alone: the
         // model has to see its own month. This is the same correction loop
         // {@see writePool()} runs on a candidate, for the same reason.
+        $this->ensureFacts($project, $models);
+
         $correction = null;
         $proposal = null;
         $findings = [];
@@ -787,6 +797,38 @@ class ContentStudioAssistant
             $context,
             JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         );
+    }
+
+    /**
+     * Read the site now if nobody has read it yet.
+     *
+     * The corpus is normally filled by research, which runs weekly and harvests
+     * sixty pages at a time. That is the right home for it and the wrong thing
+     * to depend on: {@see ProjectLaunch::begin()} dispatches
+     * research and the first Studio proposal *at the same time*, so on a new
+     * project the proposal races the harvest and generally wins — and a month
+     * planned without facts is not re-planned when the facts arrive. Every
+     * project migrated into this feature has the same empty corpus for the same
+     * reason.
+     *
+     * So the proposal is made self-sufficient rather than ordered after
+     * research. The contours stay independent, which is the property
+     * `ProjectLaunch` is built around, and an operator proposing a month out of
+     * band gets the same answer as one whose research happened to run first.
+     *
+     * Bounded well below the weekly harvest: this is inside a step with a
+     * deadline, each page is an HTTP request, and twenty commercial pages is
+     * already more than {@see businessFacts()} will pass on. Only when there is
+     * nothing at all — a corpus with one page in it is research's business to
+     * grow, not this method's.
+     */
+    private function ensureFacts(Project $project, ModelSession $models): void
+    {
+        if (SitePage::query()->commercial()->exists()) {
+            return;
+        }
+
+        $this->library->harvest($project, $models, self::FACTS_ON_DEMAND);
     }
 
     /**
