@@ -51,6 +51,24 @@ enum PostKind: string
     /** The work itself — process, standards, the parts customers never see. */
     case Behind = 'behind';
 
+    /**
+     * Somebody at home, in a home that has been looked after.
+     *
+     * The one kind whose subject is a person rather than the work, and the one
+     * the other five could not be talked into being. Reviewing the first month
+     * of pictures, the complaint was that the set is cold — no people, no soul
+     * — and the cause was structural rather than a matter of wording: a `take`
+     * argues, a `how_to` instructs, a `proof` demonstrates, a `behind` shows
+     * the unglamorous part and an `offer` sells. Every one of them is about the
+     * service. A reader is not buying a service, they are buying an evening
+     * back, and nothing in the calendar was allowed to say so.
+     *
+     * Kept honest by what it may not do: it is not a tip with a person added,
+     * and it does not end by pointing at the company. If it argues, it is a
+     * `take`; if it shows a result, it is a `proof`. See {@see brief()}.
+     */
+    case Life = 'life';
+
     /** A direct offer. Capped rather than targeted; see {@see ContentMix}. */
     case Offer = 'offer';
 
@@ -61,6 +79,7 @@ enum PostKind: string
             self::HowTo => 'How-to',
             self::Proof => 'Proof',
             self::Behind => 'Behind the scenes',
+            self::Life => 'Life at home',
             self::Offer => 'Offer',
         };
     }
@@ -84,6 +103,10 @@ enum PostKind: string
      *     Threads, because "here is what actually happened" is a conversation.
      *   - **Behind** — the same two, for the same reason: it is visual, and it
      *     invites a reply.
+     *   - **Life** — Instagram, where a moment in a home is the whole post,
+     *     and Threads, where it is the one kind that reliably gets answered:
+     *     people reply to a room they recognise. Not X, which rewards the
+     *     compact argument and treats a warm observation as filler.
      *   - **Offer** — Instagram alone. An offer on Threads or X with no
      *     conversational frame is «самопродвижение без разговорной рамки», the
      *     one shape §2 names with no working version.
@@ -97,6 +120,7 @@ enum PostKind: string
             self::HowTo => [ChannelType::Instagram, ChannelType::X],
             self::Proof => [ChannelType::Instagram, ChannelType::Threads],
             self::Behind => [ChannelType::Instagram, ChannelType::Threads],
+            self::Life => [ChannelType::Instagram, ChannelType::Threads],
             self::Offer => [ChannelType::Instagram],
         };
     }
@@ -136,6 +160,13 @@ enum PostKind: string
             self::Behind => 'This is a behind-the-scenes post. Show the part of the work customers never '
                 .'see: the standard, the step everybody skips, what goes wrong and what it takes to get '
                 .'right. It should read like somebody who does this describing it, not like marketing.',
+            self::Life => 'This is a post about somebody at home, and the home is one that has been '
+                .'looked after. Write one small true moment — a room at a particular hour, a thing '
+                .'somebody can do again because the space is ready for it. The cleaning is why the '
+                .'moment is possible and is not the subject of the post: mention it once at most, or '
+                .'not at all. This is the one kind that may not teach. No steps, no tips, no checklist, '
+                .'no "here is how", and no ending that turns back to the company. If you find yourself '
+                .'advising, you are writing the wrong kind.',
             self::Offer => 'This is an offer post, and it is the one post of the month that is allowed to '
                 .'be one. Say plainly what is on offer, who it is for and what happens next. No hype, no '
                 .'urgency that is not real.',
@@ -166,6 +197,9 @@ enum PostKind: string
             self::Behind => $channel === ChannelType::Instagram
                 ? ['story', 'before_after', 'question']
                 : ['observation', 'caption', 'take'],
+            self::Life => $channel === ChannelType::Instagram
+                ? ['story', 'question']
+                : ['observation', 'caption', 'question'],
             self::Offer => ['story', 'framework', 'caption', 'observation'],
         };
     }
@@ -203,6 +237,10 @@ enum PostKind: string
                 .'work stops. The change is the subject.',
             self::Behind => 'Show the part nobody photographs: the dirt itself, what came off, the '
                 .'awkward corner, the tool worn from use. Unglamorous and specific.',
+            self::Life => 'Show a person in the room, using it. Somebody occupied with something '
+                .'ordinary — eating, reading, getting out of the door, a child at a table — in a space '
+                .'that is plainly cared for. Nobody cleaning, no cloth, no gloves, no product: this is '
+                .'the after, hours later, when the work is invisible and the point of it is not.',
             self::Offer => 'Show the outcome somebody is buying — the finished state, at the scale a '
                 .'person would notice it.',
         };

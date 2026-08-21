@@ -117,6 +117,19 @@ final class VisualBriefGuard
     ];
 
     /**
+     * Somebody, as opposed to a pair of hands.
+     *
+     * Nouns only. "Hand" is deliberately absent — see {@see absenceComplaint()}
+     * — and so are pronouns, which describe whoever the nouns already named and
+     * would let "they were left on the table" count as company.
+     */
+    private const array PEOPLE = [
+        'person', 'people', 'somebody', 'someone', 'woman', 'man', 'girl', 'boy',
+        'child', 'children', 'toddler', 'kid', 'teenager', 'couple', 'family', 'guest',
+        'resident', 'neighbour', 'housemate', 'flatmate', 'parent', 'mother', 'father',
+    ];
+
+    /**
      * Everything wrong with this brief, in sentences the writer can act on.
      *
      * @param  array<string, mixed>  $visual
@@ -205,17 +218,29 @@ final class VisualBriefGuard
     }
 
     /**
-     * A brief with no work in it, which an `offer` is allowed to be.
+     * A brief with no work in it, which two kinds are allowed to be.
      *
      * {@see PostKind::Offer} asks for the finished state — the outcome somebody
      * is buying — and a finished state has by definition no dirt in it and
      * nobody scrubbing. Applying this rule to it would refuse the one kind
      * whose picture is supposed to be clean.
+     *
+     * {@see PostKind::Life} is exempt from the *work* half for the same reason
+     * and answers to a different rule instead. Its shot forbids the cloth, the
+     * gloves and the product on purpose — it is the after, hours later, when
+     * the work is invisible — so every honest `life` brief fails a test that
+     * looks for contact or residue. What it must not be is the failure this
+     * whole class was written about: a styled corner with nobody in it. So for
+     * that kind the question is not "is work happening" but "is anybody here".
      */
     private static function emptinessComplaint(string $fields, PostKind $kind): ?string
     {
         if ($kind === PostKind::Offer) {
             return null;
+        }
+
+        if ($kind === PostKind::Life) {
+            return self::absenceComplaint($fields);
         }
 
         foreach (self::WORK_STEMS as $stem) {
@@ -227,6 +252,26 @@ final class VisualBriefGuard
         return 'Nothing is happening in this photograph. It describes objects and a place, but not the '
             .'work, what the work is removing, or what it has changed — so there is nothing in the frame '
             .'worth stopping on. Name the residue, the contact or the difference.';
+    }
+
+    /**
+     * Nobody home, in the one kind that is about somebody being home.
+     *
+     * A pair of hands does not satisfy this and that is the point: hands are
+     * what the other kinds show, and a month of them with nobody attached is
+     * the complaint that produced {@see PostKind::Life} in the first place.
+     */
+    private static function absenceComplaint(string $fields): ?string
+    {
+        foreach (self::PEOPLE as $word) {
+            if (self::mentionsStem($fields, $word)) {
+                return null;
+            }
+        }
+
+        return 'There is nobody in this photograph, and this is the one kind of post that is about '
+            .'somebody. An empty room that has been tidied is a catalogue page. Put a person in the '
+            .'frame — who they are, and what they are in the middle of doing.';
     }
 
     /** Whole word, `\p{L}`-bounded for the reason {@see StudioPostGuard} gives. */

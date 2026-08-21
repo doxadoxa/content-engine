@@ -74,6 +74,15 @@ return [
     | what stops the teaching reading as theory; behind-the-scenes is the
     | cheapest to produce honestly and the hardest to fake.
     |
+    | `life` is the newest and the smallest of the five targets, and it is the
+    | only one that is not about the service. It exists because a month of the
+    | other four is a month about cleaning, and nobody buys cleaning — they buy
+    | the evening it gives back. Fifteen is deliberately modest: this is the
+    | kind that goes wrong most easily, since a warm post with nothing in it is
+    | still nothing, and a shortfall here costs less than a calendar full of
+    | staged contentment. It is taken mostly out of `how_to`, which the first
+    | plans over-produced to the point of being the reason PostKind exists.
+    |
     | `offer` is a ceiling. One post in ten is already more selling than most
     | accounts get away with, and see ContentMix for why under-shooting it is
     | not a defect. A deployment that raises this is buying reach with it.
@@ -82,10 +91,11 @@ return [
 
     'mix' => [
         'shares' => [
-            'how_to' => 30,
-            'take' => 25,
-            'proof' => 20,
+            'how_to' => 25,
+            'take' => 20,
+            'proof' => 15,
             'behind' => 15,
+            'life' => 15,
             'offer' => 10,
         ],
         'offer_ceiling' => 10,
