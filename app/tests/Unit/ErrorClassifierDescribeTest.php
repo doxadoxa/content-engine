@@ -86,6 +86,34 @@ final class ErrorClassifierDescribeTest extends TestCase
         $this->assertSame(500, mb_strlen($causes[0]['http_body']));
     }
 
+    /**
+     * The budget covers the sentence too, because for the provider that
+     * matters most here it *is* the body: LarAgent hands on a vendor exception
+     * with the response payload inside its message, and the gateway copies
+     * that message into its own. Bounding `http_body` and not `message` bounds
+     * nothing — five unbounded frames in one warning is a log line a pipeline
+     * may drop whole, which loses the only copy of the cause.
+     */
+    #[Test]
+    public function it_bounds_a_cause_whose_message_carries_the_payload(): void
+    {
+        $causes = (new ErrorClassifier)->causes(
+            new RetryableStepFailure('Wrapped.', previous: new RuntimeException(
+                'The openai call failed: '.str_repeat('y', 5000),
+            )),
+        );
+
+        $this->assertSame(500, mb_strlen($causes[0]['message']));
+    }
+
+    #[Test]
+    public function it_bounds_the_message_of_the_failure_itself(): void
+    {
+        $described = (new ErrorClassifier)->describe(new RuntimeException(str_repeat('y', 5000)));
+
+        $this->assertSame(2000, mb_strlen($described['message']));
+    }
+
     #[Test]
     public function it_keeps_more_of_the_body_of_the_failure_itself(): void
     {

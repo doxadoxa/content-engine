@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Core;
 
+use App\Ai\LaragentModelGateway;
 use App\Integrations\Exceptions\GoogleUnavailable;
 use App\Pipelines\Exceptions\InvalidPipelineDefinition;
 use App\Pipelines\Exceptions\RetryableStepFailure;
@@ -29,13 +30,23 @@ class ErrorClassifier
     /** Deep enough for gateway-wraps-vendor-wraps-curl, shallow enough to stay a summary. */
     private const int MAX_CAUSES = 5;
 
-    private const int BODY_CHARS = 2000;
+    /**
+     * Per frame, and applied to the message as well as to the body.
+     *
+     * Capping the body alone bounds nothing: an SDK that cannot attach its
+     * response to the exception puts it in the sentence instead, and
+     * {@see LaragentModelGateway} copies that sentence into its own.
+     * A frame is only as small as its largest field.
+     */
+    private const int TEXT_CHARS = 2000;
 
     /**
-     * Less of a cause's body than of the failure itself: the useful part of a
-     * provider's error is its first line, and five of these ride along.
+     * Less of a cause than of the failure itself: the useful part of a
+     * provider's error is its first line, and five of these ride along in one
+     * log line, which a log pipeline is entitled to drop for length — losing
+     * exactly the diagnostic this class exists to keep.
      */
-    private const int CAUSE_BODY_CHARS = 500;
+    private const int CAUSE_TEXT_CHARS = 500;
 
     public function isRetryable(Throwable $e): bool
     {
@@ -81,7 +92,7 @@ class ErrorClassifier
      */
     public function describe(Throwable $e): array
     {
-        $described = $this->frame($e, self::BODY_CHARS);
+        $described = $this->frame($e, self::TEXT_CHARS);
         $described['retryable'] = $this->isRetryable($e);
 
         return $described;
@@ -108,28 +119,28 @@ class ErrorClassifier
                 break;
             }
 
-            $causes[] = $this->frame($cause, self::CAUSE_BODY_CHARS);
+            $causes[] = $this->frame($cause, self::CAUSE_TEXT_CHARS);
         }
 
         return $causes;
     }
 
     /**
-     * One exception, without its causes.
+     * One exception, without its causes and within a budget.
      *
      * @return array<string, mixed>
      */
-    private function frame(Throwable $e, int $bodyChars): array
+    private function frame(Throwable $e, int $chars): array
     {
         $frame = [
             'class' => $e::class,
-            'message' => $e->getMessage(),
+            'message' => mb_substr($e->getMessage(), 0, $chars),
             'file' => $e->getFile().':'.$e->getLine(),
         ];
 
         if ($e instanceof RequestException) {
             $frame['http_status'] = $e->response->status();
-            $frame['http_body'] = mb_substr($e->response->body(), 0, $bodyChars);
+            $frame['http_body'] = mb_substr($e->response->body(), 0, $chars);
         }
 
         return $frame;
