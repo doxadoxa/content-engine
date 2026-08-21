@@ -31,6 +31,7 @@ use Illuminate\Support\Carbon;
  * @property string $goal
  * @property string $audience
  * @property string|null $angle
+ * @property string|null $shot
  * @property list<string> $channels
  * @property Carbon $scheduled_for
  */
@@ -52,6 +53,7 @@ class ContentIdea extends Model
         'goal',
         'audience',
         'angle',
+        'shot',
         'channels',
         'scheduled_for',
     ];
