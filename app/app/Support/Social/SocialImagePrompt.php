@@ -102,11 +102,18 @@ final readonly class SocialImagePrompt
      * the service — the promise is a home that is looked after, and the picture
      * was showing one falling apart. Hence {@see NO_DAMAGE}, which the list
      * above cannot be allowed to outvote.
+     *
+     * **Nothing here names an object any more, and that is the second lesson.**
+     * "A cable that was not tidied" was meant as an example of the register.
+     * The model read it as a requirement and delivered: a stray black cable
+     * appeared in every picture of one regenerated set, including one hanging
+     * off a lacquered white door. An example in a prompt is an instruction, so
+     * this asks for the quality and lets the scene supply its own evidence.
      */
-    private const string IMPERFECTION = 'Real and lived-in: a cable that was not tidied, objects that do '
-        .'not match, a cloth left where it was put down, a surface that is clearly in daily use. Framing '
-        .'slightly off-centre as a person would hold it. Not a showroom, not a catalogue, not a magazine '
-        .'set, nothing arranged for the camera.';
+    private const string IMPERFECTION = 'Real and lived-in: the ordinary traces of a home somebody uses, '
+        .'left where the day left them rather than arranged. Framing slightly off-centre as a person '
+        .'would hold it. Not a showroom, not a catalogue, not a magazine set, nothing arranged for the '
+        .'camera, and nothing added to the frame to look casual.';
 
     /**
      * The line between "used" and "broken", which the model does not draw itself.

@@ -2607,6 +2607,83 @@ final class ContentStudioTest extends TestCase
         });
     }
 
+    /**
+     * A month may not be one photograph taken fourteen times.
+     *
+     * Told only to show work in contact with a surface, the writer finds the
+     * one shot that always satisfies that and takes it every time: a
+     * regenerated set came back with eight of fourteen briefs describing a
+     * gloved hand and a detailing brush in a groove, across five unrelated
+     * ideas. The rule is the same one `$siblings` applies to the words, one
+     * level up — this idea is shown what the month already looks like.
+     */
+    #[Test]
+    public function a_draft_is_shown_the_photographs_the_month_already_has(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $told = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft'
+                && str_contains($call->prompt, 'Photographs already briefed for this month'),
+        ));
+
+        // The first idea of a month has nothing to be shown; everything after
+        // it does, and what it is shown is the subject the earlier draft used.
+        $this->assertNotSame([], $told);
+        $this->assertStringContainsString(
+            'a hand drawing a cloth through the dust',
+            $told[0]->prompt,
+        );
+        $this->assertStringContainsString('Brief a different photograph', $told[0]->prompt);
+    }
+
+    /**
+     * The history survives the run that wrote it.
+     *
+     * An idea whose Threads post exists and whose X post is being written in a
+     * later run is the case the in-memory list cannot cover, and the case where
+     * a repeat is most visible: the same idea, twice, side by side.
+     */
+    #[Test]
+    public function a_picture_briefed_in_an_earlier_run_still_counts(): void
+    {
+        $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        // One channel of one idea survives; the rest of the month is cleared,
+        // so anything the next draft is shown can only have come from the row.
+        $idea = app(CurrentProject::class)->run($this->project, function (): string {
+            $kept = ContentItem::query()->whereNotNull('content_idea_id')->firstOrFail();
+
+            ContentItem::query()->whereKeyNot($kept->getKey())->delete();
+            $kept->forceFill(['channel_payload' => [
+                ...$kept->channel_payload,
+                'visual' => ['subject' => 'a squeegee crossing a fogged shower screen'],
+            ]])->save();
+
+            return (string) $kept->content_idea_id;
+        });
+
+        $fake = $this->fakeStudio();
+        $this->postJson("/studio/ideas/{$idea}/generate")->assertStatus(202);
+
+        $told = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft'
+                && str_contains($call->prompt, 'a squeegee crossing a fogged shower screen'),
+        ));
+
+        $this->assertNotSame([], $told);
+    }
+
     #[Test]
     public function every_channel_gets_a_directed_picture_at_its_own_crop(): void
     {

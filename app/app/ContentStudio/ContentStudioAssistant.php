@@ -38,6 +38,7 @@ use App\Support\Social\SocialImagePrompt;
 use App\Support\Social\StudioPostGuard;
 use App\Support\Social\VisualBriefGuard;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -1031,6 +1032,12 @@ class ContentStudioAssistant
         $drafts = [];
         $siblings = [];
         $spent = [];
+        // Seeded from the month, then grown as this idea's own channels are
+        // written. Same argument as `$siblings` below, one level up: the
+        // convergence there was two channels of one idea reaching the same
+        // sentence, and this is five ideas of one month reaching the same
+        // photograph.
+        $shots = $this->photographed($plan);
 
         foreach ($channels as $channel) {
             $draft = $this->draftChannel(
@@ -1041,10 +1048,17 @@ class ContentStudioAssistant
                 $brief,
                 $siblings,
                 $spent,
+                $shots,
             );
 
             $drafts[$channel] = $draft;
             $spent[] = (string) ($draft['payload']['angle'] ?? '');
+
+            $subject = $draft['payload']['visual']['subject'] ?? null;
+
+            if (is_string($subject) && trim($subject) !== '') {
+                $shots[] = trim($subject);
+            }
 
             // What the idea's other channels already said, carried into the
             // next one. Separate calls stopped the channels being trimmed
@@ -1061,6 +1075,50 @@ class ContentStudioAssistant
     }
 
     /**
+     * What this month's drafts have already been photographed as.
+     *
+     * Read from the plan rather than carried through the call, because a month
+     * is not drafted in one run: {@see ContentStudioAction::GenerateIdea} is
+     * one run per idea, deliberately, so the only thing an idea shares with the
+     * one drafted before it is the database.
+     *
+     * **Including this idea's own items**, which was not the first answer. The
+     * argument for excluding them is that a redraft should be free to arrive
+     * near where it was — but a redraft deletes the items first, so the
+     * exclusion never fired there. Where it did fire is the partial case: an
+     * idea whose Threads post exists and whose X post is being written now, and
+     * there the sibling's photograph is precisely the one the new channel must
+     * not repeat. It is the in-run `$shots` list continued across runs.
+     *
+     * Newest last, so the tail passed to the prompt is the recent history
+     * rather than the oldest eight subjects of the month.
+     *
+     * @return list<string>
+     */
+    private function photographed(ContentPlan $plan): array
+    {
+        $payloads = ContentItem::query()
+            ->whereHas('contentIdea', fn (Builder $query) => $query
+                ->where('content_plan_id', $plan->getKey()))
+            ->orderBy('created_at')
+            ->pluck('channel_payload');
+
+        $subjects = [];
+
+        foreach ($payloads as $payload) {
+            $subject = is_array($payload) && is_string($payload['visual']['subject'] ?? null)
+                ? trim($payload['visual']['subject'])
+                : '';
+
+            if ($subject !== '' && ! in_array($subject, $subjects, true)) {
+                $subjects[] = $subject;
+            }
+        }
+
+        return $subjects;
+    }
+
+    /**
      * Write a pool for one channel and keep one of it.
      *
      * The four steps are the contour's, in the contour's order: write several,
@@ -1071,6 +1129,7 @@ class ContentStudioAssistant
      *
      * @param  array<string, string>  $siblings  what this idea already says elsewhere, by channel
      * @param  list<string>  $spent  the shapes this idea's other channels already took
+     * @param  list<string>  $shots  the photographs this month has already briefed
      * @return array{body: string, payload: array<string, mixed>}
      */
     private function draftChannel(
@@ -1081,6 +1140,7 @@ class ContentStudioAssistant
         ?BrandBrief $brief,
         array $siblings = [],
         array $spent = [],
+        array $shots = [],
     ): array {
         $pool = array_map(
             fn (StudioCandidate $candidate): StudioCandidate => $candidate->judged(
@@ -1099,7 +1159,7 @@ class ContentStudioAssistant
                     $candidate->panelText(),
                 ),
             ),
-            $this->writePool($playbook, $plan, $idea, $models, $brief, $siblings, $spent),
+            $this->writePool($playbook, $plan, $idea, $models, $brief, $siblings, $spent, $shots),
         );
 
         $ranked = $this->rank($pool);
@@ -1128,6 +1188,7 @@ class ContentStudioAssistant
      *
      * @param  array<string, string>  $siblings  what this idea already says elsewhere, by channel
      * @param  list<string>  $spent  the shapes this idea's other channels already took
+     * @param  list<string>  $shots  the photographs this month has already briefed
      * @return list<StudioCandidate>
      */
     private function writePool(
@@ -1138,6 +1199,7 @@ class ContentStudioAssistant
         ?BrandBrief $brief,
         array $siblings = [],
         array $spent = [],
+        array $shots = [],
     ): array {
         $angles = $this->angles($playbook, $idea, $spent);
         $pool = [];
@@ -1151,7 +1213,7 @@ class ContentStudioAssistant
                 $answer = $models->send(new ModelRequest(
                     role: 'draft',
                     instructions: $this->channelInstructions($playbook, $idea, $brief),
-                    prompt: $this->channelPrompt($playbook, $idea, $angle, $correction, $siblings),
+                    prompt: $this->channelPrompt($playbook, $idea, $angle, $correction, $siblings, $shots),
                 ));
 
                 try {
@@ -1285,6 +1347,7 @@ class ContentStudioAssistant
      * and the average one is the shape none of these channels reward.
      *
      * @param  array<string, string>  $siblings  what this idea already says elsewhere, by channel
+     * @param  list<string>  $shots  the photographs this month has already briefed
      */
     private function channelPrompt(
         ChannelPlaybook $playbook,
@@ -1292,6 +1355,7 @@ class ContentStudioAssistant
         string $angle,
         ?string $correction,
         array $siblings = [],
+        array $shots = [],
     ): string {
         $written = [];
 
@@ -1311,6 +1375,21 @@ class ContentStudioAssistant
                 : 'This idea has already been written for another channel. Do not reuse its opening, its '
                     ."question or its phrasing — say something the reader of both would not read twice:\n"
                     .implode("\n\n", $written),
+            // The same rule for the picture, at the month's scale. Asked only
+            // to show work in contact with a surface, the writer found the one
+            // shot that always satisfies it: eight of fourteen regenerated
+            // briefs were a gloved hand with a detailing brush in a groove,
+            // across five unrelated ideas. A feed of one photograph is its own
+            // failure. Stated as what exists rather than as a list of banned
+            // tools, because a ban pulls against "show the work" and the brief
+            // that avoids a word usually avoids the work with it.
+            $shots === []
+                ? null
+                : "Photographs already briefed for this month, most recent first:\n- "
+                    .implode("\n- ", array_slice($shots, -8))
+                    ."\nBrief a different photograph. Not a different wording of one of these — a "
+                    .'different tool, surface, room or moment of the work, such that somebody scrolling '
+                    .'the month would not think they had seen it already.',
             $correction === null ? null : "Your previous answer was invalid: {$correction}. Correct it.",
             $this->outputContract($playbook, $idea),
         ]));

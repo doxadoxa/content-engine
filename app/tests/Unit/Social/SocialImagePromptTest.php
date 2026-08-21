@@ -63,6 +63,12 @@ final class SocialImagePromptTest extends TestCase
         // Banning the words left the props in the frame, blank.
         $this->assertStringContainsString('no clipboards', $prompt);
         $this->assertStringContainsString('blank or otherwise', $prompt);
+
+        // An example in a prompt is an instruction. "A cable that was not
+        // tidied" was meant as register and came back as a stray black cable
+        // in every picture of a regenerated set, one of them hanging off a
+        // lacquered door. Nothing in the lived-in clause names an object now.
+        $this->assertStringNotContainsString('cable', $prompt);
     }
 
     #[Test]
