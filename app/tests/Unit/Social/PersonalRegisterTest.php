@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Social;
 
+use App\ContentStudio\ContentStudioAssistant;
 use App\Enums\ChannelType;
 use App\Enums\PostKind;
 use App\Support\Social\ChannelPlaybook;
 use App\Support\Social\ContentMix;
 use App\Support\Social\VisualBriefGuard;
 use PHPUnit\Framework\Attributes\Test;
+use ReflectionMethod;
 use Tests\TestCase;
 
 /**
@@ -123,6 +125,85 @@ final class PersonalRegisterTest extends TestCase
         // The one whose absence caused this, and the sentence it needed most.
         $this->assertStringContainsString('somebody at home', $vocabulary);
         $this->assertStringContainsString('life → instagram, threads', $routing);
+    }
+
+    /**
+     * The output contract has to allow what the mix asks for.
+     *
+     * The third place the kinds were typed out, and the one that would have
+     * bitten hardest: a model handed a mix asking for three `life` ideas and an
+     * output contract whose `kind` alternation lists five values without it
+     * resolves the contradiction in favour of the contract. It happened to
+     * comply anyway on the run that added the case, which is worse than failing
+     * — the drift was invisible.
+     */
+    #[Test]
+    public function the_output_contract_allows_every_kind_the_mix_asks_for(): void
+    {
+        $method = new ReflectionMethod(ContentStudioAssistant::class, 'proposalInstructions');
+        $method->setAccessible(true);
+
+        /** @var string $instructions */
+        $instructions = $method->invoke(app(ContentStudioAssistant::class));
+
+        $this->assertStringContainsString(
+            '"kind":"'.implode('|', PostKind::values()).'"',
+            $instructions,
+        );
+    }
+
+    /**
+     * A shape outranks a register, so the shape may not contradict it.
+     *
+     * Instagram's `story` ends in "what it taught us, then one thing to do",
+     * which is the right ending for four of the six kinds and the exact thing
+     * `life` may not do. `angles()` documents that the concrete shape wins, so
+     * the pool was spending calls writing how-tos with a person in them.
+     */
+    #[Test]
+    public function the_instagram_shape_it_uses_does_not_teach(): void
+    {
+        $playbook = ChannelPlaybook::for(ChannelType::Instagram);
+
+        $this->assertNotContains('story', PostKind::Life->anglesOn(ChannelType::Instagram));
+        $this->assertContains('moment', PostKind::Life->anglesOn(ChannelType::Instagram));
+
+        $moment = $playbook->shape('moment');
+
+        $this->assertStringContainsString('No lesson, no takeaway, no steps', $moment);
+        // And the shape it replaced still teaches, which is why it was replaced
+        // rather than edited — four kinds want that ending.
+        $this->assertStringContainsString('what it taught', $playbook->shape('story'));
+    }
+
+    /**
+     * A room named after a person is not a person.
+     *
+     * The people list was stem-matched, which allows four trailing letters so
+     * that a verb can conjugate. On nouns that is a hole: `guest` found
+     * "guestroom" and `man` found "mantel", so an empty guest room with a clock
+     * on the mantelpiece counted as two people and passed the one check written
+     * to refuse exactly that.
+     */
+    #[Test]
+    public function a_guestroom_is_not_a_guest(): void
+    {
+        foreach ([
+            'an empty guestroom with the bed made and the curtains open',
+            'a clock on the mantel above a swept fireplace',
+            'a childproof latch on a tidy cupboard door',
+        ] as $subject) {
+            $complaints = VisualBriefGuard::check(['subject' => $subject], PostKind::Life);
+
+            $this->assertCount(1, $complaints, "“{$subject}” should not read as company.");
+            $this->assertStringContainsString('nobody in this photograph', $complaints[0]);
+        }
+
+        // The words themselves still work when they mean people.
+        $this->assertSame([], VisualBriefGuard::check(
+            ['subject' => 'a guest taking off her coat in the hallway while the family finishes dinner'],
+            PostKind::Life,
+        ));
     }
 
     /**

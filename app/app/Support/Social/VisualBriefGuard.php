@@ -108,12 +108,24 @@ final class VisualBriefGuard
         'wipe', 'scrub', 'brush', 'sweep', 'mop', 'rinse', 'scrape', 'polish', 'buff', 'dry',
         'vacuum', 'wring', 'lift', 'wash', 'spray', 'dissolve', 'loosen', 'peel', 'strip',
         'cleaned', 'cleaning', 'freshly', 'gleam', 'shine', 'reflect', 'spotless',
-        // Who the work was for. Occupied, not merely present: a person has to
-        // be doing something a person does, or this becomes the loophole that
-        // lets a hand and a mug back through.
-        'child', 'toddler', 'kid', 'family', 'guest', 'neighbour', 'dog', 'cat',
-        'breakfast', 'dinner', 'supper', 'eating', 'reading', 'playing', 'homework', 'napping',
-        'asleep', 'cooking', 'barefoot', 'laughing', 'arriving', 'unpacking',
+        // Who the work was for, as verbs. Occupied, not merely present: a
+        // person has to be doing something a person does, or this becomes the
+        // loophole that lets a hand and a mug back through.
+        'eating', 'reading', 'playing', 'napping', 'asleep', 'cooking', 'barefoot',
+        'laughing', 'arriving', 'unpacking',
+    ];
+
+    /**
+     * The nouns of a room in use, matched whole.
+     *
+     * Separated from {@see WORK_STEMS} because those are stem-matched so a verb
+     * can conjugate, and a noun given four trailing letters stops being the
+     * noun: `guest` finds "guestroom", `child` finds "childproof". A guest room
+     * with nobody in it is the brief this rule exists to refuse.
+     */
+    private const array LIVED_IN = [
+        'child', 'children', 'toddler', 'kid', 'kids', 'family', 'guest', 'guests',
+        'dog', 'dogs', 'cat', 'cats', 'breakfast', 'dinner', 'supper', 'homework',
     ];
 
     /**
@@ -122,11 +134,22 @@ final class VisualBriefGuard
      * Nouns only. "Hand" is deliberately absent — see {@see absenceComplaint()}
      * — and so are pronouns, which describe whoever the nouns already named and
      * would let "they were left on the table" count as company.
+     *
+     * **Matched whole, and every plural spelled out.** These were first checked
+     * with {@see mentionsStem()}, which allows four trailing letters so that
+     * "wipe" answers for "wiping" — and on nouns that is a hole rather than a
+     * convenience: `guest` found "guestroom" and `man` found "mantel", so an
+     * empty guest room with a clock on the mantelpiece read as two people and
+     * passed the one check written to refuse exactly that. A verb conjugates; a
+     * room is not a person because it is named after one.
      */
     private const array PEOPLE = [
-        'person', 'people', 'somebody', 'someone', 'woman', 'man', 'girl', 'boy',
-        'child', 'children', 'toddler', 'kid', 'teenager', 'couple', 'family', 'guest',
-        'resident', 'neighbour', 'housemate', 'flatmate', 'parent', 'mother', 'father',
+        'person', 'people', 'somebody', 'someone', 'anyone',
+        'woman', 'women', 'man', 'men', 'girl', 'girls', 'boy', 'boys',
+        'child', 'children', 'toddler', 'toddlers', 'kid', 'kids', 'teenager', 'teenagers',
+        'couple', 'family', 'guests', 'housemate', 'housemates', 'flatmate', 'flatmates',
+        'resident', 'residents', 'neighbour', 'neighbours', 'parent', 'parents',
+        'mother', 'father', 'daughter', 'son', 'grandmother', 'grandfather',
     ];
 
     /**
@@ -249,6 +272,12 @@ final class VisualBriefGuard
             }
         }
 
+        foreach (self::LIVED_IN as $word) {
+            if (self::mentions($fields, $word)) {
+                return null;
+            }
+        }
+
         return 'Nothing is happening in this photograph. It describes objects and a place, but not the '
             .'work, what the work is removing, or what it has changed — so there is nothing in the frame '
             .'worth stopping on. Name the residue, the contact or the difference.';
@@ -264,7 +293,7 @@ final class VisualBriefGuard
     private static function absenceComplaint(string $fields): ?string
     {
         foreach (self::PEOPLE as $word) {
-            if (self::mentionsStem($fields, $word)) {
+            if (self::mentions($fields, $word)) {
                 return null;
             }
         }

@@ -229,7 +229,7 @@ final readonly class ChannelPlaybook
             // a question is the reliable way to get them — but a caption also
             // earns saves, which no question mark helps with.
             questionBonus: 14,
-            angles: ['story', 'framework', 'question', 'before_after'],
+            angles: ['story', 'moment', 'framework', 'question', 'before_after'],
             imageWidth: (int) config('content_studio.images.instagram.width', 1080),
             imageHeight: (int) config('content_studio.images.instagram.height', 1350),
             rules: implode("\n", [
@@ -243,6 +243,17 @@ final readonly class ChannelPlaybook
             shapes: [
                 'story' => 'Write it as hook, then the short story of what happened, then what it taught '
                     .'us, then one thing to do. Real specifics, not a parable.',
+                // The same narrative pull as `story` with the lesson removed.
+                // `story` ends in what it taught and one thing to do, which is
+                // the right ending for four of the six kinds and a direct
+                // contradiction of the fifth: a `life` post may not teach, and
+                // a shape is more concrete than a register, so the shape wins.
+                // Before this existed the personal posts came back arriving at
+                // a takeaway anyway.
+                'moment' => 'Write it as one scene and nothing else: where, when, what somebody is '
+                    .'doing, and what the room makes possible. Present tense, small and particular. '
+                    .'No lesson, no takeaway, no steps, and no line that turns it back to the brand — '
+                    .'end inside the moment or on a question about the reader\'s own.',
                 'framework' => 'Write it as hook, then the three or four parts of how this actually works, '
                     .'each on its own line, then one thing to do.',
                 'question' => 'Write it as a question in the first line, then the two ways people usually '

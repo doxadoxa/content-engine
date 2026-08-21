@@ -256,8 +256,12 @@ enum PostKind: string
             self::Behind => $channel === ChannelType::Instagram
                 ? ['story', 'before_after', 'question']
                 : ['observation', 'caption', 'take'],
+            // `moment` rather than `story`: Instagram's story shape ends in
+            // what it taught and one thing to do, and a shape outranks a
+            // register — so the pool was spending calls writing how-tos with a
+            // person in them.
             self::Life => $channel === ChannelType::Instagram
-                ? ['story', 'question']
+                ? ['moment', 'question']
                 : ['observation', 'caption', 'question'],
             self::Offer => ['story', 'framework', 'caption', 'observation'],
         };

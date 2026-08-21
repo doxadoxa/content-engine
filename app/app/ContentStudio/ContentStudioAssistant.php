@@ -674,7 +674,13 @@ class ContentStudioAssistant
                 .'month against it and repeat it back unchanged.',
 
             'Return JSON only, with exactly this shape:',
-            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"take|how_to|proof|behind|offer","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
+            // The kind alternation is derived for the reason the vocabulary above
+            // is: this enumeration was the third place the five kinds were
+            // typed out, and a model handed a mix asking for a kind its output
+            // contract forbids resolves the contradiction in favour of the
+            // contract. It happened to comply anyway on the run that added
+            // `life`, which is worse than failing — the drift was invisible.
+            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"'.implode('|', PostKind::values()).'","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
             'Use only dates inside the requested month. Spread the ideas across the month. Keep questions to the two or three unknowns that would materially change the plan.',
         ]);
     }
