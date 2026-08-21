@@ -94,11 +94,38 @@ final readonly class SocialImagePrompt
      * Perfection is the tell: matched objects, cleared surfaces, unmarked
      * finishes, symmetrical framing. Asking for the opposite is more reliable
      * than asking for "realistic", which the model reads as "high resolution".
+     *
+     * "Worn edges" used to be in this list and it is the clause that had to go.
+     * To an image model that is a licence to damage the set, and it took it:
+     * worktops came back chipped, gouged and split down the corner. For most
+     * brands that is a wasted picture. For this one it is an argument against
+     * the service — the promise is a home that is looked after, and the picture
+     * was showing one falling apart. Hence {@see NO_DAMAGE}, which the list
+     * above cannot be allowed to outvote.
+     *
+     * **Nothing here names an object any more, and that is the second lesson.**
+     * "A cable that was not tidied" was meant as an example of the register.
+     * The model read it as a requirement and delivered: a stray black cable
+     * appeared in every picture of one regenerated set, including one hanging
+     * off a lacquered white door. An example in a prompt is an instruction, so
+     * this asks for the quality and lets the scene supply its own evidence.
      */
-    private const string IMPERFECTION = 'Real and imperfect: worn edges, a cable that was not tidied, '
-        .'objects that do not match, a surface that has been used. Framing slightly off-centre as a '
-        .'person would hold it. Not a showroom, not a catalogue, not a magazine set, nothing arranged '
-        .'for the camera.';
+    private const string IMPERFECTION = 'Real and lived-in: the ordinary traces of a home somebody uses, '
+        .'left where the day left them rather than arranged. Framing slightly off-centre as a person '
+        .'would hold it. Not a showroom, not a catalogue, not a magazine set, nothing arranged for the '
+        .'camera, and nothing added to the frame to look casual.';
+
+    /**
+     * The line between "used" and "broken", which the model does not draw itself.
+     *
+     * Every signal of life this brand can show is something cleaning removes:
+     * dust, marks, residue, crumbs, water spots. Everything cleaning cannot fix
+     * — a chip, a crack, a split edge — is a different photograph, about a home
+     * nobody is maintaining, published by the company paid to maintain it.
+     */
+    private const string NO_DAMAGE = 'Used, not broken: nothing chipped, cracked, gouged, split, peeling '
+        .'or in disrepair, no damaged furniture or worktops. What shows here is dirt, dust, marks and '
+        .'residue — the things cleaning removes — on surfaces that are otherwise sound.';
 
     /**
      * The failure modes these models actually have, named individually.
@@ -114,7 +141,12 @@ final readonly class SocialImagePrompt
     private const string ARTIFACTS = 'Nothing malformed: no duplicated or fused handles, hinges, taps or '
         .'switches, no hardware with an impossible design, no doors or walls that do not line up, no '
         .'furniture floating off the floor, no repeated or mirrored objects, no extra or missing '
-        .'fingers, no melted edges between surfaces.';
+        .'fingers, no melted edges between surfaces. Where two surfaces meet, the join stays a join: no '
+        .'trench, slot, channel or cavity opening into a worktop, no gap cut through a solid surface, no '
+        .'seam that turns into a hole. Every object is one whole object of one material and stays '
+        .'separate from what it touches — nothing baked into anything else, and the thing in the hand is '
+        .'only that thing: a cloth is cloth all the way through, with no food, packaging or second '
+        .'object fused inside it.';
 
     /**
      * The one instruction that outranks the model's own subject.
@@ -125,10 +157,18 @@ final readonly class SocialImagePrompt
      * the same cavity. Softening the background was not enough, because the
      * brief had asked for the appliance as the *scene* — the defect was in the
      * subject, so the subject is where it has to be refused.
+     *
+     * **It used to refuse people along with them, which was never the point.**
+     * "One thing at arm's length" is a distance, and at that distance nobody
+     * fits: the rule aimed at dishwashers took the human out of every frame,
+     * and a month of a home-cleaning brand's pictures came back as gloved
+     * hands and grime with no one attached. The failure this guards against is
+     * *machinery rendered as architecture*, not company in the room.
      */
     private const string NO_MACHINERY = 'Do not build the frame around an appliance, a run of cabinetry '
-        .'or a room. Fill it with one thing at arm\'s length — a surface, a cloth, a tool, hands at '
-        .'work — and let everything structural sit far behind it and out of focus.';
+        .'or an empty room. Build it around one thing near the camera — a surface, a cloth, a tool, a '
+        .'person at work, somebody using the room — and let everything structural sit behind that and '
+        .'out of focus. A person may be the subject, and may fill the frame.';
 
     /**
      * What makes the frame worth stopping on.
@@ -207,16 +247,34 @@ final readonly class SocialImagePrompt
             "Location: {$this->location}",
             "Style: {$this->style}",
             $shot === null || trim($shot) === '' ? null : 'What this picture has to show: '.trim($shot),
-            $visual === '' ? null : "Brand visual language, which overrides the style above where they disagree: {$visual}",
             'Camera: '.self::CAMERA,
             "Light: {$this->light}",
             self::INTEREST,
             self::IMPERFECTION,
+            self::NO_DAMAGE,
             self::NO_MACHINERY,
             self::ARTIFACTS,
+            // The objects, not only their content. Banning the words alone left
+            // the props in the frame with nothing written on them, which is how
+            // a post about naming a standard came back as a photograph of a
+            // blank form.
             'Not in this image: no text, no lettering, no numbers, no logos, no watermarks, no user '
-                .'interface, no charts. Nobody looking into the lens. No stock-photo staging, no '
-                .'handshakes, no people pointing at screens.',
+                .'interface, no charts — and nothing whose purpose is to carry them: no clipboards, '
+                .'checklists, forms, notebooks, paperwork, labels turned to the camera, signage, phones, '
+                .'tablets or screens, blank or otherwise. No stock-photo staging: nobody posed for the '
+                .'camera, nobody holding a product up for it, no handshakes, no people pointing at '
+                .'screens. Somebody caught mid-task who happens to be facing the camera is a '
+                .'photograph; somebody presenting themselves to it is an advertisement.',
+            // Last, and the only thing here that may overrule what is above it.
+            // The order used to say otherwise: this line sat in the middle
+            // claiming to override "the style above" while five absolute rules
+            // followed it, and the absolutes won. That is how a brief asking
+            // for "professional cleaning teams" produced eleven months of
+            // disembodied hands — the brand asked for people and the house
+            // rules quietly refused, with nothing anywhere recording the
+            // disagreement.
+            $visual === '' ? null : 'The brand this is for describes its own pictures as follows, and '
+                ."where any instruction above disagrees with this, this wins: {$visual}",
         ]));
     }
 

@@ -36,7 +36,9 @@ use App\Support\Social\ContentMix;
 use App\Support\Social\PostFormat;
 use App\Support\Social\SocialImagePrompt;
 use App\Support\Social\StudioPostGuard;
+use App\Support\Social\VisualBriefGuard;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -1030,6 +1032,12 @@ class ContentStudioAssistant
         $drafts = [];
         $siblings = [];
         $spent = [];
+        // Seeded from the month, then grown as this idea's own channels are
+        // written. Same argument as `$siblings` below, one level up: the
+        // convergence there was two channels of one idea reaching the same
+        // sentence, and this is five ideas of one month reaching the same
+        // photograph.
+        $shots = $this->photographed($plan);
 
         foreach ($channels as $channel) {
             $draft = $this->draftChannel(
@@ -1040,10 +1048,17 @@ class ContentStudioAssistant
                 $brief,
                 $siblings,
                 $spent,
+                $shots,
             );
 
             $drafts[$channel] = $draft;
             $spent[] = (string) ($draft['payload']['angle'] ?? '');
+
+            $subject = $draft['payload']['visual']['subject'] ?? null;
+
+            if (is_string($subject) && trim($subject) !== '') {
+                $shots[] = trim($subject);
+            }
 
             // What the idea's other channels already said, carried into the
             // next one. Separate calls stopped the channels being trimmed
@@ -1060,6 +1075,50 @@ class ContentStudioAssistant
     }
 
     /**
+     * What this month's drafts have already been photographed as.
+     *
+     * Read from the plan rather than carried through the call, because a month
+     * is not drafted in one run: {@see ContentStudioAction::GenerateIdea} is
+     * one run per idea, deliberately, so the only thing an idea shares with the
+     * one drafted before it is the database.
+     *
+     * **Including this idea's own items**, which was not the first answer. The
+     * argument for excluding them is that a redraft should be free to arrive
+     * near where it was — but a redraft deletes the items first, so the
+     * exclusion never fired there. Where it did fire is the partial case: an
+     * idea whose Threads post exists and whose X post is being written now, and
+     * there the sibling's photograph is precisely the one the new channel must
+     * not repeat. It is the in-run `$shots` list continued across runs.
+     *
+     * Newest last, so the tail passed to the prompt is the recent history
+     * rather than the oldest eight subjects of the month.
+     *
+     * @return list<string>
+     */
+    private function photographed(ContentPlan $plan): array
+    {
+        $payloads = ContentItem::query()
+            ->whereHas('contentIdea', fn (Builder $query) => $query
+                ->where('content_plan_id', $plan->getKey()))
+            ->orderBy('created_at')
+            ->pluck('channel_payload');
+
+        $subjects = [];
+
+        foreach ($payloads as $payload) {
+            $subject = is_array($payload) && is_string($payload['visual']['subject'] ?? null)
+                ? trim($payload['visual']['subject'])
+                : '';
+
+            if ($subject !== '' && ! in_array($subject, $subjects, true)) {
+                $subjects[] = $subject;
+            }
+        }
+
+        return $subjects;
+    }
+
+    /**
      * Write a pool for one channel and keep one of it.
      *
      * The four steps are the contour's, in the contour's order: write several,
@@ -1070,6 +1129,7 @@ class ContentStudioAssistant
      *
      * @param  array<string, string>  $siblings  what this idea already says elsewhere, by channel
      * @param  list<string>  $spent  the shapes this idea's other channels already took
+     * @param  list<string>  $shots  the photographs this month has already briefed
      * @return array{body: string, payload: array<string, mixed>}
      */
     private function draftChannel(
@@ -1080,6 +1140,7 @@ class ContentStudioAssistant
         ?BrandBrief $brief,
         array $siblings = [],
         array $spent = [],
+        array $shots = [],
     ): array {
         $pool = array_map(
             fn (StudioCandidate $candidate): StudioCandidate => $candidate->judged(
@@ -1098,7 +1159,7 @@ class ContentStudioAssistant
                     $candidate->panelText(),
                 ),
             ),
-            $this->writePool($playbook, $plan, $idea, $models, $brief, $siblings, $spent),
+            $this->writePool($playbook, $plan, $idea, $models, $brief, $siblings, $spent, $shots),
         );
 
         $ranked = $this->rank($pool);
@@ -1127,6 +1188,7 @@ class ContentStudioAssistant
      *
      * @param  array<string, string>  $siblings  what this idea already says elsewhere, by channel
      * @param  list<string>  $spent  the shapes this idea's other channels already took
+     * @param  list<string>  $shots  the photographs this month has already briefed
      * @return list<StudioCandidate>
      */
     private function writePool(
@@ -1137,6 +1199,7 @@ class ContentStudioAssistant
         ?BrandBrief $brief,
         array $siblings = [],
         array $spent = [],
+        array $shots = [],
     ): array {
         $angles = $this->angles($playbook, $idea, $spent);
         $pool = [];
@@ -1150,11 +1213,25 @@ class ContentStudioAssistant
                 $answer = $models->send(new ModelRequest(
                     role: 'draft',
                     instructions: $this->channelInstructions($playbook, $idea, $brief),
-                    prompt: $this->channelPrompt($playbook, $idea, $angle, $correction, $siblings),
+                    prompt: $this->channelPrompt($playbook, $idea, $angle, $correction, $siblings, $shots),
                 ));
 
                 try {
-                    $pool[] = $this->parseCandidate($answer->text, $playbook, $idea, $angle);
+                    // The picture brief is enforced on the first attempt only.
+                    // It is a correction, and the correction has been made by
+                    // the time the second answer arrives: refusing that one too
+                    // would spend the candidate to fix its photograph, and a
+                    // post whose picture is weak is worth more than no post.
+                    // An unillustrated draft is already survivable — see
+                    // `illustrate()`, which swallows a provider that will not
+                    // draw — so the picture may not be what loses the words.
+                    $pool[] = $this->parseCandidate(
+                        $answer->text,
+                        $playbook,
+                        $idea,
+                        $angle,
+                        enforceVisual: $attempt === 1,
+                    );
 
                     continue 2;
                 } catch (InvalidAssistantResponse $e) {
@@ -1247,6 +1324,17 @@ class ContentStudioAssistant
             $idea->kind->brief(),
             $brief?->compileToPrompt(),
             "The idea this post comes from: {$idea->title}\nThe thesis it has to keep: {$idea->thesis}",
+            // The title above is working notes. It is the *idea's* title, it is
+            // never published — a reader on any of these channels sees the post
+            // and nothing else — and posts kept arriving written as its second
+            // half: "Routine care holds the baseline; a deep clean goes beyond
+            // usual cleaning" is a sentence that only parses under a headline
+            // asking when routine stops being enough. A post that needs the
+            // note to make sense is a post that reaches the reader broken.
+            'That title and thesis are working notes, not part of the post. The reader never sees them. '
+                .'Do not answer the title, continue from it, or assume it set anything up — whatever the '
+                .'post needs the reader to know, the post itself has to say. Read your first sentence as '
+                .'someone would meet it, with nothing above it.',
         ]));
     }
 
@@ -1259,6 +1347,7 @@ class ContentStudioAssistant
      * and the average one is the shape none of these channels reward.
      *
      * @param  array<string, string>  $siblings  what this idea already says elsewhere, by channel
+     * @param  list<string>  $shots  the photographs this month has already briefed
      */
     private function channelPrompt(
         ChannelPlaybook $playbook,
@@ -1266,6 +1355,7 @@ class ContentStudioAssistant
         string $angle,
         ?string $correction,
         array $siblings = [],
+        array $shots = [],
     ): string {
         $written = [];
 
@@ -1285,6 +1375,21 @@ class ContentStudioAssistant
                 : 'This idea has already been written for another channel. Do not reuse its opening, its '
                     ."question or its phrasing — say something the reader of both would not read twice:\n"
                     .implode("\n\n", $written),
+            // The same rule for the picture, at the month's scale. Asked only
+            // to show work in contact with a surface, the writer found the one
+            // shot that always satisfies it: eight of fourteen regenerated
+            // briefs were a gloved hand with a detailing brush in a groove,
+            // across five unrelated ideas. A feed of one photograph is its own
+            // failure. Stated as what exists rather than as a list of banned
+            // tools, because a ban pulls against "show the work" and the brief
+            // that avoids a word usually avoids the work with it.
+            $shots === []
+                ? null
+                : "Photographs already briefed for this month, most recent first:\n- "
+                    .implode("\n- ", array_slice($shots, -8))
+                    ."\nBrief a different photograph. Not a different wording of one of these — a "
+                    .'different tool, surface, room or moment of the work, such that somebody scrolling '
+                    .'the month would not think they had seen it already.',
             $correction === null ? null : "Your previous answer was invalid: {$correction}. Correct it.",
             $this->outputContract($playbook, $idea),
         ]));
@@ -1328,7 +1433,28 @@ class ContentStudioAssistant
                 .'vague brief produces a stock picture. Describe something small and near rather than a '
                 .'whole room: hands, a tool, one surface, one object being used. Do not use the words '
                 .'premium, elegant, editorial, luxury, pristine, sleek or minimalist — they produce a '
-                .'showroom. Never ask for text, words or logos in the image.',
+                .'showroom.',
+            // The requirement the picture is judged against, given to the party
+            // that writes the brief. It used to reach the image provider only,
+            // appended after six fields written without knowledge of it, and a
+            // provider handed a subject and a contradicting requirement draws
+            // the subject: a `proof` post whose shot has to show a boundary
+            // between cleaned and uncleaned came back as a hand holding a cloth
+            // near a door, because that is what its own brief had asked for.
+            'What this picture has to show: '.$idea->kind->shot().' Write the six fields so they deliver '
+                .'that. If the thought behind this post has nothing photographable in it, do not reach '
+                .'for an object that stands in for the idea — find the moment of real work that the '
+                .'thought is about, and brief that.',
+            // Not "no text" — no text-carriers. Told to keep words out of the
+            // frame, the model kept asking for the prop and disclaiming its
+            // content: "a checklist-style clipboard with no legible writing",
+            // "a tablet showing an unlabeled checklist interface". Both drew
+            // exactly what was asked for, and an empty form photographs as
+            // something nobody filled in.
+            'Never ask for text, words, numbers or logos in the image, and never ask for an object whose '
+                .'whole purpose is to carry them: no clipboards, checklists, forms, notebooks, paperwork, '
+                .'labels facing the camera, signage, phones, tablets or screens. A picture cannot show a '
+                .'standard by photographing a list of it.',
             'Reply with JSON and nothing else: '.$shape,
         ]));
     }
@@ -1424,12 +1550,17 @@ class ContentStudioAssistant
      * about everything else. A malformed `visual` object costs the candidate
      * its art direction and {@see SocialImagePrompt} its defaults, not the
      * candidate itself.
+     *
+     * `$enforceVisual` adds a third strict thing, and it is the only
+     * conditional one — see the call site in {@see writePool()} for why it is
+     * asked of a first answer and forgiven on a second.
      */
     private function parseCandidate(
         string $text,
         ChannelPlaybook $playbook,
         ContentIdea $idea,
         string $angle,
+        bool $enforceVisual = true,
     ): StudioCandidate {
         $decoded = $this->decodeObject($text);
 
@@ -1439,6 +1570,16 @@ class ContentStudioAssistant
 
         $visual = is_array($decoded['visual'] ?? null) ? $decoded['visual'] : [];
         $channel = $playbook->channel->value;
+
+        // Raised as an invalid answer rather than scored down, because the
+        // retry that follows is the whole remedy: the writer is the only party
+        // that knows what the post is about, and told what is wrong with its
+        // brief it writes a better one.
+        $complaints = $enforceVisual ? VisualBriefGuard::check($visual, $idea->kind) : [];
+
+        if ($complaints !== []) {
+            throw new InvalidAssistantResponse(implode(' ', $complaints));
+        }
 
         if ($playbook->isCaptionChannel()) {
             return $this->parseCaption($decoded, $playbook, $idea, $angle, $visual);

@@ -48,11 +48,19 @@ final class VisualDirector
 
         $answer = $models->send(new ModelRequest(
             role: 'draft',
+            // The house rules the reviewer's note is rewritten inside. Not a
+            // guard — an operator who asks for something gets it, and
+            // {@see \App\Support\Social\VisualBriefGuard} deliberately does not
+            // run here. But the model doing the rewriting should not reach for
+            // a clipboard on its own, which is what it did when the only rule
+            // it had was about the words printed on one.
             instructions: 'You are the art director for a brand\'s social photography. You are given the '
                 .'six fields that describe one photograph and one note from the person reviewing it. '
                 .'Rewrite only what the note asks about and leave the rest exactly as it is. Never ask '
-                .'for text, words or logos in the picture, and never build the shot around an appliance, '
-                .'a run of cabinetry or a room.',
+                .'for text, words or logos in the picture, and never for an object whose purpose is to '
+                .'carry them — a clipboard, a checklist, a form, a phone or a screen photographs as a '
+                .'blank one. Never build the shot around an appliance, a run of cabinetry or a room. '
+                .'Brief work that is happening, not the moment before it starts.',
             prompt: implode("\n\n", [
                 "The photograph as currently briefed:\n".json_encode($current, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
                 "What the reviewer said:\n".$instruction,
