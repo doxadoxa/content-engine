@@ -79,6 +79,11 @@ class ApplyContentStudioAction extends AbstractStep
         } catch (ContentStudioException $e) {
             throw $e;
         } catch (Throwable $e) {
+            // Deliberately says nothing about the cause: this message reaches
+            // the browser through the operation payload and the dashboard's
+            // failure card, and an upstream error body is not something to
+            // hand a customer. The cause is not lost — the runner logs the
+            // whole chain for whoever has to fix it.
             if ($this->errors->isRetryable($e)) {
                 throw new RetryableStepFailure('The Content Studio provider is temporarily unavailable.', previous: $e);
             }
@@ -93,7 +98,7 @@ class ApplyContentStudioAction extends AbstractStep
     }
 
     /**
-     * One idea, not a week.
+     * One idea, not a week — with room to make a call at all.
      *
      * The number that used to live here — 1200, sized from six measured runs of
      * a four-idea week — was the right answer to the wrong shape. A deadline
@@ -101,13 +106,24 @@ class ApplyContentStudioAction extends AbstractStep
      * and the ceiling moves every time somebody adds a post to the calendar.
      *
      * A run now drafts one idea: about 125 seconds of model calls and pictures
-     * whatever the week holds. 300 is that with room for a slow provider, and
-     * it does not change when the plan does. The fan-out run costs a moment and
+     * whatever the week holds. That was sized at 300, which looked like the
+     * work plus room for a slow provider and was in fact a deadlock. A step
+     * does not spend its budget on calls, it spends it on calls it is *allowed
+     * to start*: {@see StepContext::refuseWithoutTimeToFinish()} refuses one
+     * that could still be running at the deadline, so a step needs a whole
+     * `models.timeout` in hand before the first one. With both numbers at 300
+     * the very first call was refused, about 600ms in, three attempts running,
+     * and the failure reached the dashboard as "the provider is temporarily
+     * unavailable" over a provider nobody had asked anything.
+     *
+     * 600 — the expensive queue's own default — is 125 seconds of work with a
+     * refusal threshold underneath it rather than on top of it, and it still
+     * does not change when the plan does. The fan-out run costs a moment and
      * fits inside the same number without needing its own.
      */
     public function timeout(): int
     {
-        return 300;
+        return 600;
     }
 
     public function queue(): string
