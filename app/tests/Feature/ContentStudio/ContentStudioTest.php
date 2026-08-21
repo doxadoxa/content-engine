@@ -2701,6 +2701,142 @@ final class ContentStudioTest extends TestCase
         $this->assertNotSame([], $told);
     }
 
+    /**
+     * The picture the month chose reaches the writer, and outranks its own.
+     *
+     * The idea carries a `shot` assigned when all twenty were planned together.
+     * A draft free to invent its own subject invents the same one as its
+     * siblings, because they are written in parallel and none can see the
+     * others.
+     */
+    #[Test]
+    public function a_draft_is_given_the_shot_its_month_assigned_it(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            ContentIdea::query()->update(['shot' => 'a squeegee crossing a fogged shower screen']);
+        });
+
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $told = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft'
+                && str_contains($call->prompt, 'a squeegee crossing a fogged shower screen'),
+        ));
+
+        $this->assertNotSame([], $told);
+        $this->assertStringContainsString('sharpen it, do not substitute it', $told[0]->prompt);
+    }
+
+    /**
+     * An idea planned before the column existed still drafts.
+     *
+     * A null shot is the old behaviour — the writer invents one — and every
+     * idea in every plan made before this release has one.
+     */
+    #[Test]
+    public function an_idea_with_no_assigned_shot_still_draws_a_picture(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            ContentIdea::query()->update(['shot' => null]);
+        });
+
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $drafts = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft',
+        ));
+
+        $this->assertNotSame([], $drafts);
+
+        foreach ($drafts as $call) {
+            $this->assertStringNotContainsString('chosen with the rest of the month', $call->prompt);
+        }
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $this->assertGreaterThan(0, ContentItem::query()->whereNotNull('channel_type')->count());
+        });
+    }
+
+    /**
+     * The brand does not quote its own website at the reader.
+     *
+     * Evidence arrives written *about* the business, because that is how a
+     * planner reading a website records it. Handed straight to a writer it
+     * produced "Our homepage states 97% on-time arrivals".
+     */
+    #[Test]
+    public function the_writer_is_told_the_facts_are_its_own(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $drafts = array_values(array_filter(
+            $fake->sent(),
+            static fn (ModelRequest $call): bool => $call->role === 'draft',
+        ));
+
+        $this->assertNotSame([], $drafts);
+
+        foreach ($drafts as $call) {
+            $this->assertStringContainsString('You are the business', $call->prompt);
+            $this->assertStringContainsString('never mention the website', $call->prompt);
+        }
+    }
+
+    /**
+     * Every register is asked to spend a fact, except the one that may not.
+     *
+     * `life` exists because the service is why the moment is possible and is
+     * not its subject. Asked for a specific anyway, the first post drafted
+     * under the rule ended "Recurring Home Cleaning starts at €18/hour" — a
+     * price list wearing a Sunday afternoon.
+     */
+    #[Test]
+    public function the_personal_register_is_not_asked_to_quote_a_price(): void
+    {
+        $fake = $this->fakeStudio();
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])->json('plan.id');
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            ContentIdea::query()->limit(1)->update(['kind' => PostKind::Life]);
+        });
+
+        $this->postJson("/studio/plans/{$planId}/generate")->assertStatus(202);
+
+        $byRegister = ['life' => [], 'other' => []];
+
+        foreach ($fake->sent() as $call) {
+            if ($call->role !== 'draft') {
+                continue;
+            }
+
+            $key = str_contains($call->instructions, 'This is a post about somebody at home') ? 'life' : 'other';
+            $byRegister[$key][] = str_contains($call->prompt, 'Use at least one specific');
+        }
+
+        $this->assertNotSame([], $byRegister['life']);
+        $this->assertNotSame([], $byRegister['other']);
+        $this->assertNotContains(true, $byRegister['life'], 'A life post was asked for a price.');
+        $this->assertNotContains(false, $byRegister['other'], 'Every other register still spends a fact.');
+    }
+
     #[Test]
     public function every_channel_gets_a_directed_picture_at_its_own_crop(): void
     {

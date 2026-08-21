@@ -681,6 +681,27 @@ class ContentStudioAssistant
             'Write every idea angle for the channels it is actually going to. Give each channel a distinct '
                 .'execution, not one shared paragraph.',
 
+            // Variety across a set is a property of the set, and this is the
+            // only party that holds the set. Left to the drafting step, each
+            // idea briefs its photograph without seeing the other nineteen —
+            // they are drafted in parallel — and a real month came back with 33
+            // of 40 pictures describing a hand and 14 of them a brush.
+            'Each idea also gets `shot`: one sentence naming what its photograph shows. Across the month '
+                .'these have to differ from each other, and differ by more than wording — a different '
+                .'room, surface, tool, moment or person. Two ideas whose shots are both a gloved hand '
+                .'with a brush are one photograph published twice, however different the posts are. '
+                .'Vary who is in frame as well: some of these are nobody, some a pair of hands at work, '
+                .'and some a person in a room using it.',
+            'A shot is what a camera can point at. Not "professionalism" or "attention to detail" — a '
+                .'surface, an object, a moment of work, a person doing something. If the idea is '
+                .'abstract, find the physical thing it is about and name that.',
+            // The constraints that used to live only at drafting time. Moving
+            // the decision up here without them produced a month of shots the
+            // writer would have had to refuse: a printed checklist, a phone
+            // showing an arrival time, a tablet showing a checklist, and three
+            // empty rooms.
+            SocialImagePrompt::subjectRules(),
+
             // The goal, and why the model is asked for it rather than the
             // operator. A blank target field is a question nobody can answer on
             // their first month — the honest answer is "I don't know, what is
@@ -710,7 +731,7 @@ class ContentStudioAssistant
             // contract forbids resolves the contradiction in favour of the
             // contract. It happened to comply anyway on the run that added
             // `life`, which is worse than failing — the drift was invisible.
-            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"'.implode('|', PostKind::values()).'","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","channels":["threads","x"]}]}',
+            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"'.implode('|', PostKind::values()).'","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","shot":"...","channels":["threads","x"]}]}',
             'Use only dates inside the requested month. Spread the ideas across the month. Keep questions to the two or three unknowns that would materially change the plan.',
         ]);
     }
@@ -958,6 +979,7 @@ class ContentStudioAssistant
                 'goal' => $this->text($raw['goal'] ?? null, 255),
                 'audience' => $this->text($raw['audience'] ?? null, 500),
                 'angle' => $this->text($raw['angle'] ?? null, 2000) ?: null,
+                'shot' => $this->text($raw['shot'] ?? null, 500) ?: null,
                 'channels' => $this->channelsFor($kind, $raw['channels'] ?? null),
                 'scheduled_for' => $date,
             ];
@@ -1477,6 +1499,27 @@ class ContentStudioAssistant
             'Audience: '.$idea->audience,
             $idea->angle === null || $idea->angle === '' ? null : 'Editorial angle: '.$idea->angle,
             'The only evidence you may state: '.json_encode($idea->evidence, JSON_UNESCAPED_UNICODE),
+            // The evidence arrives written *about* the business, because that
+            // is how a planner reading a website records it. Handed straight to
+            // a writer it produces "Our homepage states 97% on-time arrivals"
+            // and "We list Quality follow-up among our service standards" — the
+            // brand quoting its own website back at the reader, which reads as
+            // a company describing itself in the third person.
+            'That evidence is written about this business by somebody reading its website. You are the '
+                .'business. State the facts as your own — "we arrive in a two-hour window", not "the '
+                .'homepage states a two-hour window" — and never mention the website, the homepage, a '
+                .'page, an article or what is "listed" anywhere. If the only way to say something is to '
+                .'cite where it is written, do not say it.',
+            // Every kind but one. `life` is the register whose whole rule is that
+            // the service is why the moment is possible and is not the subject,
+            // and this instruction walked straight through it: the first post
+            // drafted under it ended "Recurring Home Cleaning starts at
+            // €18/hour", which is a price list wearing a Sunday afternoon.
+            $idea->kind === PostKind::Life
+                ? null
+                : 'Use at least one specific from that evidence if it holds one: a price, a duration, a '
+                    .'number, a place, a material. That is the difference between this post and the same '
+                    .'post any competitor could publish.',
             $playbook->shape($angle),
             $written === []
                 ? null
@@ -1553,16 +1596,23 @@ class ContentStudioAssistant
                 .'that. If the thought behind this post has nothing photographable in it, do not reach '
                 .'for an object that stands in for the idea — find the moment of real work that the '
                 .'thought is about, and brief that.',
+            // Assigned when the month was planned, by the only party that saw
+            // all twenty ideas at once. Realise it rather than replace it: an
+            // idea free to choose its own subject chooses the same one as its
+            // siblings, because they are drafted in parallel and none of them
+            // can see the others.
+            $idea->shot === null || trim($idea->shot) === ''
+                ? null
+                : 'The photograph for this idea was chosen with the rest of the month, so that no two '
+                    ."posts show the same thing. It is: {$idea->shot}. Write the six fields to make "
+                    .'exactly that picture — sharpen it, do not substitute it.',
             // Not "no text" — no text-carriers. Told to keep words out of the
             // frame, the model kept asking for the prop and disclaiming its
             // content: "a checklist-style clipboard with no legible writing",
             // "a tablet showing an unlabeled checklist interface". Both drew
             // exactly what was asked for, and an empty form photographs as
             // something nobody filled in.
-            'Never ask for text, words, numbers or logos in the image, and never ask for an object whose '
-                .'whole purpose is to carry them: no clipboards, checklists, forms, notebooks, paperwork, '
-                .'labels facing the camera, signage, phones, tablets or screens. A picture cannot show a '
-                .'standard by photographing a list of it.',
+            'Never ask for text, words, numbers or logos in the image. '.SocialImagePrompt::subjectRules(),
             'Reply with JSON and nothing else: '.$shape,
         ]));
     }
@@ -2527,6 +2577,7 @@ class ContentStudioAssistant
             'goal' => $idea->goal,
             'audience' => $idea->audience,
             'angle' => $idea->angle,
+            'shot' => $idea->shot,
             'channels' => $idea->channels,
         ];
     }
@@ -2618,6 +2669,7 @@ class ContentStudioAssistant
                 'goal' => $idea->goal,
                 'audience' => $idea->audience,
                 'angle' => $idea->angle,
+                'shot' => $idea->shot,
                 'channels' => $idea->channels,
                 'scheduled_for' => $idea->scheduled_for->toDateString(),
             ];

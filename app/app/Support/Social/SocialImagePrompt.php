@@ -226,6 +226,37 @@ final readonly class SocialImagePrompt
     }
 
     /**
+     * What a subject may not be, for whoever is choosing one.
+     *
+     * The house rules below are written for the image provider and appended
+     * after a brief already exists. That is too late for two of them: a picture
+     * built around a clipboard or an empty room is wrong at the moment somebody
+     * decides it, and by the time this class sees it the only remaining move is
+     * to contradict the brief it was handed.
+     *
+     * Both parties who choose a subject read this — the planner, which assigns
+     * a shot to each idea while it can still see the whole month, and the
+     * writer, which turns that into six fields. Stated once here because it has
+     * now been typed out in two places twice, and each time the second copy
+     * went stale: the enum's kinds, and this.
+     */
+    public static function subjectRules(): string
+    {
+        return implode(' ', [
+            'A photograph here is one thing near the camera — a surface, a tool, hands at work, a person '
+                .'using the room — with everything structural behind it and out of focus.',
+            'It is never built around an empty room, a whole interior, a run of cabinetry or an '
+                .'appliance: those are the shapes an image model renders as architecture that does not '
+                .'meet itself.',
+            'And it never contains an object whose purpose is to carry words — no clipboards, '
+                .'checklists, forms, cards, notebooks, printed lists, phones, tablets or screens. These '
+                .'models cannot draw legible text, so what comes back is a blank one, and a photograph '
+                .'of an empty form says nothing was filled in.',
+            'A person may be in it, and may be the subject.',
+        ]);
+    }
+
+    /**
      * The prompt, as the image provider receives it.
      *
      * Labelled lines rather than a paragraph. Every one of these providers
