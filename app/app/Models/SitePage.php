@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\SitePageKind;
 use App\Models\Concerns\BelongsToProject;
 use Database\Factories\SitePageFactory;
 use Illuminate\Database\Eloquent\Builder;
@@ -24,8 +25,10 @@ use Illuminate\Support\Carbon;
  * @property string $url
  * @property string $title
  * @property string|null $description
+ * @property string|null $body
  * @property Carbon|null $published_at
  * @property bool $is_article
+ * @property SitePageKind|null $page_kind
  * @property Carbon|null $read_at
  */
 class SitePage extends Model
@@ -41,8 +44,10 @@ class SitePage extends Model
         'url',
         'title',
         'description',
+        'body',
         'published_at',
         'is_article',
+        'page_kind',
         'read_at',
     ];
 
@@ -59,6 +64,24 @@ class SitePage extends Model
     public function scopeArticles(Builder $query): Builder
     {
         return $query->where('is_article', true);
+    }
+
+    /**
+     * The pages where the business states its own offer, with the text to
+     * prove it.
+     *
+     * The evidence corpus, and the reason `body` exists. Ordered by URL so that
+     * a plan written twice from an unchanged site is written from the same
+     * pages in the same order.
+     *
+     * @param  Builder<$this>  $query
+     * @return Builder<$this>
+     */
+    public function scopeCommercial(Builder $query): Builder
+    {
+        return $query->where('page_kind', SitePageKind::Commercial)
+            ->whereNotNull('body')
+            ->orderBy('url');
     }
 
     /**
@@ -80,6 +103,7 @@ class SitePage extends Model
             'published_at' => 'datetime',
             'read_at' => 'datetime',
             'is_article' => 'boolean',
+            'page_kind' => SitePageKind::class,
         ];
     }
 }

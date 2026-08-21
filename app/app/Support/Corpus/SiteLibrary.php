@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Support\Corpus;
 
+use App\Ai\Contracts\ModelSession;
+use App\Enums\SitePageKind;
+use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\SitePage;
 use App\Support\Http\PublicHttpClient;
@@ -32,13 +35,119 @@ class SiteLibrary
     /** Pages actually fetched per refresh. A crawl is a different product. */
     private const int MAX_READS = 60;
 
+    /** Pages whose kind is decided per harvest. The same politeness ceiling. */
+    private const int MAX_HARVEST = 60;
+
+    /**
+     * Of a commercial page, stored.
+     *
+     * A services page states its offer in the first screen and spends the rest
+     * on reassurance. Six thousand characters is the offer plus room, and it is
+     * what lands in a planning prompt beside eleven others.
+     */
+    private const int MAX_BODY_CHARS = 6000;
+
     private const int REFRESH_AFTER_DAYS = 7;
 
     public function __construct(
         private readonly CurrentProject $current,
         private readonly PublicHttpClient $http,
         private readonly PublicHttpTarget $targets,
+        private readonly PageClassifier $classifier,
     ) {}
+
+    /**
+     * Read the pages nobody has read, and decide what each one is.
+     *
+     * Separate from {@see refresh()} and separately callable because it is the
+     * paid half: it makes model calls, so it belongs at a call site with a run
+     * to hang the cost on rather than inside the lazy staleness check that
+     * {@see for()} performs. A deployment that never calls this keeps exactly
+     * the library it had.
+     *
+     * **Unclassified rather than unread is the queue.** `read_at` marks a page
+     * whose title was fetched, which most articles already have; `page_kind`
+     * marks a page somebody has actually looked at. Non-articles go first
+     * because they are the ones that have never been fetched at all and the
+     * ones the evidence corpus is made of.
+     *
+     * @return int the number of pages classified
+     */
+    public function harvest(Project $project, ModelSession $models): int
+    {
+        return $this->current->run($project, function () use ($project, $models): int {
+            $sitemap = $project->sitemap_url;
+
+            if ($sitemap === null || $sitemap === '') {
+                return 0;
+            }
+
+            $pages = $this->unclassified($project);
+
+            if ($pages === []) {
+                return 0;
+            }
+
+            $read = [];
+
+            foreach ($pages as $page) {
+                $text = $this->readBody($page->url, $sitemap);
+
+                if ($text === '') {
+                    // Nothing came back, so there is nothing to judge. Marked
+                    // rather than left, or every harvest starts by re-fetching
+                    // the same dead URLs.
+                    $page->forceFill(['page_kind' => SitePageKind::Other, 'read_at' => now()])->save();
+
+                    continue;
+                }
+
+                $read[$page->getKey()] = [
+                    'url' => $page->url,
+                    'title' => $page->title,
+                    'text' => $text,
+                    'page' => $page,
+                ];
+            }
+
+            if ($read === []) {
+                return 0;
+            }
+
+            $kinds = $this->classifier->classify(
+                array_map(
+                    static fn (array $row): array => [
+                        'url' => $row['url'],
+                        'title' => $row['title'],
+                        'text' => $row['text'],
+                    ],
+                    $read,
+                ),
+                $models,
+            );
+
+            foreach ($read as $key => $row) {
+                $kind = $kinds[$key] ?? SitePageKind::fallback();
+
+                /** @var SitePage $page */
+                $page = $row['page'];
+
+                $page->forceFill([
+                    'page_kind' => $kind,
+                    // Only the commercial pages keep what they said. An
+                    // editorial body is an interpretation, and once the journal
+                    // is written by this engine it is our own — see
+                    // SitePageKind::Editorial.
+                    'body' => $kind === SitePageKind::Commercial
+                        ? Str::limit(Str::squish($row['text']), self::MAX_BODY_CHARS, '')
+                        : null,
+                    'read_at' => now(),
+                ])->save();
+            }
+
+            return count($read);
+        });
+    }
 
     /**
      * Refresh the library if it is stale, and return what is in it.
@@ -142,6 +251,40 @@ class SiteLibrary
         $this->current->run($project, fn () => $this->rebuild($project));
     }
 
+    /**
+     * The pages worth looking at, nearest the business first.
+     *
+     * Three narrowings, each of which removes pages that cannot carry evidence:
+     *
+     *   - **Ours are skipped.** A page this engine published is not the
+     *     business speaking, it is this engine speaking, and citing it closes a
+     *     loop nobody would see close.
+     *   - **One locale.** `/en/services`, `/pt/services`, `/ru/services` and
+     *     `/uk/services` are the same facts four times, and four times is four
+     *     times the prompt for no additional fact.
+     *   - **Non-articles first.** They are the ones never fetched under the old
+     *     rule, and the ones a services page is.
+     *
+     * @return list<SitePage>
+     */
+    private function unclassified(Project $project): array
+    {
+        $ours = ContentItem::query()
+            ->whereNotNull('public_url')
+            ->pluck('public_url')
+            ->all();
+
+        $pages = SitePage::query()
+            ->whereNull('page_kind')
+            ->when($ours !== [], fn ($query) => $query->whereNotIn('url', $ours))
+            ->orderBy('is_article')
+            ->orderBy('url')
+            ->get()
+            ->all();
+
+        return array_slice($this->inLocale(array_values($pages), $project->default_locale), 0, self::MAX_HARVEST);
+    }
+
     private function rebuild(Project $project): void
     {
         $sitemap = $project->sitemap_url;
@@ -237,6 +380,50 @@ class SiteLibrary
                 'read_at' => now(),
             ])->save();
         }
+    }
+
+    /**
+     * The readable text of a page, with the furniture taken out.
+     *
+     * Not a parser. Script, style, nav, header and footer are cut because every
+     * page on a site carries the same ones and they would be the bulk of every
+     * excerpt; everything else becomes text. A services page states its offer in
+     * prose and a price in a table, and both survive tag-stripping — which is
+     * the whole requirement, and the reason this is thirty lines rather than a
+     * dependency.
+     */
+    private function readBody(string $url, string $siteOrigin): string
+    {
+        try {
+            $response = $this->http->request(
+                'GET',
+                $url,
+                ['User-Agent' => 'ContentEngine/1.0 (+library)'],
+                15,
+                3,
+                $siteOrigin,
+            )->response;
+        } catch (ConnectionException|UnsafePublicUrl $e) {
+            Log::info('A site page could not be read', ['url' => $url, 'reason' => $e->getMessage()]);
+
+            return '';
+        }
+
+        if ($response->failed()) {
+            return '';
+        }
+
+        $html = (string) preg_replace(
+            '#<(script|style|nav|header|footer|noscript|svg)\b[^>]*>.*?</\1>#is',
+            ' ',
+            $response->body(),
+        );
+
+        // Block elements become a space rather than nothing, or "50€per hour"
+        // is what the model is asked to read a price out of.
+        $html = (string) preg_replace('#<(br|/p|/div|/li|/h[1-6]|/tr|/td)[^>]*>#i', ' ', $html);
+
+        return Str::squish(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5));
     }
 
     /**

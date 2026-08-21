@@ -622,6 +622,26 @@ class ContentStudioAssistant
             'You are the content strategist inside a structured content engine.',
             'Make the first useful move. Read the supplied site and brand context, then propose a month instead of asking a blank set of questions.',
             'Separate facts found in the supplied context from assumptions. Never invent a customer, result, price, statistic, launch, or personal experience.',
+
+            // The rule that turns "never invent" from a gag into an
+            // instruction. Told only what it may not do, and handed a list of
+            // its own article titles, the planner wrote evidence like
+            // "Cleaning Point has an article titled X" — a sitemap presented as
+            // fact, and the reason a month of posts said nothing.
+            'Your facts come from `what_the_business_says_about_itself`: the pages where this business '
+                .'states what it sells, for how much, in what time, and what is included. Quote what is '
+                .'specific there — a price, a duration, a material, a room, an inclusion, an area '
+                .'covered — and put it in the idea\'s `evidence`. An idea whose evidence names something '
+                .'checkable is worth ten that do not.',
+            'Two things are not evidence and may not be written as any. That this business has published '
+                .'an article, or that its site covers a subject — a list of titles is a sitemap, not a '
+                .'fact about cleaning, plumbing or software. And anything from those articles '
+                .'themselves: they are opinions this business published, and increasingly they are '
+                .'written by this engine, so citing one is citing us. `existing_site_articles` is there '
+                .'to tell you what has already been covered, and for nothing else.',
+            'Where the business says nothing checkable about a subject, say so by choosing a different '
+                .'subject. Do not reach for the framing instead — a post whose only content is a way of '
+                .'looking at something is the post this instruction exists to prevent.',
             'Threads should invite a real conversation. X should make a compact, useful argument. Instagram should have a visual reason to exist.',
 
             // The kinds, and the reason they are the first thing decided about
@@ -743,6 +763,13 @@ class ContentStudioAssistant
             'brand_brief' => $brief?->compileToPrompt(),
             'original_business_data' => $project->original_data,
             'existing_site_articles' => $pages,
+            // What the business says about itself, in its own words, from the
+            // pages where it states its offer. The planner had none of this: it
+            // was given article titles and a 1.2 KB self-description, told
+            // never to invent a fact, and asked for thirty posts — so it wrote
+            // "Cleaning Point has an article titled X" and called that
+            // evidence. See product/read-what-the-business-says-spec.md.
+            'what_the_business_says_about_itself' => $this->businessFacts(),
             'already_planned_titles' => $planned,
             'current_proposal' => $plan->assistant_version > 0 ? [
                 'summary' => $plan->assistant_summary,
@@ -760,6 +787,37 @@ class ContentStudioAssistant
             $context,
             JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         );
+    }
+
+    /**
+     * The commercial pages, as text the planner may quote from.
+     *
+     * Bounded twice. Twelve pages because a small business states its whole
+     * offer in fewer and a large one repeats itself, and 1,500 characters
+     * because a services page says what it sells in its first screen and
+     * spends the rest reassuring. Together that is the part of the prompt
+     * carrying facts, and it is smaller than the list of article titles it
+     * sits beside.
+     *
+     * Empty is a real answer and is left empty rather than padded: a site with
+     * no commercial pages gives the planner nothing to be specific about, and
+     * the honest consequence is a vaguer month rather than an invented one.
+     *
+     * @return list<array{url: string, title: string, says: string}>
+     */
+    private function businessFacts(): array
+    {
+        $facts = [];
+
+        foreach (SitePage::query()->commercial()->limit(12)->get() as $page) {
+            $facts[] = [
+                'url' => $page->url,
+                'title' => $page->title,
+                'says' => Str::limit((string) $page->body, 1500),
+            ];
+        }
+
+        return $facts;
     }
 
     /**
