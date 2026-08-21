@@ -98,6 +98,34 @@ final class PersonalRegisterTest extends TestCase
     }
 
     /**
+     * The planner is told the kind exists, which is not automatic.
+     *
+     * Adding the case and giving it a share is not enough on its own: the
+     * proposal instructions listed the kinds as five hardcoded bullets, so the
+     * planner met `life` only as a token in the mix arithmetic — "about 3
+     * life", with nothing saying what one is — and planned a month of the five
+     * it had been told about instead, twice, through the correction loop. The
+     * list is derived from the enum now, and this is the test that says so.
+     */
+    #[Test]
+    public function the_planners_vocabulary_covers_every_kind_there_is(): void
+    {
+        $vocabulary = implode("\n", PostKind::vocabulary());
+        $routing = PostKind::routing();
+
+        $this->assertCount(count(PostKind::cases()), PostKind::vocabulary());
+
+        foreach (PostKind::cases() as $kind) {
+            $this->assertStringContainsString("- {$kind->value}: ", $vocabulary);
+            $this->assertStringContainsString("{$kind->value} → ", $routing);
+        }
+
+        // The one whose absence caused this, and the sentence it needed most.
+        $this->assertStringContainsString('somebody at home', $vocabulary);
+        $this->assertStringContainsString('life → instagram, threads', $routing);
+    }
+
+    /**
      * A month has room for it, and the shares still add up.
      *
      * The share came out of `how_to` rather than off the end, so the total is

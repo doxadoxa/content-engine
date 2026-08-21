@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
+use App\ContentStudio\ContentStudioAssistant;
 use App\Models\ContentIdea;
 use App\Support\Social\ContentMix;
 
@@ -82,6 +83,64 @@ enum PostKind: string
             self::Life => 'Life at home',
             self::Offer => 'Offer',
         };
+    }
+
+    /**
+     * One line, for the model that is choosing between them.
+     *
+     * Distinct from {@see brief()}, which is the register a writer works in
+     * and runs to a paragraph. This is the planner's vocabulary: it appears in
+     * the proposal instructions as a list, and its whole job is to let a
+     * strategist tell six things apart while assigning one to each idea.
+     *
+     * It exists because that list used to be typed out in
+     * {@see ContentStudioAssistant} as five hardcoded
+     * bullets beginning "The five:". Adding a sixth case here did not add it
+     * there, so the planner was handed a mix asking for "about 3 life" and no
+     * statement of what a life post is — and it did the reasonable thing and
+     * planned none at all, twice, through the correction loop. A list of the
+     * cases of an enum belongs to the enum.
+     */
+    public function summary(): string
+    {
+        return match ($this) {
+            self::Take => 'an opinion you are willing to be disagreed with about.',
+            self::HowTo => 'teaching — how the thing is actually done.',
+            self::Proof => 'a result, a case, a before and after, from the supplied evidence only.',
+            self::Behind => 'the work customers never see — the standard, the step everybody skips.',
+            self::Life => 'somebody at home in a space that has been looked after, and the ordinary '
+                .'thing the space lets them do. Not a tip with a person in it, and it does not '
+                .'mention the service beyond once in passing. This is the reason anybody buys the '
+                .'others.',
+            self::Offer => 'a direct offer. Rare, and capped.',
+        };
+    }
+
+    /**
+     * The kinds and what they are, as the planner's own list.
+     *
+     * @return list<string>
+     */
+    public static function vocabulary(): array
+    {
+        return array_map(
+            static fn (self $kind): string => "- {$kind->value}: {$kind->summary()}",
+            self::cases(),
+        );
+    }
+
+    /** Where each kind goes, as one line of the planner's instructions. */
+    public static function routing(): string
+    {
+        $routes = array_map(
+            static fn (self $kind): string => $kind->value.' → '.implode(
+                ', ',
+                array_map(static fn (ChannelType $channel): string => $channel->value, $kind->channels()),
+            ),
+            self::cases(),
+        );
+
+        return implode('. ', $routes).'.';
     }
 
     /**
