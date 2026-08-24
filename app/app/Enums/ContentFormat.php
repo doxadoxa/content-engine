@@ -79,13 +79,21 @@ enum ContentFormat: string
      * Only Instagram has a carousel; a Threads or X post asked for one falls
      * back to a single image rather than being refused, because the format is
      * an intent about the *idea* and an idea goes to more than one channel.
-     * Text works everywhere.
+     *
+     * **And Instagram is the one channel that cannot carry a text post**, for
+     * the blunt reason that it will not accept a post without media. This used
+     * to read "text works everywhere" and was harmless only because nothing
+     * ever chose text: the moment the planner could, a `proof` idea marked text
+     * would have shipped its Instagram half with no picture at all. The same
+     * fallback applies in the other direction — the idea keeps its intent, and
+     * the channel that cannot honour it gets one photograph.
      */
     public function isAvailableOn(ChannelType $channel): bool
     {
         return match ($this) {
             self::Carousel => $channel === ChannelType::Instagram,
-            self::Image, self::Text => true,
+            self::Text => $channel !== ChannelType::Instagram,
+            self::Image => true,
         };
     }
 
@@ -93,5 +101,97 @@ enum ContentFormat: string
     public function on(ChannelType $channel): self
     {
         return $this->isAvailableOn($channel) ? $this : self::Image;
+    }
+
+    /**
+     * When to choose this, said to the party choosing it.
+     *
+     * Written as a property of the *idea* rather than of the kind, which is the
+     * correction this method exists to make. {@see PostKind::instagramFormat()}
+     * decides format from kind and argues that "only teaching is reliably a
+     * sequence" — and the counterexample is a `behind` post about a published
+     * checklist, which is a list of eight things and was published as a
+     * photograph of cloths with the list in the caption. What decides a
+     * carousel is whether this idea has parts, not which register it is in.
+     */
+    public function summary(): string
+    {
+        return match ($this) {
+            self::Carousel => 'carousel — the idea has parts: steps, a comparison, a list, a sequence '
+                .'of figures. Choose it when the argument arrives in order and loses something when '
+                .'flattened into one picture. The panels are drawn, so words in them are legible and a '
+                .'checklist or a set of numbers is a thing we can actually show. Instagram only.',
+            self::Image => 'image — one photograph and the words beside it. Choose it when the idea is '
+                .'one thing: a moment, a result, a place, a claim that a single frame can carry.',
+            self::Text => 'text — no picture at all. Choose it when the words are the whole post and a '
+                .'photograph would be decoration: an opinion, a question, a short argument. A picture '
+                .'that illustrates nothing is worse than none.',
+        };
+    }
+
+    /**
+     * The formats as prompt lines, derived rather than typed.
+     *
+     * The kinds were typed out in three places and went stale in the third the
+     * first time a case was added — a whole register reached the planner as a
+     * token inside the mix arithmetic with nothing saying what it was. This is
+     * the same list in the same prompt, so it is generated from the cases.
+     *
+     * @return list<string>
+     */
+    public static function vocabulary(): array
+    {
+        return array_map(static fn (self $format): string => '- '.$format->summary(), self::cases());
+    }
+
+    /** @return list<string> */
+    public static function values(): array
+    {
+        return array_map(static fn (self $format): string => $format->value, self::cases());
+    }
+
+    /** The formats a model may choose between, as prompt text. */
+    public static function alternation(): string
+    {
+        return implode('|', self::values());
+    }
+
+    /**
+     * What an unreadable or absent answer becomes.
+     *
+     * `image` rather than null, because null is not "no opinion" here — it is
+     * the pre-existing fallback in {@see ContentIdea::format()}, which decides
+     * from the kind and gives a carousel only to a how-to. A planner that
+     * answered with nonsense should get the plain artefact, not the rule this
+     * whole field exists to stop deciding for it.
+     */
+    public static function fallback(): self
+    {
+        return self::Image;
+    }
+
+    public static function tryFromLoose(mixed $value): ?self
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        return self::tryFrom(mb_strtolower(trim($value)));
+    }
+
+    /**
+     * What a kind means when nobody chose a format — the rule that used to be
+     * the only rule.
+     *
+     * Kept so that an idea planned before the planner was asked for a format
+     * behaves exactly as it did, and lives here rather than inline in
+     * {@see ContentIdea::format()} because the mix check needs the same answer
+     * about a proposed idea that has no row yet. Two copies of it is how the
+     * kinds, the picture rules and the evidence contract each went stale in
+     * their second place.
+     */
+    public static function impliedBy(PostKind $kind): self
+    {
+        return $kind->instagramFormat() === 'carousel' ? self::Carousel : self::Image;
     }
 }

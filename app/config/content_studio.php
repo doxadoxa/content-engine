@@ -103,6 +103,48 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | What a month is made *as*
+    |--------------------------------------------------------------------------
+    |
+    | The same instrument as the mix above, applied to the artefact rather than
+    | the subject, and it is here for a measured reason: across every month this
+    | engine has ever planned, the number of carousels is zero. Nothing set
+    | `content_format`, so every idea fell through to the rule that gives a
+    | carousel to a how-to and a single photograph to everything else — with a
+    | renderer standing by that draws panels with real type.
+    |
+    | Two denominators rather than a shares map, because a carousel is Instagram
+    | only and `take` never goes there. See FormatMix: asking for a share of the
+    | whole month is asking for something a quarter of the month cannot do.
+    |
+    | `carousel_share` is counted against the ideas that reach Instagram. Forty
+    | is judged rather than derived: a panel costs compute instead of a
+    | generation, so cost argues for more, and the only thing arguing against is
+    | that a reader who is asked to swipe every time stops swiping. It is the
+    | number most worth revisiting once a month has actually run with it.
+    |
+    | `text_share` is counted against all ideas and is deliberately small. It is
+    | the only choice here that makes a post cheaper, and also the only path in
+    | this engine that has never run in production — see ContentFormat. Fifteen
+    | is enough for the opinions and questions that a photograph only decorates,
+    | and small enough that a fault in that path costs a few posts and not a
+    | month.
+    |
+    | `carousel_ceiling` is the other direction's failure, and it is not
+    | hypothetical: handed four of these ideas, a competing tool made all four
+    | five-slide carousels. Sixty leaves room for a carousel-heavy month without
+    | letting the feed become one shape.
+    |
+    */
+
+    'formats' => [
+        'carousel_share' => 40,
+        'text_share' => 15,
+        'carousel_ceiling' => 60,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | The panel renderer
     |--------------------------------------------------------------------------
     |
