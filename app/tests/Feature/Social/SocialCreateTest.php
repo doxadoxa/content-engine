@@ -185,6 +185,67 @@ final class SocialCreateTest extends TestCase
         });
     }
 
+    /**
+     * A rethought idea does not keep the photograph planned for the old one.
+     *
+     * The drafting step does not treat a shot as a suggestion: it tells the
+     * writer to make *exactly* that picture and not to substitute it. So an
+     * edited thesis over a stale shot does not produce a slightly-off image, it
+     * produces a faithful photograph of the concept the operator just replaced.
+     */
+    #[Test]
+    public function editing_what_an_idea_says_clears_the_photograph_planned_for_it(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+            $idea = $this->idea($plan, 'One professional who knows the home');
+            $idea->forceFill(['shot' => 'a key on a clean entrance console'])->save();
+
+            return $idea;
+        });
+
+        $this->patchJson("/studio/ideas/{$idea->getKey()}", [
+            'thesis' => 'Actually this is about how the arrival window is agreed.',
+        ])->assertOk()->assertJsonPath('idea.shot', null);
+
+        app(CurrentProject::class)->run($this->project, function () use ($idea): void {
+            $this->assertNull(ContentIdea::query()->whereKey($idea->getKey())->firstOrFail()->shot);
+        });
+    }
+
+    /** An edit that changes nothing about the meaning keeps it. */
+    #[Test]
+    public function setting_the_format_leaves_the_photograph_alone(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+            $idea = $this->idea($plan, 'A standard you can name');
+            $idea->forceFill(['shot' => 'balcony doors moving a sheer curtain'])->save();
+
+            return $idea;
+        });
+
+        $this->patchJson("/studio/ideas/{$idea->getKey()}", ['content_format' => 'image'])
+            ->assertOk()
+            ->assertJsonPath('idea.shot', 'balcony doors moving a sheer curtain');
+    }
+
+    /** And an operator who has a better idea for the picture may say so. */
+    #[Test]
+    public function the_photograph_can_be_written_by_hand(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+
+            return $this->idea($plan, 'What a reset table gives back');
+        });
+
+        $this->patchJson("/studio/ideas/{$idea->getKey()}", [
+            'thesis' => 'Rewritten, and the picture named in the same breath.',
+            'shot' => 'a folded chair against a cleared dining table',
+        ])->assertOk()->assertJsonPath('idea.shot', 'a folded chair against a cleared dining table');
+    }
+
     #[Test]
     public function a_text_post_buys_no_pictures(): void
     {

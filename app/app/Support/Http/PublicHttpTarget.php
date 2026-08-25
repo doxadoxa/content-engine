@@ -88,7 +88,23 @@ final class PublicHttpTarget
         $addresses = [];
 
         if (function_exists('dns_get_record')) {
-            $records = dns_get_record($host, DNS_A | DNS_AAAA);
+            // Silenced deliberately, and only here. A resolver that answers
+            // SERVFAIL — a nameserver blinking, a rate limit, a network hiccup
+            // — makes this emit a warning, and under an error handler that
+            // promotes warnings that warning becomes a thrown exception. Which
+            // means a transient blip skipped both of the two careful things
+            // below it: the `gethostbynamel` fallback that would probably have
+            // succeeded, and the explicit refusal that turns an unresolvable
+            // host into "the host could not be resolved to a public address"
+            // instead of a stack trace. CI caught it as a flake in the
+            // onboarding wizard; in production it is a 500 on somebody's
+            // perfectly good URL.
+            //
+            // Nothing about the security posture changes. A failed lookup
+            // contributes no addresses, an empty address list is refused above
+            // unless a deployment has opted out, and every address that does
+            // come back is still checked against the private ranges.
+            $records = @dns_get_record($host, DNS_A | DNS_AAAA);
 
             if (is_array($records)) {
                 foreach ($records as $record) {
