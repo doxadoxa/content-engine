@@ -181,6 +181,12 @@ class DashboardController extends Controller
             'active' => $active->map(fn (PipelineRun $run): array => [
                 'id' => $run->getKey(),
                 'pipeline' => $run->pipeline,
+                // What the run is actually doing, for the pipelines that carry
+                // more than one job. `content_studio` carries six, and the
+                // dashboard labelled all of them "Proposing the social content
+                // system" — so eighteen posts being drafted read as eighteen
+                // proposals of the same thing.
+                'action' => self::actionOf($run),
                 'status' => $run->status->value,
                 'subject' => $run->contentItem?->title,
                 'started_at' => $run->started_at?->toIso8601String(),
@@ -198,6 +204,7 @@ class DashboardController extends Controller
             'failed' => $recentlyFailed->map(fn (PipelineRun $run): array => [
                 'id' => $run->getKey(),
                 'pipeline' => $run->pipeline,
+                'action' => self::actionOf($run),
                 'subject' => $run->contentItem?->title,
                 'step' => $run->failed_step_key,
                 'message' => is_string($run->error['message'] ?? null)
@@ -355,5 +362,26 @@ class DashboardController extends Controller
                 'locales' => $group?->pluck('locale')->unique()->sort()->values()->all() ?? [$item->locale],
             ];
         })->all());
+    }
+
+    /**
+     * The job a run is doing, where the pipeline name does not say.
+     *
+     * Most pipelines do one thing and their key is the whole answer.
+     * `content_studio` is the exception: proposing a month, refining it,
+     * drafting one post and redrawing one picture all run through it, and the
+     * dashboard had a single label for the lot. Eighteen posts drafting in
+     * parallel therefore appeared as eighteen identical rows claiming to be
+     * proposals, which is both wrong and the least useful thing that screen
+     * could have said.
+     *
+     * Read off the run's own input rather than added to a column, because it
+     * is already there and a second copy would be a second thing to keep true.
+     */
+    private static function actionOf(PipelineRun $run): ?string
+    {
+        $action = $run->input['action'] ?? null;
+
+        return is_string($action) && $action !== '' ? $action : null;
     }
 }

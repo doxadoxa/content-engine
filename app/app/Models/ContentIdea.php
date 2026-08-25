@@ -128,10 +128,7 @@ class ContentIdea extends Model
      */
     public function format(): ContentFormat
     {
-        return $this->content_format
-            ?? ($this->kind->instagramFormat() === 'carousel'
-                ? ContentFormat::Carousel
-                : ContentFormat::Image);
+        return $this->content_format ?? ContentFormat::impliedBy($this->kind);
     }
 
     /** @return array<string, string> */

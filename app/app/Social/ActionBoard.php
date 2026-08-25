@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Social;
 
+use App\Enums\ContentFormat;
 use App\Enums\ContentItemState;
 use App\Models\ContentIdea;
 use App\Models\ContentItem;
@@ -51,6 +52,7 @@ use Illuminate\Support\Collection;
  *     thesis: string,
  *     content_format: string,
  *     content_format_label: string,
+ *     formats: list<array{value: string, honoured: list<string>, falls_back: list<string>}>,
  *     format_chosen: bool,
  *     channels: list<string>,
  *     production: array<string, array{format: string, visual: string}>,
@@ -114,6 +116,10 @@ final class ActionBoard
                 'content_format_label' => $idea->format()->label(),
                 'format_chosen' => $idea->content_format !== null,
                 'channels' => $idea->channels,
+                // The board opens the same panel the controller re-renders, so
+                // it has to arrive with the same per-format truth. Without it
+                // the panel's first paint has no availability to read.
+                'formats' => ContentFormat::availability($idea->channels),
                 'production' => $idea->plannedProduction(),
                 'drafted' => $items->count(),
                 'planned' => count($idea->channels),

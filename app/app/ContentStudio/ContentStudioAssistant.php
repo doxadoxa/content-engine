@@ -35,6 +35,7 @@ use App\Support\Corpus\SiteLibrary;
 use App\Support\Social\ChannelPlaybook;
 use App\Support\Social\ChannelPostScore;
 use App\Support\Social\ContentMix;
+use App\Support\Social\FormatMix;
 use App\Support\Social\PostFormat;
 use App\Support\Social\SocialImagePrompt;
 use App\Support\Social\StudioPostGuard;
@@ -523,6 +524,18 @@ class ContentStudioAssistant
                     static fn (array $idea): PostKind => $idea['kind'],
                     $proposal['ideas'],
                 )),
+                // Measured on the same merged month and for the same reason.
+                // The format a frozen idea was drafted as counts towards the
+                // ceiling as much as a proposed one does — it is in the feed
+                // either way — and an idea nobody chose a format for is
+                // whatever the fallback makes it, not an absence.
+                ...FormatMix::fromConfig()->findings(array_map(
+                    static fn (array $idea): array => [
+                        'kind' => $idea['kind'],
+                        'format' => $idea['content_format'] ?? ContentFormat::impliedBy($idea['kind']),
+                    ],
+                    $proposal['ideas'],
+                )),
             ];
 
             if ($findings === []) {
@@ -696,6 +709,24 @@ class ContentStudioAssistant
             'Write every idea angle for the channels it is actually going to. Give each channel a distinct '
                 .'execution, not one shared paragraph.',
 
+            // The artefact, and the reason it is decided here rather than by
+            // the kind. `PostKind::instagramFormat()` decided it from the kind
+            // and argued that only teaching is reliably a sequence — and the
+            // counterexample was already in the plan: a `behind` post about a
+            // published checklist is a list of eight things, and it shipped as
+            // a photograph of cloths with the list described in the caption.
+            // Nothing had ever set this column, so every month this engine
+            // planned contained zero carousels.
+            'Every idea also gets a `format`: what it is made as. This is a decision about what the idea '
+                .'contains, not about its kind. The formats:',
+            // Derived, for the reason the kinds above are: this is the fourth
+            // list in this prompt whose members are enum cases, and the third
+            // one went stale the first time a case was added.
+            ...ContentFormat::vocabulary(),
+            'A carousel is Instagram only, so an idea whose kind does not go to Instagram cannot be one. '
+                .'Choose the format the idea earns; if you cannot say what would be on slides two '
+                .'through five, it is not a carousel.',
+
             // Variety across a set is a property of the set, and this is the
             // only party that holds the set. Left to the drafting step, each
             // idea briefs its photograph without seeing the other nineteen —
@@ -746,7 +777,7 @@ class ContentStudioAssistant
             // contract forbids resolves the contradiction in favour of the
             // contract. It happened to comply anyway on the run that added
             // `life`, which is worse than failing — the drift was invisible.
-            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"'.implode('|', PostKind::values()).'","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","shot":"...","channels":["threads","x"]}]}',
+            '{"summary":"...","goal":{"kpi":"followers|reach|engagement","target":123,"cadence":3,"expected_impact":"...","weeks":["...","...","...","..."]},"site_facts":[{"claim":"...","source":"site analysis|brand brief|site corpus|business data"}],"assumptions":["..."],"objectives":["..."],"pillars":[{"name":"...","purpose":"..."}],"channel_roles":{"threads":"...","x":"...","instagram":"..."},"questions":["..."],"ideas":[{"key":"short-key","date":"YYYY-MM-DD","title":"...","kind":"'.implode('|', PostKind::values()).'","pillar":"...","thesis":"...","evidence":["..."],"goal":"...","audience":"...","angle":"...","shot":"...","format":"'.ContentFormat::alternation().'","channels":["threads","x"]}]}',
             'Use only dates inside the requested month. Spread the ideas across the month. Keep questions to the two or three unknowns that would materially change the plan.',
         ]);
     }
@@ -803,6 +834,17 @@ class ContentStudioAssistant
             // list of exactly this length and a share has to be converted
             // before it can be obeyed — a conversion it does badly and quietly.
             'required_mix' => ContentMix::fromConfig()->instruction($targetIdeas),
+            // The carousel share is counted against the ideas that can carry
+            // one, and at this point nobody has chosen a kind yet — so the
+            // expected count comes off the mix targets above. The same
+            // arithmetic runs again in FormatMix::findings() against the kinds
+            // the planner actually picked; asking and checking against
+            // different denominators is how a model gets refused for producing
+            // the month it was asked for.
+            'required_formats' => FormatMix::fromConfig()->instruction(
+                $targetIdeas,
+                FormatMix::capableInTargets(ContentMix::fromConfig()->targets($targetIdeas)),
+            ),
             'what_was_wrong_with_your_last_attempt' => $correction,
             'website_url' => $project->website_url,
             'site_analysis' => $project->site_analysis,
@@ -995,6 +1037,7 @@ class ContentStudioAssistant
                 'audience' => $this->text($raw['audience'] ?? null, 500),
                 'angle' => $this->text($raw['angle'] ?? null, 2000) ?: null,
                 'shot' => $this->text($raw['shot'] ?? null, 500) ?: null,
+                'content_format' => $this->formatFor($kind, $raw['format'] ?? null),
                 'channels' => $this->channelsFor($kind, $raw['channels'] ?? null),
                 'scheduled_for' => $date,
             ];
@@ -1549,7 +1592,7 @@ class ContentStudioAssistant
             // failure. Stated as what exists rather than as a list of banned
             // tools, because a ban pulls against "show the work" and the brief
             // that avoids a word usually avoids the work with it.
-            $shots === []
+            $shots === [] || $idea->format()->on($playbook->channel) === ContentFormat::Text
                 ? null
                 : "Photographs already briefed for this month, most recent first:\n- "
                     .implode("\n- ", array_slice($shots, -8))
@@ -1572,16 +1615,23 @@ class ContentStudioAssistant
      */
     private function outputContract(ChannelPlaybook $playbook, ContentIdea $idea): string
     {
-        $visual = '"visual":{"subject":"...","composition":"...","action":"...","location":"...",'
-            .'"style":"...","light":"..."}';
+        // A text post buys no picture: the spend step skips it, so six fields
+        // of art direction were being written, parsed, guarded and dropped on
+        // the floor. Worse than the waste is what the writer does knowing a
+        // photograph is coming — it writes a caption that leans on one.
+        $pictured = $idea->format()->on($playbook->channel) !== ContentFormat::Text;
+
+        $visual = ! $pictured ? '' : '"visual":{"subject":"...","composition":"...","action":"...",'
+            .'"location":"...","style":"...","light":"..."}';
 
         $shape = $playbook->isCaptionChannel()
             ? ($idea->instagramFormat() === 'carousel'
                 ? '{"caption":"...","slides":[{"layout":"cover|statement|step|stat|contrast|checklist|cta",'
                     .'"heading":"...","body":"...","kicker":"...","figure":"...","before":"...","after":"...",'
                     .'"beforeLabel":"...","afterLabel":"...","items":["..."],"action":"..."}],'.$visual.'}'
-                : '{"caption":"...",'.$visual.'}')
-            : '{"segments":["the post"],"link":null,"chain_reason":null,'.$visual.'}';
+                : '{"caption":"..."'.($pictured ? ','.$visual : '').'}')
+            : '{"segments":["the post"],"link":null,"chain_reason":null'
+                .($pictured ? ','.$visual : '').'}';
 
         $limits = $playbook->isCaptionChannel()
             ? "The caption is at most {$playbook->segmentLimit} characters."
@@ -1594,12 +1644,20 @@ class ContentStudioAssistant
             $playbook->isCaptionChannel() && $idea->instagramFormat() === 'carousel'
                 ? $this->carouselContract()
                 : null,
-            'The visual fields describe one photograph to go with this post: what is in it, how it is '
-                .'framed, what is happening, where, in what style, and in what light. Be specific — a '
-                .'vague brief produces a stock picture. Describe something small and near rather than a '
-                .'whole room: hands, a tool, one surface, one object being used. Do not use the words '
-                .'premium, elegant, editorial, luxury, pristine, sleek or minimalist — they produce a '
-                .'showroom.',
+            // Said once, up front, because a writer that does not know this
+            // writes "swipe up", "as you can see" or "the photo shows" into a
+            // post that ships as words alone.
+            $pictured
+                ? null
+                : 'This post has no picture. It goes out as words on their own, so nothing in it may '
+                    .'refer to an image, and the post has to carry itself without one.',
+            ! $pictured ? null
+                : 'The visual fields describe one photograph to go with this post: what is in it, how it is '
+                    .'framed, what is happening, where, in what style, and in what light. Be specific — a '
+                    .'vague brief produces a stock picture. Describe something small and near rather than a '
+                    .'whole room: hands, a tool, one surface, one object being used. Do not use the words '
+                    .'premium, elegant, editorial, luxury, pristine, sleek or minimalist — they produce a '
+                    .'showroom.',
             // The requirement the picture is judged against, given to the party
             // that writes the brief. It used to reach the image provider only,
             // appended after six fields written without knowledge of it, and a
@@ -1607,16 +1665,17 @@ class ContentStudioAssistant
             // the subject: a `proof` post whose shot has to show a boundary
             // between cleaned and uncleaned came back as a hand holding a cloth
             // near a door, because that is what its own brief had asked for.
-            'What this picture has to show: '.$idea->kind->shot().' Write the six fields so they deliver '
-                .'that. If the thought behind this post has nothing photographable in it, do not reach '
-                .'for an object that stands in for the idea — find the moment of real work that the '
-                .'thought is about, and brief that.',
+            ! $pictured ? null
+                : 'What this picture has to show: '.$idea->kind->shot().' Write the six fields so they deliver '
+                    .'that. If the thought behind this post has nothing photographable in it, do not reach '
+                    .'for an object that stands in for the idea — find the moment of real work that the '
+                    .'thought is about, and brief that.',
             // Assigned when the month was planned, by the only party that saw
             // all twenty ideas at once. Realise it rather than replace it: an
             // idea free to choose its own subject chooses the same one as its
             // siblings, because they are drafted in parallel and none of them
             // can see the others.
-            $idea->shot === null || trim($idea->shot) === ''
+            ! $pictured || $idea->shot === null || trim($idea->shot) === ''
                 ? null
                 : 'The photograph for this idea was chosen with the rest of the month, so that no two '
                     ."posts show the same thing. It is: {$idea->shot}. Write the six fields to make "
@@ -1627,7 +1686,9 @@ class ContentStudioAssistant
             // "a tablet showing an unlabeled checklist interface". Both drew
             // exactly what was asked for, and an empty form photographs as
             // something nobody filled in.
-            'Never ask for text, words, numbers or logos in the image. '.SocialImagePrompt::subjectRules(),
+            ! $pictured
+                ? null
+                : 'Never ask for text, words, numbers or logos in the image. '.SocialImagePrompt::subjectRules(),
             'Reply with JSON and nothing else: '.$shape,
         ]));
     }
@@ -2425,7 +2486,14 @@ class ContentStudioAssistant
             // paid for a photograph whether the post wanted one or not. An
             // opinion or a question is frequently stronger without one, and
             // this is the only choice on the idea that makes a post cheaper.
-            if ($item->contentIdea?->format() === ContentFormat::Text) {
+            // Resolved against the channel, not read off the idea. The format
+            // is an intent about the *idea* and an idea goes to more than one
+            // channel — Instagram cannot publish without media, so a text idea
+            // still buys a photograph there. Reading the idea's own format here
+            // and the channel's in the drafting contract would have asked the
+            // writer for six art-direction fields and then skipped buying the
+            // picture they describe.
+            if ($item->contentIdea?->format()->on($playbook->channel) === ContentFormat::Text) {
                 continue;
             }
 
@@ -2665,6 +2733,36 @@ class ContentStudioAssistant
         return $channels === [] ? array_values(array_intersect(self::CHANNELS, $native)) : $channels;
     }
 
+    /**
+     * What this idea is made as, constrained the way its channels already are.
+     *
+     * A carousel is Instagram only and {@see PostKind::channels()} keeps `take`
+     * off Instagram, so a planner that asks for one there has asked for
+     * something that cannot happen. {@see ContentFormat::on()} would quietly
+     * turn it into an image at render time anyway — correcting it here instead
+     * means the stored plan and the Studio's format chip tell the operator what
+     * the post will actually be, rather than naming a format it will never get.
+     *
+     * Null for an answer that named nothing readable, because null is what
+     * every idea planned before this key existed carries, and
+     * {@see ContentIdea::format()} already has a considered fallback for it.
+     */
+    private function formatFor(PostKind $kind, mixed $requested): ?ContentFormat
+    {
+        $format = ContentFormat::tryFromLoose($requested);
+
+        if ($format === null) {
+            return null;
+        }
+
+        $reachable = array_filter(
+            $kind->channels(),
+            static fn (ChannelType $channel): bool => $format->isAvailableOn($channel),
+        );
+
+        return $reachable === [] ? ContentFormat::fallback() : $format;
+    }
+
     private function slugFor(ContentIdea $idea, string $channel): string
     {
         return Str::limit(
@@ -2725,6 +2823,10 @@ class ContentStudioAssistant
                 'audience' => $idea->audience,
                 'angle' => $idea->angle,
                 'shot' => $idea->shot,
+                // A field missing from this list is silently lost the next time
+                // somebody refines the month — the list is rebuilt by hand and
+                // nothing checks it against the column set.
+                'content_format' => $idea->content_format,
                 'channels' => $idea->channels,
                 'scheduled_for' => $idea->scheduled_for->toDateString(),
             ];

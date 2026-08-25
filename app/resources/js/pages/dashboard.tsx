@@ -41,6 +41,7 @@ type Project = {
 type ActiveRun = {
     id: string;
     pipeline: string;
+    action: string | null;
     status: string;
     subject: string | null;
     started_at: string | null;
@@ -55,6 +56,7 @@ type Work = {
     failed: {
         id: string;
         pipeline: string;
+        action: string | null;
         subject: string | null;
         step: string | null;
         message: string | null;
@@ -116,20 +118,112 @@ type Props = {
     visibility?: Visibility;
 };
 
-/** How the pipeline keys read to somebody who did not build them. */
-const PIPELINE_LABELS: Record<string, string> = {
-    research: 'Researching the market',
-    planning: 'Planning the month',
-    generation: 'Writing',
-    content_studio: 'Proposing the social content system',
-    publishing: 'Publishing',
-    refresh: 'Refreshing',
-    repurpose: 'Cutting down for social',
-    site_audit: 'Reading the site',
-    site_audit_fix_plan: 'Writing a fix plan for the site audit',
-    feedback: 'Reading what the published work did',
-    visibility: 'Asking the assistants about the brand',
+/**
+ * How the pipeline keys read to somebody who did not build them.
+ *
+ * Two forms each, because these fan out. A month being drafted starts one run
+ * per idea, and eighteen rows all reading the same sentence tells an operator
+ * less than one row would — so the card groups them and needs a plural to say
+ * so in language rather than in a badge.
+ */
+type Label = { one: string; many: (n: number) => string };
+
+const label = (one: string, many?: (n: number) => string): Label => ({
+    one,
+    many: many ?? ((n) => `${one} · ${n} running`),
+});
+
+const PIPELINE_LABELS: Record<string, Label> = {
+    research: label('Researching the market'),
+    planning: label('Planning the month'),
+    generation: label('Writing an article', (n) => `Writing ${n} articles`),
+    content_studio: label("Working on the month's social content"),
+    publishing: label('Publishing a post', (n) => `Publishing ${n} posts`),
+    refresh: label('Refreshing a page', (n) => `Refreshing ${n} pages`),
+    repurpose: label('Cutting an article down for social'),
+    site_audit: label('Reading the site'),
+    site_audit_fix_plan: label('Writing a fix plan for the site audit'),
+    feedback: label('Reading what the published work did'),
+    visibility: label('Asking the assistants about the brand'),
 };
+
+/**
+ * The one pipeline whose key does not say what it is doing.
+ *
+ * `content_studio` carries six jobs and the card called every one of them
+ * "Proposing the social content system" — so a month drafting appeared as
+ * eighteen simultaneous proposals of the same thing, which is not a
+ * near-enough label, it is the wrong sentence.
+ */
+const STUDIO_LABELS: Record<string, Label> = {
+    proposal: label("Proposing the month's social content"),
+    refine: label('Rethinking the month'),
+    generate: label('Working out what to write next'),
+    generate_idea: label('Writing a post', (n) => `Writing ${n} posts`),
+    revise_image: label(
+        'Redrawing a picture',
+        (n) => `Redrawing ${n} pictures`,
+    ),
+};
+
+function labelFor(pipeline: string, action: string | null): Label {
+    if (pipeline === 'content_studio' && action && STUDIO_LABELS[action]) {
+        return STUDIO_LABELS[action];
+    }
+
+    return PIPELINE_LABELS[pipeline] ?? label(pipeline);
+}
+
+type RunGroup = {
+    key: string;
+    label: Label;
+    subject: string | null;
+    count: number;
+    doneSteps: number;
+    totalSteps: number;
+    currentStep: string | null;
+};
+
+/**
+ * Runs doing the same job, shown once.
+ *
+ * Grouped by what they are and what they are about, so anything with its own
+ * subject — an article being written, a page being refreshed — keeps its own
+ * row and only the indistinguishable ones collapse. Progress is summed rather
+ * than averaged: "4 of 18" is a thing an operator can watch move, where
+ * eighteen bars each reading "0 of 1" are not.
+ */
+function groupRuns(runs: ActiveRun[]): RunGroup[] {
+    const groups = new Map<string, RunGroup>();
+
+    for (const run of runs) {
+        const key = `${run.pipeline}:${run.action ?? ''}:${run.subject ?? ''}`;
+        const group = groups.get(key);
+
+        if (group) {
+            group.count += 1;
+            group.doneSteps += run.done_steps;
+            group.totalSteps += run.total_steps;
+            group.currentStep = group.currentStep ?? run.current_step;
+            continue;
+        }
+
+        groups.set(key, {
+            key,
+            label: labelFor(run.pipeline, run.action),
+            subject: run.subject,
+            count: 1,
+            doneSteps: run.done_steps,
+            totalSteps: run.total_steps,
+            // Only worth naming when one run is being watched. Across a fan-out
+            // it is whichever of eighteen happened to sort first, which reads
+            // as information and is not any.
+            currentStep: run.current_step,
+        });
+    }
+
+    return [...groups.values()];
+}
 
 export default function Dashboard({
     project,
@@ -334,8 +428,8 @@ function WorkInProgress({ work, project }: { work: Work; project: Project }) {
                         </Badge>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-5">
-                        {work.active.map((run) => (
-                            <RunProgress key={run.id} run={run} />
+                        {groupRuns(work.active).map((group) => (
+                            <RunProgress key={group.key} group={group} />
                         ))}
                     </CardContent>
                 </Card>
@@ -356,8 +450,7 @@ function WorkInProgress({ work, project }: { work: Work; project: Project }) {
                         {work.failed.map((run) => (
                             <div key={run.id} className="flex flex-col">
                                 <span className="font-medium">
-                                    {PIPELINE_LABELS[run.pipeline] ??
-                                        run.pipeline}
+                                    {labelFor(run.pipeline, run.action).one}
                                     {run.subject && ` · ${run.subject}`}
                                 </span>
                                 <span className="text-muted-foreground">
@@ -373,49 +466,59 @@ function WorkInProgress({ work, project }: { work: Work; project: Project }) {
     );
 }
 
-function RunProgress({ run }: { run: ActiveRun }) {
-    const label = PIPELINE_LABELS[run.pipeline] ?? run.pipeline;
+function RunProgress({ group }: { group: RunGroup }) {
+    const text =
+        group.count > 1 ? group.label.many(group.count) : group.label.one;
     const percent =
-        run.total_steps > 0
-            ? Math.round((run.done_steps / run.total_steps) * 100)
+        group.totalSteps > 0
+            ? Math.round((group.doneSteps / group.totalSteps) * 100)
             : 0;
+
+    // A bar is worth drawing only when it can move. These pipelines are not all
+    // the same shape: writing an article walks eleven steps and genuinely fills
+    // up, while drafting a post is one step, so a fan-out of eighteen of them
+    // reads 0 of 18 until the moment each one vanishes from the list. That is a
+    // progress bar that is empty for the entire time it is on screen, which
+    // looks broken rather than busy. Where there is no step progress to show,
+    // the count in the label is the progress — it falls as they land.
+    const stepped = group.totalSteps > group.count;
 
     return (
         <div className="flex min-w-0 flex-col gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-sm">
                 <span className="truncate font-medium">
-                    {label}
-                    {run.subject && (
+                    {text}
+                    {group.subject && (
                         <span className="text-muted-foreground">
                             {' '}
-                            · {run.subject}
+                            · {group.subject}
                         </span>
                     )}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                    {run.total_steps === 0
+                    {group.totalSteps === 0
                         ? 'starting'
-                        : `${run.done_steps} of ${run.total_steps}`}
+                        : stepped
+                          ? `${group.doneSteps} of ${group.totalSteps}`
+                          : 'still going'}
                 </span>
             </div>
-            <Progress
-                value={percent}
-                className="h-1.5"
-                indicatorClassName="bg-[#d6533c]"
-                aria-label={`${label} progress`}
-                aria-valuetext={
-                    run.total_steps === 0
-                        ? 'Starting'
-                        : `${run.done_steps} of ${run.total_steps} steps complete`
-                }
-            />
-            {run.current_step && (
+            {stepped && (
+                <Progress
+                    value={percent}
+                    className="h-1.5"
+                    indicatorClassName="bg-[#d6533c]"
+                    aria-label={`${text} progress`}
+                    aria-valuetext={`${group.doneSteps} of ${group.totalSteps} steps complete`}
+                />
+            )}
+            {group.count === 1 && group.currentStep && (
                 <p
                     className="text-xs text-muted-foreground"
                     role="status"
                     aria-live="polite"
                 >
-                    {run.current_step.replaceAll('_', ' ')}
+                    {group.currentStep.replaceAll('_', ' ')}
                 </p>
             )}
         </div>

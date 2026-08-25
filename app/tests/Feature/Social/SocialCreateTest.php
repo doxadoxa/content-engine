@@ -246,6 +246,79 @@ final class SocialCreateTest extends TestCase
         ])->assertOk()->assertJsonPath('idea.shot', 'a folded chair against a cleared dining table');
     }
 
+    /**
+     * A format no channel can carry is refused, not quietly rewritten.
+     *
+     * Instagram will not publish without media, so a text post cannot happen
+     * there. An `offer` goes to Instagram and nowhere else — accepted, the idea
+     * would carry the label "Text post" and ship a photograph.
+     */
+    #[Test]
+    public function a_format_none_of_the_channels_can_carry_is_refused(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+            $idea = $this->idea($plan, 'The September opening');
+            $idea->forceFill(['kind' => PostKind::Offer, 'channels' => ['instagram']])->save();
+
+            return $idea;
+        });
+
+        $this->patchJson("/studio/ideas/{$idea->getKey()}", ['content_format' => 'text'])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Text post is not available for an idea that only goes to instagram.');
+
+        app(CurrentProject::class)->run($this->project, function () use ($idea): void {
+            $this->assertNull(ContentIdea::query()->whereKey($idea->getKey())->firstOrFail()->content_format);
+        });
+    }
+
+    /**
+     * And the panel is told what each format would really do to this idea.
+     *
+     * The fixed copy — "Words alone. Buys no picture at all." — is true of some
+     * ideas and a lie about others, so the availability travels with the idea
+     * rather than being recomputed in the browser against a copy of the rule.
+     */
+    #[Test]
+    public function the_panel_is_told_which_channels_honour_each_format(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+            $idea = $this->idea($plan, 'A look behind the standard');
+            $idea->forceFill(['kind' => PostKind::Behind, 'channels' => ['instagram', 'threads']])->save();
+
+            return $idea;
+        });
+
+        $response = $this->patchJson(
+            "/studio/ideas/{$idea->getKey()}",
+            ['title' => 'A look behind the standard'],
+        )->assertOk();
+
+        // Asserted by position, and the position asserted with it. The payload
+        // follows ContentFormat::cases(), so a reordered enum should fail here
+        // loudly rather than move which format each expectation lands on.
+        $response
+            ->assertJsonPath('idea.formats.0.value', 'carousel')
+            ->assertJsonPath('idea.formats.1.value', 'image')
+            ->assertJsonPath('idea.formats.2.value', 'text')
+
+            // A carousel happens on Instagram; Threads gets a photograph.
+            ->assertJsonPath('idea.formats.0.honoured', ['instagram'])
+            ->assertJsonPath('idea.formats.0.falls_back', ['threads'])
+
+            // One photograph works everywhere, which is why it is the fallback.
+            ->assertJsonPath('idea.formats.1.honoured', ['instagram', 'threads'])
+            ->assertJsonPath('idea.formats.1.falls_back', [])
+
+            // A text post is the carousel's mirror image, and for the same kind
+            // of reason: Instagram is the one channel that will not publish
+            // without media.
+            ->assertJsonPath('idea.formats.2.honoured', ['threads'])
+            ->assertJsonPath('idea.formats.2.falls_back', ['instagram']);
+    }
+
     #[Test]
     public function a_text_post_buys_no_pictures(): void
     {

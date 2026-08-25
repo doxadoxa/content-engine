@@ -45,6 +45,12 @@ type Idea = {
     content_format_label: string;
     format_chosen: boolean;
     channels: string[];
+    // What each format would really do to *this* idea. A carousel is Instagram
+    // only and a text post is everywhere but Instagram, so "buys no picture at
+    // all" is true of some ideas and a lie about others. Sent by the server
+    // because the rule is ContentFormat::isAvailableOn() and a copy of it here
+    // is a copy that goes stale.
+    formats: { value: string; honoured: string[]; falls_back: string[] }[];
     drafted: number;
     planned: number;
 };
@@ -359,8 +365,9 @@ function IdeaSheetBody({
     const [pending, setPending] = useState(false);
 
     const chosen = FORMATS.find((entry) => entry.value === format);
-    const instagramOnly =
-        format === 'carousel' && !idea.channels.includes('instagram');
+    const availability = (value: string) =>
+        idea.formats.find((entry) => entry.value === value);
+    const chosenFallsBack = availability(format)?.falls_back ?? [];
 
     async function create() {
         setPending(true);
@@ -472,34 +479,51 @@ function IdeaSheetBody({
                         role="radiogroup"
                         aria-label="Content type"
                     >
-                        {FORMATS.map((option) => (
-                            <button
-                                key={option.value}
-                                type="button"
-                                role="radio"
-                                aria-checked={option.value === format}
-                                onClick={() => setFormat(option.value)}
-                                className={`rounded-xl p-3 text-left transition-all focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none ${
-                                    option.value === format
-                                        ? 'bg-violet-500/12 shadow-[inset_0_0_0_2px_rgba(139,92,246,0.45)]'
-                                        : 'bg-muted/45 hover:bg-muted/70'
-                                }`}
-                            >
-                                <span className="block text-sm font-medium">
-                                    {option.label}
-                                </span>
-                                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                                    {option.note}
-                                </span>
-                            </button>
-                        ))}
+                        {FORMATS.map((option) => {
+                            // No channel of this idea produces it, so it is not
+                            // a preference that quietly degrades — it is a
+                            // choice that never happens. Offered greyed rather
+                            // than hidden: an absent option reads as a bug, and
+                            // the reason is worth saying once.
+                            const unavailable =
+                                (availability(option.value)?.honoured.length ??
+                                    0) === 0;
+
+                            return (
+                                <button
+                                    key={option.value}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={option.value === format}
+                                    disabled={unavailable}
+                                    onClick={() => setFormat(option.value)}
+                                    className={`rounded-xl p-3 text-left transition-all focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none ${
+                                        unavailable
+                                            ? 'cursor-not-allowed bg-muted/25 opacity-50'
+                                            : option.value === format
+                                              ? 'bg-violet-500/12 shadow-[inset_0_0_0_2px_rgba(139,92,246,0.45)]'
+                                              : 'bg-muted/45 hover:bg-muted/70'
+                                    }`}
+                                >
+                                    <span className="block text-sm font-medium">
+                                        {option.label}
+                                    </span>
+                                    <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                                        {unavailable
+                                            ? `Not available for ${idea.channels.join(' and ')}.`
+                                            : option.note}
+                                    </span>
+                                </button>
+                            );
+                        })}
                     </div>
 
-                    {instagramOnly && (
+                    {chosenFallsBack.length > 0 && (
                         <p className="rounded-xl bg-amber-500/10 p-3 text-xs leading-relaxed text-muted-foreground">
-                            This idea does not go to Instagram, so a carousel is
-                            not available for it — {idea.channels.join(' and ')}{' '}
-                            would get a single image instead.
+                            {chosenFallsBack.join(' and ')} cannot carry that,
+                            so {chosenFallsBack.length > 1 ? 'they' : 'it'}{' '}
+                            would get a single photograph instead. The other
+                            channels are made as chosen.
                         </p>
                     )}
                 </div>
