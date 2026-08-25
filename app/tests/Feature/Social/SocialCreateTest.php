@@ -246,6 +246,71 @@ final class SocialCreateTest extends TestCase
         ])->assertOk()->assertJsonPath('idea.shot', 'a folded chair against a cleared dining table');
     }
 
+    /**
+     * A format no channel can carry is refused, not quietly rewritten.
+     *
+     * Instagram will not publish without media, so a text post cannot happen
+     * there. An `offer` goes to Instagram and nowhere else — accepted, the idea
+     * would carry the label "Text post" and ship a photograph.
+     */
+    #[Test]
+    public function a_format_none_of_the_channels_can_carry_is_refused(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+            $idea = $this->idea($plan, 'The September opening');
+            $idea->forceFill(['kind' => PostKind::Offer, 'channels' => ['instagram']])->save();
+
+            return $idea;
+        });
+
+        $this->patchJson("/studio/ideas/{$idea->getKey()}", ['content_format' => 'text'])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Text post is not available for an idea that only goes to instagram.');
+
+        app(CurrentProject::class)->run($this->project, function () use ($idea): void {
+            $this->assertNull(ContentIdea::query()->whereKey($idea->getKey())->firstOrFail()->content_format);
+        });
+    }
+
+    /**
+     * And the panel is told what each format would really do to this idea.
+     *
+     * The fixed copy — "Words alone. Buys no picture at all." — is true of some
+     * ideas and a lie about others, so the availability travels with the idea
+     * rather than being recomputed in the browser against a copy of the rule.
+     */
+    #[Test]
+    public function the_panel_is_told_which_channels_honour_each_format(): void
+    {
+        $idea = app(CurrentProject::class)->run($this->project, function (): ContentIdea {
+            $plan = ContentPlan::factory()->forMonth('2026-08-01')->create(['assistant_version' => 1]);
+            $idea = $this->idea($plan, 'A look behind the standard');
+            $idea->forceFill(['kind' => PostKind::Behind, 'channels' => ['instagram', 'threads']])->save();
+
+            return $idea;
+        });
+
+        $formats = $this->patchJson("/studio/ideas/{$idea->getKey()}", ['title' => 'A look behind the standard'])
+            ->assertOk()
+            ->json('idea.formats');
+
+        $by = collect($formats)->keyBy('value');
+
+        // A carousel happens on Instagram; Threads gets a photograph.
+        $this->assertSame(['instagram'], $by['carousel']['honoured']);
+        $this->assertSame(['threads'], $by['carousel']['falls_back']);
+
+        // A text post is the mirror image, and for the same reason: Instagram
+        // is the one channel that will not publish without media.
+        $this->assertSame(['threads'], $by['text']['honoured']);
+        $this->assertSame(['instagram'], $by['text']['falls_back']);
+
+        // One photograph works everywhere, which is why it is the fallback.
+        $this->assertSame(['instagram', 'threads'], $by['image']['honoured']);
+        $this->assertSame([], $by['image']['falls_back']);
+    }
+
     #[Test]
     public function a_text_post_buys_no_pictures(): void
     {

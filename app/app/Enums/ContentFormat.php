@@ -104,6 +104,45 @@ enum ContentFormat: string
     }
 
     /**
+     * Whether any of these channels produces this format as asked.
+     *
+     * @param  list<string>  $channels
+     */
+    public function honouredAnywhereIn(array $channels): bool
+    {
+        return self::split($this, $channels)['honoured'] !== [];
+    }
+
+    /**
+     * What every format would really do to an idea on these channels.
+     *
+     * The Studio panel used to state what a format does in fixed copy — "Words
+     * alone. Buys no picture at all." — and that sentence is true of some ideas
+     * and a lie about others. A carousel is Instagram-only; a text post is
+     * everywhere *but* Instagram, which will not publish without media. So on a
+     * mixed-channel idea the honest answer is per channel, and on an
+     * Instagram-only `offer` there is no text post to choose at all.
+     *
+     * Lives here, and is sent to the browser rather than recomputed there,
+     * because the rule is {@see isAvailableOn()} and this codebase has now
+     * found the same stale-second-copy failure four times: the kinds, the
+     * picture rules, the evidence contract, the slide budgets.
+     *
+     * @param  list<string>  $channels
+     * @return list<array{value: string, honoured: list<string>, falls_back: list<string>}>
+     */
+    public static function availability(array $channels): array
+    {
+        return array_map(
+            static fn (self $format): array => [
+                'value' => $format->value,
+                ...self::split($format, $channels),
+            ],
+            self::cases(),
+        );
+    }
+
+    /**
      * When to choose this, said to the party choosing it.
      *
      * Written as a property of the *idea* rather than of the kind, which is the
@@ -193,5 +232,31 @@ enum ContentFormat: string
     public static function impliedBy(PostKind $kind): self
     {
         return $kind->instagramFormat() === 'carousel' ? self::Carousel : self::Image;
+    }
+
+    /**
+     * @param  list<string>  $channels
+     * @return array{honoured: list<string>, falls_back: list<string>}
+     */
+    private static function split(self $format, array $channels): array
+    {
+        $honoured = [];
+        $fallsBack = [];
+
+        foreach ($channels as $channel) {
+            $type = ChannelType::tryFrom($channel);
+
+            if ($type === null) {
+                continue;
+            }
+
+            if ($format->isAvailableOn($type)) {
+                $honoured[] = $channel;
+            } else {
+                $fallsBack[] = $channel;
+            }
+        }
+
+        return ['honoured' => $honoured, 'falls_back' => $fallsBack];
     }
 }

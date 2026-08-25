@@ -486,9 +486,28 @@ class ContentStudioController extends Controller
         if (array_key_exists('content_format', $validated)) {
             // Null is a real answer here — it hands the choice back to the
             // kind — so it cannot go through the `array_filter` above.
-            $idea->content_format = $validated['content_format'] === null
+            $chosen = $validated['content_format'] === null
                 ? null
                 : ContentFormat::from($validated['content_format']);
+
+            // A format no channel of this idea can carry is not a preference
+            // that quietly degrades, it is a choice that never happens. Text on
+            // an `offer` is the case: Instagram is its only channel and will
+            // not publish without media, so the idea would keep the label
+            // "Text post" and ship a photograph. Refused with the reason rather
+            // than accepted and rewritten, the same judgement the already-written
+            // check above makes.
+            if ($chosen !== null && ! $chosen->honouredAnywhereIn($idea->channels)) {
+                return response()->json([
+                    'message' => sprintf(
+                        '%s is not available for an idea that only goes to %s.',
+                        $chosen->label(),
+                        implode(' and ', $idea->channels),
+                    ),
+                ], 422);
+            }
+
+            $idea->content_format = $chosen;
         }
 
         $idea->save();
@@ -518,6 +537,19 @@ class ContentStudioController extends Controller
             'shot' => $idea->shot,
             'channels' => $idea->channels,
             'production' => $idea->plannedProduction(),
+            // Which of this idea's channels each format actually produces.
+            //
+            // The panel used to state what a format does in fixed copy — "Words
+            // alone. Buys no picture at all." — and that copy is only true for
+            // some ideas. A carousel is Instagram-only and a text post is
+            // everywhere *but* Instagram, which will not publish without media,
+            // so on a mixed-channel idea the honest answer is per channel and
+            // on an Instagram-only `offer` there is no text post at all.
+            //
+            // Sent rather than recomputed in TypeScript, because the rule is
+            // {@see ContentFormat::isAvailableOn()} and a second copy of a rule
+            // is the failure this codebase has now found four times.
+            'formats' => ContentFormat::availability($idea->channels),
         ];
     }
 
