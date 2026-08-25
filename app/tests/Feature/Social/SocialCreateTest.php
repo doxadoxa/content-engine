@@ -291,24 +291,32 @@ final class SocialCreateTest extends TestCase
             return $idea;
         });
 
-        $formats = $this->patchJson("/studio/ideas/{$idea->getKey()}", ['title' => 'A look behind the standard'])
-            ->assertOk()
-            ->json('idea.formats');
+        $response = $this->patchJson(
+            "/studio/ideas/{$idea->getKey()}",
+            ['title' => 'A look behind the standard'],
+        )->assertOk();
 
-        $by = collect($formats)->keyBy('value');
+        // Asserted by position, and the position asserted with it. The payload
+        // follows ContentFormat::cases(), so a reordered enum should fail here
+        // loudly rather than move which format each expectation lands on.
+        $response
+            ->assertJsonPath('idea.formats.0.value', 'carousel')
+            ->assertJsonPath('idea.formats.1.value', 'image')
+            ->assertJsonPath('idea.formats.2.value', 'text')
 
-        // A carousel happens on Instagram; Threads gets a photograph.
-        $this->assertSame(['instagram'], $by['carousel']['honoured']);
-        $this->assertSame(['threads'], $by['carousel']['falls_back']);
+            // A carousel happens on Instagram; Threads gets a photograph.
+            ->assertJsonPath('idea.formats.0.honoured', ['instagram'])
+            ->assertJsonPath('idea.formats.0.falls_back', ['threads'])
 
-        // A text post is the mirror image, and for the same reason: Instagram
-        // is the one channel that will not publish without media.
-        $this->assertSame(['threads'], $by['text']['honoured']);
-        $this->assertSame(['instagram'], $by['text']['falls_back']);
+            // One photograph works everywhere, which is why it is the fallback.
+            ->assertJsonPath('idea.formats.1.honoured', ['instagram', 'threads'])
+            ->assertJsonPath('idea.formats.1.falls_back', [])
 
-        // One photograph works everywhere, which is why it is the fallback.
-        $this->assertSame(['instagram', 'threads'], $by['image']['honoured']);
-        $this->assertSame([], $by['image']['falls_back']);
+            // A text post is the carousel's mirror image, and for the same kind
+            // of reason: Instagram is the one channel that will not publish
+            // without media.
+            ->assertJsonPath('idea.formats.2.honoured', ['threads'])
+            ->assertJsonPath('idea.formats.2.falls_back', ['instagram']);
     }
 
     #[Test]
