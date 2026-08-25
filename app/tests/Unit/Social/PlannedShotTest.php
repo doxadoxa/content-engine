@@ -73,6 +73,26 @@ final class PlannedShotTest extends TestCase
         $this->assertStringContainsString('A person may be in it', $rules);
     }
 
+    /**
+     * The setting reaches the writer, not only the provider.
+     *
+     * Held on the provider side alone it lost every time. The brief behind the
+     * bathroom nobody would pay to have cleaned asked in its own words for a
+     * "slightly frayed" cloth, a "scuffed brush handle" and "grime caught in
+     * the narrow joint" — so redrawing it under a better house rule redrew the
+     * same bathroom. A provider handed a subject and a rule against it draws
+     * the subject; this codebase has now learned that three times.
+     */
+    #[Test]
+    public function the_writer_is_told_whose_home_the_picture_is_set_in(): void
+    {
+        $rules = SocialImagePrompt::settingRules();
+
+        $this->assertStringContainsString('belongs to somebody who pays for this service', $rules);
+        $this->assertStringContainsString('Unstyled describes the photograph, not the property', $rules);
+        $this->assertStringContainsString('not builder-grade tiling', $rules);
+    }
+
     private function proposalInstructions(): string
     {
         $method = new ReflectionMethod(ContentStudioAssistant::class, 'proposalInstructions');

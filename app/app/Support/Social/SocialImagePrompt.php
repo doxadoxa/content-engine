@@ -61,7 +61,8 @@ final readonly class SocialImagePrompt
     private const string DEFAULT_ACTION = 'the moment the work actually changes something, not a tidy '
         .'gesture near it';
 
-    private const string DEFAULT_LOCATION = 'a real working space with the ordinary clutter left in';
+    private const string DEFAULT_LOCATION = 'a real home in use, with the ordinary traces of the day left '
+        .'where they fell';
 
     /**
      * The aesthetic, and the one word that is deliberately absent from it.
@@ -124,8 +125,9 @@ final readonly class SocialImagePrompt
      * nobody is maintaining, published by the company paid to maintain it.
      */
     private const string NO_DAMAGE = 'Used, not broken: nothing chipped, cracked, gouged, split, peeling '
-        .'or in disrepair, no damaged furniture or worktops. What shows here is dirt, dust, marks and '
-        .'residue — the things cleaning removes — on surfaces that are otherwise sound.';
+        .'or in disrepair, no damaged furniture, worktops or fittings, nothing dated or cheaply made. '
+        .'Anything that does show is dirt, dust, marks or residue — the things cleaning removes — and '
+        .'only ever on surfaces that are in good condition underneath.';
 
     /**
      * The failure modes these models actually have, named individually.
@@ -179,8 +181,15 @@ final readonly class SocialImagePrompt
      * scale people do not usually see, a change mid-happening, evidence.
      */
     private const string INTEREST = 'The frame has to be worth stopping on: real texture at close range, '
-        .'a change caught mid-way, marks and residue that are actually there. Not a person being tidy in '
-        .'a clean room.';
+        .'something happening rather than something arranged, and detail at a scale people do not '
+        .'usually see. Where the work is removing something, show it mid-way. Where it is not, the '
+        .'interest is the texture and the moment, not manufactured mess.';
+
+    private const string CUSTOMER = 'This room belongs to somebody who pays for this service: it is '
+        .'well kept, well put together and current, the kind of home the business is actually hired '
+        .'for. Unstyled describes the photograph, not the property — nothing here is arranged for the '
+        .'camera, and the home is still a good one. Not dated fittings, not builder-grade tiling, not '
+        .'a place that looks neglected or hard up.';
 
     private function __construct(
         private string $subject,
@@ -190,6 +199,54 @@ final readonly class SocialImagePrompt
         private string $style,
         private string $light,
     ) {}
+
+    /**
+     * Whose home this is, which nothing in this prompt used to say.
+     *
+     * Every clause above was written against one complaint — that the pictures
+     * looked like stock photography — and each of them pushes the same way:
+     * documentary, unstyled, shot as it was found, ordinary traces left in,
+     * not a showroom, not a catalogue. The drafting contract goes further and
+     * forbids the words premium, elegant, luxury, pristine, sleek and
+     * minimalist outright.
+     *
+     * Nothing anywhere said who lived there, so the cheapest way to satisfy all
+     * of it at once is a modest older flat — and that is what came back. A
+     * month of pictures for a company whose own About page opens "Premium home
+     * cleaning and residence care in Lisbon", and whose brand brief lists
+     * `premium` in its tone, was set in kitchens and bathrooms nobody paying
+     * €18 an hour for recurring care and four-language concierge support would
+     * be living in. The brief's own `visual_language` says "clean, well-kept
+     * home interiors" and is appended last precisely so it can overrule — but
+     * one clause does not beat six, which is the same ordering failure this
+     * file has already recorded once.
+     *
+     * The error under it is a conflation: *unstyled* is a fact about the
+     * photograph and *modest* is a fact about the property, and they are not
+     * the same word. A documentary photograph of a well-appointed apartment is
+     * an ordinary thing to take.
+     *
+     * Stated as a house rule rather than read off the brand, because it is true
+     * of every tenant this engine will ever serve: the room in the picture has
+     * to be one the business's own customer would be in. A service is sold by
+     * showing the life it belongs to.
+     */
+    /**
+     * The same rule, for the party that writes the six fields.
+     *
+     * Appending it to the provider was not enough and the reason is already
+     * written down twice in this codebase: a provider handed a subject and a
+     * contradicting rule draws the subject. The brief that produced the
+     * bathroom nobody would pay to have cleaned asked, in its own words, for a
+     * "slightly frayed" cloth, a "scuffed brush handle", "water marks near the
+     * basin" and "grime caught in the narrow joint" — so redrawing it under a
+     * better house rule redrew the same bathroom. The aesthetic constants here
+     * shape a picture whose subject was chosen by a model that never read them.
+     */
+    public static function settingRules(): string
+    {
+        return self::CUSTOMER;
+    }
 
     /**
      * The six fields as the drafting model returned them.
@@ -286,6 +343,7 @@ final readonly class SocialImagePrompt
                 .'cabinet hardware should not be the subject of the frame.',
             "Action: {$this->action}",
             "Location: {$this->location}",
+            self::CUSTOMER,
             "Style: {$this->style}",
             $shot === null || trim($shot) === '' ? null : 'What this picture has to show: '.trim($shot),
             'Camera: '.self::CAMERA,

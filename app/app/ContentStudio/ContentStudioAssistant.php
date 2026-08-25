@@ -1642,9 +1642,13 @@ class ContentStudioAssistant
                 : 'The visual fields describe one photograph to go with this post: what is in it, how it is '
                     .'framed, what is happening, where, in what style, and in what light. Be specific — a '
                     .'vague brief produces a stock picture. Describe something small and near rather than a '
-                    .'whole room: hands, a tool, one surface, one object being used. Do not use the words '
-                    .'premium, elegant, editorial, luxury, pristine, sleek or minimalist — they produce a '
-                    .'showroom.',
+                    .'whole room: hands, a tool, one surface, one object being used. Do not describe the '
+                    .'*photograph* as premium, elegant, editorial, luxury, pristine, sleek or minimalist: '
+                    .'as instructions to a camera those words produce a showroom, every surface new and '
+                    .'the light placed. They are not banned as facts about the home. This business calls '
+                    .'itself premium and its customers live in good apartments, so the room may be a good '
+                    .'one — it is the styling that stays honest, not the address. A picture set somewhere '
+                    .'the customer would never live is the wrong picture however real it looks.',
             // The requirement the picture is judged against, given to the party
             // that writes the brief. It used to reach the image provider only,
             // appended after six fields written without knowledge of it, and a
@@ -1695,6 +1699,12 @@ class ContentStudioAssistant
             ! $pictured
                 ? null
                 : 'Never ask for text, words, numbers or logos in the image. '.SocialImagePrompt::subjectRules(),
+            // Read by both parties for the same reason the subject rules are.
+            // Held only on the provider side, this lost every time: the six
+            // fields arrived already asking for a frayed cloth, a scuffed
+            // handle and grime in the joint, and a provider given a subject and
+            // a rule against it draws the subject.
+            ! $pictured ? null : SocialImagePrompt::settingRules(),
             'Reply with JSON and nothing else: '.$shape,
         ]));
     }
