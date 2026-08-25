@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Social;
 
 use App\ContentStudio\ContentStudioAssistant;
+use App\Models\BrandBrief;
 use App\Support\Social\SocialImagePrompt;
 use PHPUnit\Framework\Attributes\Test;
 use ReflectionMethod;
@@ -68,9 +69,71 @@ final class PlannedShotTest extends TestCase
         $this->assertStringContainsString($rules, $this->proposalInstructions());
 
         // And the rules themselves still say the two things that matter.
-        $this->assertStringContainsString('no clipboards', $rules);
+        $this->assertStringContainsString('never contains an object that exists to be read', $rules);
         $this->assertStringContainsString('never built around an empty room', $rules);
         $this->assertStringContainsString('A person may be in it', $rules);
+    }
+
+    /**
+     * The setting reaches the writer, not only the provider.
+     *
+     * Held on the provider side alone it lost every time. The brief behind the
+     * bathroom nobody would pay to have cleaned asked in its own words for a
+     * "slightly frayed" cloth, a "scuffed brush handle" and "grime caught in
+     * the narrow joint" — so redrawing it under a better house rule redrew the
+     * same bathroom. A provider handed a subject and a rule against it draws
+     * the subject; this codebase has now learned that three times.
+     */
+    #[Test]
+    public function the_writer_is_told_whose_place_the_picture_is_set_in(): void
+    {
+        $rules = SocialImagePrompt::settingRules();
+
+        $this->assertStringContainsString("one of this business's own customers", $rules);
+        $this->assertStringContainsString('Unstyled describes the photograph, not the place', $rules);
+    }
+
+    /**
+     * And it says nothing about houses, because this engine is not only for
+     * cleaning companies.
+     *
+     * The first version of this rule described a room, its fittings and its
+     * tiling. The Studio's own tests run a SaaS project aimed at founders;
+     * handed to a tenant whose subject is an office or a product on a desk,
+     * residential art direction is one more contradiction for the model to
+     * resolve, and it resolves contradictions by picking one.
+     */
+    #[Test]
+    public function the_setting_rule_assumes_no_particular_kind_of_business(): void
+    {
+        $rules = SocialImagePrompt::settingRules();
+
+        foreach (['home', 'room', 'house', 'tiling', 'fittings', 'apartment'] as $residential) {
+            $this->assertStringNotContainsStringIgnoringCase($residential, $rules);
+        }
+    }
+
+    /** Who the customers are comes from the brand, which is the part that varies. */
+    #[Test]
+    public function the_brand_supplies_who_the_customers_are(): void
+    {
+        $brief = new BrandBrief;
+        // Written in a textarea, so it arrives as bullets more often than not —
+        // and bullets dropped mid-paragraph read as bullets.
+        $brief->audience = "- busy households\n- Lisbon property owners\n- tenants and property managers";
+
+        $this->assertStringContainsString(
+            'The customers this business serves are: busy households, Lisbon property owners, '
+                .'tenants and property managers.',
+            SocialImagePrompt::settingRules($brief),
+        );
+
+        // A tenant with nothing written down gets the relationship and no
+        // invented audience, rather than a sentence trailing off after a colon.
+        $this->assertStringNotContainsString(
+            'The customers this business serves are:',
+            SocialImagePrompt::settingRules(new BrandBrief),
+        );
     }
 
     /**

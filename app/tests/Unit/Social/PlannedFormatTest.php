@@ -155,6 +155,28 @@ final class PlannedFormatTest extends TestCase
         $this->assertStringNotContainsString('This post has no picture', $contract);
     }
 
+    /**
+     * The planner's shot is realised, not replaced — including its silences.
+     *
+     * Measured on the first month planned with shots: 7 of 17 named a hand and
+     * 25 of 32 briefs did, so the variety decided across the month was being
+     * spent at drafting time. One shot asked for a dining table already reset,
+     * with a folded chair and the kitchen soft behind it, and came back a hand
+     * wiping crumbs off a worktop — a different photograph, and one that
+     * contradicts the word it was given.
+     */
+    #[Test]
+    public function the_writer_is_told_not_to_add_a_person_the_shot_did_not_ask_for(): void
+    {
+        $contract = $this->outputContract(ChannelType::Threads, ContentFormat::Image);
+
+        $this->assertStringContainsString('sharpen it, do not substitute it', $contract);
+        $this->assertStringContainsString('do not add one', $contract);
+        // The two substitutions actually observed, named rather than implied.
+        $this->assertStringContainsString('rather than moving it to the background', $contract);
+        $this->assertStringContainsString('a decision made about the month', $contract);
+    }
+
     /** The rule that used to be the only rule, kept as the fallback and unmoved. */
     #[Test]
     public function an_idea_with_no_chosen_format_still_behaves_as_it_did(): void

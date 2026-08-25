@@ -61,8 +61,34 @@ final class SocialImagePromptTest extends TestCase
         $this->assertStringContainsString('the join stays a join', $prompt);
 
         // Banning the words left the props in the frame, blank.
-        $this->assertStringContainsString('no clipboards', $prompt);
         $this->assertStringContainsString('blank or otherwise', $prompt);
+
+        // And banning the props by name left every prop that was not named.
+        // A brass nameplate came back reading APARTMEИS and a postcode plaque
+        // came back reading 20946, both having cleared a list by not being on
+        // it. The rule is a test of what the object is for.
+        $this->assertStringContainsString('nothing that exists to be read', $prompt);
+        $this->assertStringContainsString('as part of doing its job', $prompt);
+        // Where the subject asks for one anyway, it comes out of the frame
+        // rather than being drawn empty: a provider handed a subject and a
+        // contradicting rule draws the subject.
+        $this->assertStringContainsString('leave it out of the frame', $prompt);
+
+        // Every clause here pushes the same way — documentary, unstyled, as it
+        // was found, not a showroom — and none of them said who lived there,
+        // so the cheapest way to satisfy all of them at once was a modest
+        // older flat. A month of pictures for a company whose About page opens
+        // "Premium home cleaning" came back set in bathrooms its customers do
+        // not have. Unstyled is a fact about the photograph; modest is a fact
+        // about the property; they are not the same word.
+        $this->assertStringContainsString("one of this business's own customers", $prompt);
+        $this->assertStringContainsString('Unstyled describes the photograph, not the place', $prompt);
+
+        // And the rules that used to require the mess no longer do. A brand
+        // paid to keep homes looked after publishes mostly pictures of homes
+        // that are looked after.
+        $this->assertStringNotContainsString('Not a person being tidy in a clean room', $prompt);
+        $this->assertStringContainsString('not manufactured mess', $prompt);
 
         // An example in a prompt is an instruction. "A cable that was not
         // tidied" was meant as register and came back as a stray black cable

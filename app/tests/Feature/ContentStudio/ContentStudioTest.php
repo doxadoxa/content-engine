@@ -2559,7 +2559,7 @@ final class ContentStudioTest extends TestCase
         foreach ($drafts as $call) {
             $this->assertStringContainsString('What this picture has to show:', $call->prompt);
             // The prop rule, in the contract as well as in the provider prompt.
-            $this->assertStringContainsString('no clipboards, checklists, forms', $call->prompt);
+            $this->assertStringContainsString('an object that exists to be read', $call->prompt);
         }
     }
 

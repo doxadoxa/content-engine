@@ -61,7 +61,8 @@ final readonly class SocialImagePrompt
     private const string DEFAULT_ACTION = 'the moment the work actually changes something, not a tidy '
         .'gesture near it';
 
-    private const string DEFAULT_LOCATION = 'a real working space with the ordinary clutter left in';
+    private const string DEFAULT_LOCATION = 'a real home in use, with the ordinary traces of the day left '
+        .'where they fell';
 
     /**
      * The aesthetic, and the one word that is deliberately absent from it.
@@ -124,8 +125,9 @@ final readonly class SocialImagePrompt
      * nobody is maintaining, published by the company paid to maintain it.
      */
     private const string NO_DAMAGE = 'Used, not broken: nothing chipped, cracked, gouged, split, peeling '
-        .'or in disrepair, no damaged furniture or worktops. What shows here is dirt, dust, marks and '
-        .'residue — the things cleaning removes — on surfaces that are otherwise sound.';
+        .'or in disrepair, no damaged furniture, worktops or fittings, nothing dated or cheaply made. '
+        .'Anything that does show is dirt, dust, marks or residue — the things cleaning removes — and '
+        .'only ever on surfaces that are in good condition underneath.';
 
     /**
      * The failure modes these models actually have, named individually.
@@ -179,8 +181,9 @@ final readonly class SocialImagePrompt
      * scale people do not usually see, a change mid-happening, evidence.
      */
     private const string INTEREST = 'The frame has to be worth stopping on: real texture at close range, '
-        .'a change caught mid-way, marks and residue that are actually there. Not a person being tidy in '
-        .'a clean room.';
+        .'something happening rather than something arranged, and detail at a scale people do not '
+        .'usually see. Where the work is removing something, show it mid-way. Where it is not, the '
+        .'interest is the texture and the moment, not manufactured mess.';
 
     private function __construct(
         private string $subject,
@@ -190,6 +193,55 @@ final readonly class SocialImagePrompt
         private string $style,
         private string $light,
     ) {}
+
+    /**
+     * Whose place this is, which nothing in this prompt used to say.
+     *
+     * Every clause above was written against one complaint — that the pictures
+     * looked like stock photography — and each pushes the same way:
+     * documentary, unstyled, shot as it was found, ordinary traces left in, not
+     * a showroom, not a catalogue. The drafting contract went further and
+     * forbade the words premium, elegant, luxury, pristine, sleek and
+     * minimalist outright.
+     *
+     * Nothing anywhere said whose place it was, so the cheapest way to satisfy
+     * all of it at once is somewhere modest and a bit tired — and that is what
+     * came back. A month of pictures for a company whose own About page opens
+     * "Premium home cleaning and residence care in Lisbon", and whose brand
+     * brief lists `premium` in its tone, was set in bathrooms nobody paying €18
+     * an hour for recurring care would be living in. The brief's own
+     * `visual_language` does say "clean, well-kept home interiors" and is
+     * appended last precisely so it can overrule — but one clause does not beat
+     * six, the same ordering failure this file has already recorded once.
+     *
+     * The error underneath is a conflation: *unstyled* is a fact about the
+     * photograph and *modest* is a fact about the place, and they are not the
+     * same word. A documentary photograph of a well-appointed apartment is an
+     * ordinary thing to take.
+     *
+     * **Said without naming a home, which is the correction to the first
+     * attempt at this.** That version described a room, its fittings and its
+     * tiling, and this engine is not only for cleaning companies — the Studio's
+     * own tests run a SaaS project aimed at founders. Handed to a tenant whose
+     * subject is an office, a kitchen pass or a product on a desk, residential
+     * art direction is one more contradiction for the model to resolve, and it
+     * resolves contradictions by picking one. So the house rule states the
+     * relationship — the setting is somewhere this business's customer would be
+     * — and the brand supplies who that is.
+     */
+    public static function settingRules(?BrandBrief $brief = null): string
+    {
+        $audience = self::inline($brief?->audience);
+
+        return implode(' ', array_filter([
+            'The setting is one of this business\'s own customers, and it looks like it: in good order, '
+                .'current, the kind of place this service is actually bought for. Unstyled describes the '
+                .'photograph, not the place — nothing here is arranged for the camera, and the place is '
+                .'still a good one. Whatever the work is about may be out of order; nothing else is, and '
+                .'nothing is dated, cheaply made or neglected.',
+            $audience === '' ? null : "The customers this business serves are: {$audience}.",
+        ]));
+    }
 
     /**
      * The six fields as the drafting model returned them.
@@ -248,10 +300,20 @@ final readonly class SocialImagePrompt
             'It is never built around an empty room, a whole interior, a run of cabinetry or an '
                 .'appliance: those are the shapes an image model renders as architecture that does not '
                 .'meet itself.',
-            'And it never contains an object whose purpose is to carry words — no clipboards, '
-                .'checklists, forms, cards, notebooks, printed lists, phones, tablets or screens. These '
-                .'models cannot draw legible text, so what comes back is a blank one, and a photograph '
-                .'of an empty form says nothing was filled in.',
+            // Was a list, and a list is a hole with edges. It named clipboards,
+            // checklists, forms, cards, notebooks, printed lists, phones,
+            // tablets and screens — so a brief asked for a brass nameplate and
+            // got APARTMEИS across it, and a later one asked for a postcode
+            // plaque and got a legible 20946 that is not a Portuguese postcode
+            // in any format. Both cleared the ban by not being on it. The test
+            // is what the object is *for*, applied by the party writing the
+            // brief, because no enumeration reaches the next thing with writing
+            // on it.
+            'And it never contains an object that exists to be read. Before naming anything, ask what '
+                .'the thing is for: if a real one would have letters or numbers on it — if that is how '
+                .'it does its job — it cannot be in the frame, whatever it is called. These models '
+                .'cannot draw legible text, so what comes back is either a blank one, which photographs '
+                .'as something nobody filled in, or invented characters over the brand\'s name.',
             'A person may be in it, and may be the subject.',
         ]);
     }
@@ -276,6 +338,7 @@ final readonly class SocialImagePrompt
                 .'cabinet hardware should not be the subject of the frame.',
             "Action: {$this->action}",
             "Location: {$this->location}",
+            self::settingRules($brief),
             "Style: {$this->style}",
             $shot === null || trim($shot) === '' ? null : 'What this picture has to show: '.trim($shot),
             'Camera: '.self::CAMERA,
@@ -290,9 +353,11 @@ final readonly class SocialImagePrompt
             // a post about naming a standard came back as a photograph of a
             // blank form.
             'Not in this image: no text, no lettering, no numbers, no logos, no watermarks, no user '
-                .'interface, no charts — and nothing whose purpose is to carry them: no clipboards, '
-                .'checklists, forms, notebooks, paperwork, labels turned to the camera, signage, phones, '
-                .'tablets or screens, blank or otherwise. No stock-photo staging: nobody posed for the '
+                .'interface, no charts — and nothing that exists to be read, meaning any object a real '
+                .'one of which would carry letters or numbers as part of doing its job: paperwork and '
+                .'the boards it sits on, anything named, numbered, labelled or signed, anything with a '
+                .'screen — blank or otherwise, and this holds even where the subject above asks for one '
+                .'— leave it out of the frame rather than drawing it empty. No stock-photo staging: nobody posed for the '
                 .'camera, nobody holding a product up for it, no handshakes, no people pointing at '
                 .'screens. Somebody caught mid-task who happens to be facing the camera is a '
                 .'photograph; somebody presenting themselves to it is an advertisement.',
@@ -363,6 +428,30 @@ final readonly class SocialImagePrompt
             'style' => $this->style,
             'light' => $this->light,
         ];
+    }
+
+    /**
+     * A brand field written as a list, said as a sentence.
+     *
+     * `audience` is edited in a textarea and comes back as bullets more often
+     * than not, which read as bullets when dropped mid-paragraph: "The
+     * customers this business serves are: - busy households\n- Lisbon property
+     * owners". The prompt wants a phrase.
+     */
+    private static function inline(?string $value): string
+    {
+        $lines = preg_split('/\r?\n/', trim((string) $value)) ?: [];
+        $parts = [];
+
+        foreach ($lines as $line) {
+            $line = trim(ltrim(trim($line), "-*•\t "));
+
+            if ($line !== '') {
+                $parts[] = rtrim($line, '.;,');
+            }
+        }
+
+        return implode(', ', $parts);
     }
 
     /**
