@@ -97,6 +97,39 @@ enum SlideLayout: string
     }
 
     /**
+     * Every field's room, as one sentence for the model that fills them.
+     *
+     * Derived, because these numbers were enforced in one place and stated in
+     * none: a writer given no budget for a button label wrote past it, and the
+     * panel shipped reading "Save this guide before booking your regu". Two
+     * copies of a number is the failure this codebase keeps finding, so the
+     * prompt reads the same array the parser trims against.
+     */
+    public static function budgets(): string
+    {
+        $budgets = [];
+
+        foreach (self::cases() as $layout) {
+            foreach ($layout->fields() as $field => $limit) {
+                // Keyed by field rather than by layout: `body` is 500 on a step
+                // and 300 on a cta, and the tighter number is the safe one to
+                // quote when one word covers both.
+                $budgets[$field] = min($budgets[$field] ?? $limit, $limit);
+            }
+        }
+
+        ksort($budgets);
+
+        $parts = [];
+
+        foreach ($budgets as $field => $limit) {
+            $parts[] = "{$field} {$limit}";
+        }
+
+        return implode(', ', $parts).' characters.';
+    }
+
+    /**
      * Fields without which the layout cannot be drawn at all.
      *
      * Distinct from {@see fields()} because most extras are optional decoration

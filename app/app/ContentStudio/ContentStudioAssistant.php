@@ -1662,11 +1662,30 @@ class ContentStudioAssistant
             // idea free to choose its own subject chooses the same one as its
             // siblings, because they are drafted in parallel and none of them
             // can see the others.
+            //
+            // "Sharpen it, do not substitute it" was not enough on its own, and
+            // the way it failed is specific: the month's shots are varied at
+            // the planner and pulled back towards hands at the writer. Measured
+            // on the first month planned this way — 7 of 17 shots named a hand,
+            // 25 of 32 briefs did, and three of the five shots with nobody in
+            // them acquired somebody. One asked for a dining table already
+            // reset, with a folded chair and the kitchen soft behind it, and
+            // came back a hand wiping crumbs off a worktop: a different
+            // photograph, and one that contradicts the word "reset" it was
+            // given. So the two ways of substituting are now named, and the
+            // absence of a person is stated to be a decision rather than a
+            // field somebody forgot to fill in.
             ! $pictured || $idea->shot === null || trim($idea->shot) === ''
                 ? null
                 : 'The photograph for this idea was chosen with the rest of the month, so that no two '
                     ."posts show the same thing. It is: {$idea->shot}. Write the six fields to make "
-                    .'exactly that picture — sharpen it, do not substitute it.',
+                    .'exactly that picture — sharpen it, do not substitute it. Two substitutions in '
+                    .'particular: keep the thing it names as the subject rather than moving it to the '
+                    .'background behind something you found more photogenic, and if it does not mention '
+                    .'a person, hands or anyone working, do not add one. A shot with nobody in it is a '
+                    .'decision made about the month, not an omission — some of these are a still life '
+                    .'on purpose, because a feed in which every photograph is a pair of hands is the '
+                    .'thing this instruction exists to prevent.',
             // Not "no text" — no text-carriers. Told to keep words out of the
             // frame, the model kept asking for the prop and disclaiming its
             // content: "a checklist-style clipboard with no legible writing",
@@ -1728,6 +1747,17 @@ class ContentStudioAssistant
 
             'The last slide is a cta asking for exactly one thing — save it, follow, send a message. One, '
                 .'not three.',
+
+            // The budgets, said out loud. They were enforced and never
+            // mentioned, so a model writing a button label had no way to know
+            // it had 40 characters — and a carousel shipped a button reading
+            // "Save this guide before booking your regu". The parser no longer
+            // cuts mid-word, but a label the writer sized correctly beats one
+            // the parser rescued.
+            'These fields are drawn onto the panel, not into a caption, so they have hard room: '
+                .SlideLayout::budgets()
+                .' Write inside those. A value that overruns is trimmed back to a whole word or dropped, '
+                .'and neither is as good as one that fits.',
 
             $layouts,
 
@@ -1939,14 +1969,24 @@ class ContentStudioAssistant
 
             foreach ($layout->fields() as $field => $limit) {
                 // Truncated, not refused. `untruncatedText` throws, and these
-                // are short optional fields with tight limits that the model is
-                // never told — so a 62-character kicker discarded the entire
-                // candidate and burned a retry, and a batch where every
-                // candidate overran failed the channel outright. That is the
-                // opposite of what this method promises. The heading above
-                // still throws, because a heading over 120 characters is a
-                // model ignoring the shape rather than overrunning a label.
-                $value = $this->text($slide[$field] ?? null, $limit);
+                // are short optional fields with tight limits — so a
+                // 62-character kicker discarded the entire candidate and burned
+                // a retry, and a batch where every candidate overran failed the
+                // channel outright. That is the opposite of what this method
+                // promises. The heading above still throws, because a heading
+                // over 120 characters is a model ignoring the shape rather than
+                // overrunning a label.
+                //
+                // But it used to cut mid-word, and these are not captions where
+                // that reads as a caption running on: they are drawn onto a
+                // panel. A carousel shipped a button labelled "Save this guide
+                // before booking your regu" — 40 characters exactly, the model
+                // having written a few more. So the cut lands on a word
+                // boundary, and a value that cannot survive one is dropped
+                // rather than printed as a fragment. The model is also told the
+                // budget now, in `carouselContract()`, which is the actual fix;
+                // this is what happens when it misses anyway.
+                $value = $this->slideField($slide[$field] ?? null, $field, $limit);
 
                 if ($value !== '') {
                     $fields[$field] = $value;
@@ -2858,6 +2898,48 @@ class ContentStudioAssistant
     private function text(mixed $value, int $limit): string
     {
         return is_scalar($value) ? Str::limit(trim((string) $value), $limit, '') : '';
+    }
+
+    /**
+     * One short field drawn onto a panel, cut where a reader would cut it.
+     *
+     * Never mid-word. A caption that overruns reads as a caption; a *label*
+     * that overruns reads as a bug, because it is set in 40pt on a coloured
+     * button. Where trimming to the last whole word leaves too little to mean
+     * anything, nothing is returned and the renderer draws the panel without
+     * it — a button whose label is a word and a half is worse than a panel that
+     * never promised one.
+     *
+     * A `figure` is the case that must never be trimmed at all: cutting "€1,250"
+     * to "€1,2" does not shorten a number, it states a different one. Twelve
+     * characters is generous for a figure, so anything past it is not a long
+     * number but a sentence in the wrong field.
+     */
+    private function slideField(mixed $value, string $field, int $limit): string
+    {
+        $text = is_scalar($value) ? trim((string) $value) : '';
+
+        if ($text === '' || mb_strlen($text) <= $limit) {
+            return $text;
+        }
+
+        if ($field === 'figure') {
+            return '';
+        }
+
+        $trimmed = mb_substr($text, 0, $limit);
+        $boundary = mb_strrpos($trimmed, ' ');
+
+        if ($boundary === false) {
+            return '';
+        }
+
+        $trimmed = rtrim(mb_substr($trimmed, 0, $boundary), " \t\n\r,;:-—–");
+
+        // Half a label is not a shorter label. The threshold is deliberately
+        // crude — what it is protecting against is one or two words left
+        // standing where a phrase was meant.
+        return mb_strlen($trimmed) >= intdiv($limit, 2) ? $trimmed : '';
     }
 
     private function untruncatedText(mixed $value, int $limit, string $label): string

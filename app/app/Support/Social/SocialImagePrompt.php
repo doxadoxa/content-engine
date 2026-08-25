@@ -248,10 +248,20 @@ final readonly class SocialImagePrompt
             'It is never built around an empty room, a whole interior, a run of cabinetry or an '
                 .'appliance: those are the shapes an image model renders as architecture that does not '
                 .'meet itself.',
-            'And it never contains an object whose purpose is to carry words — no clipboards, '
-                .'checklists, forms, cards, notebooks, printed lists, phones, tablets or screens. These '
-                .'models cannot draw legible text, so what comes back is a blank one, and a photograph '
-                .'of an empty form says nothing was filled in.',
+            // Was a list, and a list is a hole with edges. It named clipboards,
+            // checklists, forms, cards, notebooks, printed lists, phones,
+            // tablets and screens — so a brief asked for a brass nameplate and
+            // got APARTMEИS across it, and a later one asked for a postcode
+            // plaque and got a legible 20946 that is not a Portuguese postcode
+            // in any format. Both cleared the ban by not being on it. The test
+            // is what the object is *for*, applied by the party writing the
+            // brief, because no enumeration reaches the next thing with writing
+            // on it.
+            'And it never contains an object that exists to be read. Before naming anything, ask what '
+                .'the thing is for: if a real one would have letters or numbers on it — if that is how '
+                .'it does its job — it cannot be in the frame, whatever it is called. These models '
+                .'cannot draw legible text, so what comes back is either a blank one, which photographs '
+                .'as something nobody filled in, or invented characters over the brand\'s name.',
             'A person may be in it, and may be the subject.',
         ]);
     }
@@ -290,9 +300,11 @@ final readonly class SocialImagePrompt
             // a post about naming a standard came back as a photograph of a
             // blank form.
             'Not in this image: no text, no lettering, no numbers, no logos, no watermarks, no user '
-                .'interface, no charts — and nothing whose purpose is to carry them: no clipboards, '
-                .'checklists, forms, notebooks, paperwork, labels turned to the camera, signage, phones, '
-                .'tablets or screens, blank or otherwise. No stock-photo staging: nobody posed for the '
+                .'interface, no charts — and nothing that exists to be read, meaning any object a real '
+                .'one of which would carry letters or numbers as part of doing its job: paperwork and '
+                .'the boards it sits on, anything named, numbered, labelled or signed, anything with a '
+                .'screen — blank or otherwise, and this holds even where the subject above asks for one '
+                .'— leave it out of the frame rather than drawing it empty. No stock-photo staging: nobody posed for the '
                 .'camera, nobody holding a product up for it, no handshakes, no people pointing at '
                 .'screens. Somebody caught mid-task who happens to be facing the camera is a '
                 .'photograph; somebody presenting themselves to it is an advertisement.',

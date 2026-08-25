@@ -68,7 +68,7 @@ final class PlannedShotTest extends TestCase
         $this->assertStringContainsString($rules, $this->proposalInstructions());
 
         // And the rules themselves still say the two things that matter.
-        $this->assertStringContainsString('no clipboards', $rules);
+        $this->assertStringContainsString('never contains an object that exists to be read', $rules);
         $this->assertStringContainsString('never built around an empty room', $rules);
         $this->assertStringContainsString('A person may be in it', $rules);
     }

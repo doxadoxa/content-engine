@@ -61,8 +61,18 @@ final class SocialImagePromptTest extends TestCase
         $this->assertStringContainsString('the join stays a join', $prompt);
 
         // Banning the words left the props in the frame, blank.
-        $this->assertStringContainsString('no clipboards', $prompt);
         $this->assertStringContainsString('blank or otherwise', $prompt);
+
+        // And banning the props by name left every prop that was not named.
+        // A brass nameplate came back reading APARTMEИS and a postcode plaque
+        // came back reading 20946, both having cleared a list by not being on
+        // it. The rule is a test of what the object is for.
+        $this->assertStringContainsString('nothing that exists to be read', $prompt);
+        $this->assertStringContainsString('as part of doing its job', $prompt);
+        // Where the subject asks for one anyway, it comes out of the frame
+        // rather than being drawn empty: a provider handed a subject and a
+        // contradicting rule draws the subject.
+        $this->assertStringContainsString('leave it out of the frame', $prompt);
 
         // An example in a prompt is an instruction. "A cable that was not
         // tidied" was meant as register and came back as a stray black cable
