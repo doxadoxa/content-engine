@@ -134,6 +134,60 @@ final class FormatMixTest extends TestCase
     }
 
     /**
+     * A carousel that will never be a carousel does not count as one.
+     *
+     * The planner cannot produce the combination — the parse step corrects it —
+     * but an operator can pick Carousel for a `take` in the Studio, and
+     * `preserveDraftedIdeas()` then carries the raw value into every later
+     * refinement. `take` never reaches Instagram, so both of its channels render
+     * a single image. Counted naively, one such frozen idea silences the "no
+     * carousel" correction for a month that produces none.
+     */
+    #[Test]
+    public function a_carousel_on_an_idea_that_cannot_carry_one_is_not_counted(): void
+    {
+        $month = [
+            ...array_map(
+                static fn (): array => ['kind' => PostKind::Behind, 'format' => ContentFormat::Image],
+                range(1, 16),
+            ),
+            // The one an operator forced through, and the whole month's only
+            // carousel on paper.
+            ['kind' => PostKind::Take, 'format' => ContentFormat::Carousel],
+        ];
+
+        $findings = FormatMix::fromConfig()->findings($month);
+
+        $this->assertNotSame([], $findings);
+        $this->assertStringContainsString('no carousel at all', $findings[0]);
+    }
+
+    /** And it does not eat a slot of a ceiling it never occupies. */
+    #[Test]
+    public function an_ineffective_carousel_does_not_consume_the_ceiling(): void
+    {
+        $mix = FormatMix::fromConfig();
+        $capable = 16;
+        $atTheLimit = $mix->carouselLimit($capable);
+
+        $month = [];
+
+        for ($i = 0; $i < $capable; $i++) {
+            $month[] = [
+                'kind' => PostKind::Behind,
+                'format' => $i < $atTheLimit ? ContentFormat::Carousel : ContentFormat::Image,
+            ];
+        }
+
+        $this->assertSame([], $mix->findings($month));
+
+        // One more carousel, on a kind that cannot produce one, must not tip it.
+        $month[] = ['kind' => PostKind::Take, 'format' => ContentFormat::Carousel];
+
+        $this->assertSame([], $mix->findings($month));
+    }
+
+    /**
      * Sixteen Instagram-bound ideas and four Threads-only ones.
      *
      * @return list<array{kind: PostKind, format: ContentFormat}>

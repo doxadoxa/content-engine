@@ -185,12 +185,6 @@ final readonly class SocialImagePrompt
         .'usually see. Where the work is removing something, show it mid-way. Where it is not, the '
         .'interest is the texture and the moment, not manufactured mess.';
 
-    private const string CUSTOMER = 'This room belongs to somebody who pays for this service: it is '
-        .'well kept, well put together and current, the kind of home the business is actually hired '
-        .'for. Unstyled describes the photograph, not the property — nothing here is arranged for the '
-        .'camera, and the home is still a good one. Not dated fittings, not builder-grade tiling, not '
-        .'a place that looks neglected or hard up.';
-
     private function __construct(
         private string $subject,
         private string $composition,
@@ -201,51 +195,52 @@ final readonly class SocialImagePrompt
     ) {}
 
     /**
-     * Whose home this is, which nothing in this prompt used to say.
+     * Whose place this is, which nothing in this prompt used to say.
      *
      * Every clause above was written against one complaint — that the pictures
-     * looked like stock photography — and each of them pushes the same way:
-     * documentary, unstyled, shot as it was found, ordinary traces left in,
-     * not a showroom, not a catalogue. The drafting contract goes further and
-     * forbids the words premium, elegant, luxury, pristine, sleek and
+     * looked like stock photography — and each pushes the same way:
+     * documentary, unstyled, shot as it was found, ordinary traces left in, not
+     * a showroom, not a catalogue. The drafting contract went further and
+     * forbade the words premium, elegant, luxury, pristine, sleek and
      * minimalist outright.
      *
-     * Nothing anywhere said who lived there, so the cheapest way to satisfy all
-     * of it at once is a modest older flat — and that is what came back. A
-     * month of pictures for a company whose own About page opens "Premium home
-     * cleaning and residence care in Lisbon", and whose brand brief lists
-     * `premium` in its tone, was set in kitchens and bathrooms nobody paying
-     * €18 an hour for recurring care and four-language concierge support would
-     * be living in. The brief's own `visual_language` says "clean, well-kept
-     * home interiors" and is appended last precisely so it can overrule — but
-     * one clause does not beat six, which is the same ordering failure this
-     * file has already recorded once.
+     * Nothing anywhere said whose place it was, so the cheapest way to satisfy
+     * all of it at once is somewhere modest and a bit tired — and that is what
+     * came back. A month of pictures for a company whose own About page opens
+     * "Premium home cleaning and residence care in Lisbon", and whose brand
+     * brief lists `premium` in its tone, was set in bathrooms nobody paying €18
+     * an hour for recurring care would be living in. The brief's own
+     * `visual_language` does say "clean, well-kept home interiors" and is
+     * appended last precisely so it can overrule — but one clause does not beat
+     * six, the same ordering failure this file has already recorded once.
      *
-     * The error under it is a conflation: *unstyled* is a fact about the
-     * photograph and *modest* is a fact about the property, and they are not
-     * the same word. A documentary photograph of a well-appointed apartment is
-     * an ordinary thing to take.
+     * The error underneath is a conflation: *unstyled* is a fact about the
+     * photograph and *modest* is a fact about the place, and they are not the
+     * same word. A documentary photograph of a well-appointed apartment is an
+     * ordinary thing to take.
      *
-     * Stated as a house rule rather than read off the brand, because it is true
-     * of every tenant this engine will ever serve: the room in the picture has
-     * to be one the business's own customer would be in. A service is sold by
-     * showing the life it belongs to.
+     * **Said without naming a home, which is the correction to the first
+     * attempt at this.** That version described a room, its fittings and its
+     * tiling, and this engine is not only for cleaning companies — the Studio's
+     * own tests run a SaaS project aimed at founders. Handed to a tenant whose
+     * subject is an office, a kitchen pass or a product on a desk, residential
+     * art direction is one more contradiction for the model to resolve, and it
+     * resolves contradictions by picking one. So the house rule states the
+     * relationship — the setting is somewhere this business's customer would be
+     * — and the brand supplies who that is.
      */
-    /**
-     * The same rule, for the party that writes the six fields.
-     *
-     * Appending it to the provider was not enough and the reason is already
-     * written down twice in this codebase: a provider handed a subject and a
-     * contradicting rule draws the subject. The brief that produced the
-     * bathroom nobody would pay to have cleaned asked, in its own words, for a
-     * "slightly frayed" cloth, a "scuffed brush handle", "water marks near the
-     * basin" and "grime caught in the narrow joint" — so redrawing it under a
-     * better house rule redrew the same bathroom. The aesthetic constants here
-     * shape a picture whose subject was chosen by a model that never read them.
-     */
-    public static function settingRules(): string
+    public static function settingRules(?BrandBrief $brief = null): string
     {
-        return self::CUSTOMER;
+        $audience = self::inline($brief?->audience);
+
+        return implode(' ', array_filter([
+            'The setting is one of this business\'s own customers, and it looks like it: in good order, '
+                .'current, the kind of place this service is actually bought for. Unstyled describes the '
+                .'photograph, not the place — nothing here is arranged for the camera, and the place is '
+                .'still a good one. Whatever the work is about may be out of order; nothing else is, and '
+                .'nothing is dated, cheaply made or neglected.',
+            $audience === '' ? null : "The customers this business serves are: {$audience}.",
+        ]));
     }
 
     /**
@@ -343,7 +338,7 @@ final readonly class SocialImagePrompt
                 .'cabinet hardware should not be the subject of the frame.',
             "Action: {$this->action}",
             "Location: {$this->location}",
-            self::CUSTOMER,
+            self::settingRules($brief),
             "Style: {$this->style}",
             $shot === null || trim($shot) === '' ? null : 'What this picture has to show: '.trim($shot),
             'Camera: '.self::CAMERA,
@@ -433,6 +428,30 @@ final readonly class SocialImagePrompt
             'style' => $this->style,
             'light' => $this->light,
         ];
+    }
+
+    /**
+     * A brand field written as a list, said as a sentence.
+     *
+     * `audience` is edited in a textarea and comes back as bullets more often
+     * than not, which read as bullets when dropped mid-paragraph: "The
+     * customers this business serves are: - busy households\n- Lisbon property
+     * owners". The prompt wants a phrase.
+     */
+    private static function inline(?string $value): string
+    {
+        $lines = preg_split('/\r?\n/', trim((string) $value)) ?: [];
+        $parts = [];
+
+        foreach ($lines as $line) {
+            $line = trim(ltrim(trim($line), "-*•\t "));
+
+            if ($line !== '') {
+                $parts[] = rtrim($line, '.;,');
+            }
+        }
+
+        return implode(', ', $parts);
     }
 
     /**

@@ -500,6 +500,18 @@ class ContentStudioAssistant
             ));
 
             $proposal = $this->normaliseProposal($answer->text, $plan->month);
+
+            // Completeness of *this answer*, measured before the merge and not
+            // after it. A `shot` is optional in the column because every idea
+            // planned before the column existed has none, and folding those in
+            // here would make the model rewrite a month to correct somebody
+            // else's history. What must not pass is a fresh proposal that
+            // simply left the key out: nothing downstream refuses it, the
+            // drafting step falls back to inventing a subject per post, and
+            // that fallback is the failure this whole change removes — a real
+            // month of it came back with 33 of 40 pictures describing a hand.
+            $incomplete = $this->missingShots($proposal['ideas']);
+
             // Measured on the merged month rather than on the model's answer.
             // preserveDraftedIdeas() drops proposed ideas and appends frozen
             // ones, so judging the raw answer described a month that is not the
@@ -507,6 +519,7 @@ class ContentStudioAssistant
             // that has one, and silence over a merged month past the ceiling.
             $proposal['ideas'] = $this->preserveDraftedIdeas($plan, $proposal['ideas']);
             $findings = [
+                ...$incomplete,
                 ...ContentMix::fromConfig()->findings(array_map(
                     static fn (array $idea): PostKind => $idea['kind'],
                     $proposal['ideas'],
@@ -1388,7 +1401,15 @@ class ContentStudioAssistant
                 $answer = $models->send(new ModelRequest(
                     role: 'draft',
                     instructions: $this->channelInstructions($playbook, $idea, $brief),
-                    prompt: $this->channelPrompt($playbook, $idea, $angle, $correction, $siblings, $shots),
+                    prompt: $this->channelPrompt(
+                        $playbook,
+                        $idea,
+                        $angle,
+                        $correction,
+                        $siblings,
+                        $shots,
+                        $brief,
+                    ),
                 ));
 
                 try {
@@ -1531,6 +1552,9 @@ class ContentStudioAssistant
         ?string $correction,
         array $siblings = [],
         array $shots = [],
+        // Carried in for the setting rule, which is half house rule and half
+        // brand: the relationship is universal, who the customers are is not.
+        ?BrandBrief $brief = null,
     ): string {
         $written = [];
 
@@ -1587,7 +1611,7 @@ class ContentStudioAssistant
                     .'different tool, surface, room or moment of the work, such that somebody scrolling '
                     .'the month would not think they had seen it already.',
             $correction === null ? null : "Your previous answer was invalid: {$correction}. Correct it.",
-            $this->outputContract($playbook, $idea),
+            $this->outputContract($playbook, $idea, $brief),
         ]));
     }
 
@@ -1600,8 +1624,11 @@ class ContentStudioAssistant
      * brief produced the stock illustrations this release is fixing, and why
      * six named fields do not.
      */
-    private function outputContract(ChannelPlaybook $playbook, ContentIdea $idea): string
-    {
+    private function outputContract(
+        ChannelPlaybook $playbook,
+        ContentIdea $idea,
+        ?BrandBrief $brief = null,
+    ): string {
         // A text post buys no picture: the spend step skips it, so six fields
         // of art direction were being written, parsed, guarded and dropped on
         // the floor. Worse than the waste is what the writer does knowing a
@@ -1704,7 +1731,7 @@ class ContentStudioAssistant
             // fields arrived already asking for a frayed cloth, a scuffed
             // handle and grime in the joint, and a provider given a subject and
             // a rule against it draws the subject.
-            ! $pictured ? null : SocialImagePrompt::settingRules(),
+            ! $pictured ? null : SocialImagePrompt::settingRules($brief),
             'Reply with JSON and nothing else: '.$shape,
         ]));
     }
@@ -2700,6 +2727,46 @@ class ContentStudioAssistant
             'shot' => $idea->shot,
             'channels' => $idea->channels,
         ];
+    }
+
+    /**
+     * Ideas this answer left without a photograph, as a correction.
+     *
+     * Returned as findings rather than thrown, so it joins the loop that
+     * already exists: the model is asked again with what was wrong attached,
+     * and a month still incomplete after the last attempt is stored anyway with
+     * the finding beside it. An operator who clicks Propose and gets nothing
+     * cannot act; an operator who gets a month and a note can.
+     *
+     * Named rather than counted. "Three ideas have no shot" sends the model
+     * looking; the keys tell it where.
+     *
+     * @param  list<array<string, mixed>>  $ideas
+     * @return list<string>
+     */
+    private function missingShots(array $ideas): array
+    {
+        $missing = [];
+
+        foreach ($ideas as $idea) {
+            $shot = $idea['shot'] ?? null;
+
+            if (! is_string($shot) || trim($shot) === '') {
+                $missing[] = is_string($idea['idea_key'] ?? null) ? $idea['idea_key'] : '(unnamed)';
+            }
+        }
+
+        if ($missing === []) {
+            return [];
+        }
+
+        return [sprintf(
+            'These ideas have no `shot`: %s. Every idea needs one — a single sentence naming what its '
+                .'photograph shows, different from every other shot in the month by more than wording. '
+                .'An idea without one is illustrated by whatever the drafting step invents for it in '
+                .'isolation, which is how a month ends up as forty photographs of the same hand.',
+            implode(', ', $missing),
+        )];
     }
 
     /**

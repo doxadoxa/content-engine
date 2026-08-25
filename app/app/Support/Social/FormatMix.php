@@ -172,9 +172,20 @@ final readonly class FormatMix
         }
 
         $capable = self::capable(array_column($chosen, 'kind'));
+
+        // Carousels that will actually be carousels. The planner cannot produce
+        // the combination — {@see ContentStudioAssistant::formatFor()} corrects
+        // it at parse — but an operator can pick Carousel for a `take` in the
+        // Studio, which permits it with a warning, and `preserveDraftedIdeas()`
+        // then carries the raw value into every later refinement. `take` never
+        // reaches Instagram, so {@see ContentFormat::on()} renders both of its
+        // channels as single images: counting it here would let one frozen idea
+        // suppress the "no carousel" correction for a month that produces none,
+        // and eat a slot of a ceiling it never occupies.
         $carousels = count(array_filter(
             $chosen,
-            static fn (array $idea): bool => $idea['format'] === ContentFormat::Carousel,
+            static fn (array $idea): bool => $idea['format'] === ContentFormat::Carousel
+                && self::reachesInstagram($idea['kind']),
         ));
 
         $findings = [];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Social;
 
 use App\ContentStudio\ContentStudioAssistant;
+use App\Models\BrandBrief;
 use App\Support\Social\SocialImagePrompt;
 use PHPUnit\Framework\Attributes\Test;
 use ReflectionMethod;
@@ -84,13 +85,104 @@ final class PlannedShotTest extends TestCase
      * the subject; this codebase has now learned that three times.
      */
     #[Test]
-    public function the_writer_is_told_whose_home_the_picture_is_set_in(): void
+    public function the_writer_is_told_whose_place_the_picture_is_set_in(): void
     {
         $rules = SocialImagePrompt::settingRules();
 
-        $this->assertStringContainsString('belongs to somebody who pays for this service', $rules);
-        $this->assertStringContainsString('Unstyled describes the photograph, not the property', $rules);
-        $this->assertStringContainsString('not builder-grade tiling', $rules);
+        $this->assertStringContainsString("one of this business's own customers", $rules);
+        $this->assertStringContainsString('Unstyled describes the photograph, not the place', $rules);
+    }
+
+    /**
+     * And it says nothing about houses, because this engine is not only for
+     * cleaning companies.
+     *
+     * The first version of this rule described a room, its fittings and its
+     * tiling. The Studio's own tests run a SaaS project aimed at founders;
+     * handed to a tenant whose subject is an office or a product on a desk,
+     * residential art direction is one more contradiction for the model to
+     * resolve, and it resolves contradictions by picking one.
+     */
+    #[Test]
+    public function the_setting_rule_assumes_no_particular_kind_of_business(): void
+    {
+        $rules = SocialImagePrompt::settingRules();
+
+        foreach (['home', 'room', 'house', 'tiling', 'fittings', 'apartment'] as $residential) {
+            $this->assertStringNotContainsStringIgnoringCase($residential, $rules);
+        }
+    }
+
+    /** Who the customers are comes from the brand, which is the part that varies. */
+    #[Test]
+    public function the_brand_supplies_who_the_customers_are(): void
+    {
+        $brief = new BrandBrief;
+        // Written in a textarea, so it arrives as bullets more often than not —
+        // and bullets dropped mid-paragraph read as bullets.
+        $brief->audience = "- busy households\n- Lisbon property owners\n- tenants and property managers";
+
+        $this->assertStringContainsString(
+            'The customers this business serves are: busy households, Lisbon property owners, '
+                .'tenants and property managers.',
+            SocialImagePrompt::settingRules($brief),
+        );
+
+        // A tenant with nothing written down gets the relationship and no
+        // invented audience, rather than a sentence trailing off after a colon.
+        $this->assertStringNotContainsString(
+            'The customers this business serves are:',
+            SocialImagePrompt::settingRules(new BrandBrief),
+        );
+    }
+
+    /**
+     * A fresh answer that left the key out is sent back, not stored quietly.
+     *
+     * Nothing downstream refuses a null shot — the column is nullable because
+     * every idea planned before it existed has none — so a model that simply
+     * omitted it would have restored the fallback this change removes, with no
+     * sign on any screen that it had.
+     */
+    #[Test]
+    public function a_proposal_that_omits_a_shot_is_corrected(): void
+    {
+        $findings = $this->missingShots([
+            ['idea_key' => 'reset-the-table', 'shot' => 'a folded chair against a cleared table'],
+            ['idea_key' => 'the-arrival-window', 'shot' => null],
+            ['idea_key' => 'colour-coded-cloths', 'shot' => '   '],
+        ]);
+
+        $this->assertCount(1, $findings);
+        // Named, because "three ideas have no shot" only sends the model looking.
+        $this->assertStringContainsString('the-arrival-window', $findings[0]);
+        $this->assertStringContainsString('colour-coded-cloths', $findings[0]);
+        $this->assertStringNotContainsString('reset-the-table', $findings[0]);
+    }
+
+    /** And a complete answer is not nagged. */
+    #[Test]
+    public function a_proposal_with_every_shot_passes(): void
+    {
+        $this->assertSame([], $this->missingShots([
+            ['idea_key' => 'one', 'shot' => 'a key on an entrance console'],
+            ['idea_key' => 'two', 'shot' => 'balcony doors moving a sheer curtain'],
+        ]));
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $ideas
+     * @return list<string>
+     */
+    private function missingShots(array $ideas): array
+    {
+        $method = new ReflectionMethod(ContentStudioAssistant::class, 'missingShots');
+        $method->setAccessible(true);
+
+        /** @var list<string> $findings */
+        $findings = $method->invoke(app(ContentStudioAssistant::class), $ideas);
+
+        return $findings;
     }
 
     private function proposalInstructions(): string

@@ -81,8 +81,8 @@ final class SocialImagePromptTest extends TestCase
         // "Premium home cleaning" came back set in bathrooms its customers do
         // not have. Unstyled is a fact about the photograph; modest is a fact
         // about the property; they are not the same word.
-        $this->assertStringContainsString('belongs to somebody who pays for this service', $prompt);
-        $this->assertStringContainsString('Unstyled describes the photograph, not the property', $prompt);
+        $this->assertStringContainsString("one of this business's own customers", $prompt);
+        $this->assertStringContainsString('Unstyled describes the photograph, not the place', $prompt);
 
         // And the rules that used to require the mess no longer do. A brand
         // paid to keep homes looked after publishes mostly pictures of homes

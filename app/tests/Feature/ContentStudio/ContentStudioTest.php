@@ -3171,6 +3171,12 @@ final class ContentStudioTest extends TestCase
                     'goal' => 'trust',
                     'audience' => 'founders',
                     'angle' => 'A concrete implementation lesson.',
+                    // Distinct per idea, because a proposal that leaves any
+                    // `shot` out is now sent back for correction — a null shot
+                    // hands the subject back to the drafting step, which picks
+                    // one per post in parallel and blind, and that is the
+                    // fallback this whole feature removes.
+                    'shot' => "A photograph for idea {$index}: something no other idea in the month shows.",
                     // Asked for greedily on purpose: the engine narrows this to
                     // the channels the kind is native to, and a fixture that
                     // pre-narrowed it would be testing itself.
