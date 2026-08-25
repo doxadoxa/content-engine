@@ -499,16 +499,31 @@ class ContentStudioAssistant
             ));
 
             $proposal = $this->normaliseProposal($answer->text, $plan->month);
+
+            // Completeness of *this answer*, measured before the merge and not
+            // after it. A `shot` is optional in the column because every idea
+            // planned before the column existed has none, and folding those in
+            // here would make the model rewrite a month to correct somebody
+            // else's history. What must not pass is a fresh proposal that
+            // simply left the key out: nothing downstream refuses it, the
+            // drafting step falls back to inventing a subject per post, and
+            // that fallback is the failure this whole change removes — a real
+            // month of it came back with 33 of 40 pictures describing a hand.
+            $incomplete = $this->missingShots($proposal['ideas']);
+
             // Measured on the merged month rather than on the model's answer.
             // preserveDraftedIdeas() drops proposed ideas and appends frozen
             // ones, so judging the raw answer described a month that is not the
             // one being stored — a banner reading "no take at all" over a month
             // that has one, and silence over a merged month past the ceiling.
             $proposal['ideas'] = $this->preserveDraftedIdeas($plan, $proposal['ideas']);
-            $findings = ContentMix::fromConfig()->findings(array_map(
-                static fn (array $idea): PostKind => $idea['kind'],
-                $proposal['ideas'],
-            ));
+            $findings = [
+                ...$incomplete,
+                ...ContentMix::fromConfig()->findings(array_map(
+                    static fn (array $idea): PostKind => $idea['kind'],
+                    $proposal['ideas'],
+                )),
+            ];
 
             if ($findings === []) {
                 break;
@@ -2580,6 +2595,46 @@ class ContentStudioAssistant
             'shot' => $idea->shot,
             'channels' => $idea->channels,
         ];
+    }
+
+    /**
+     * Ideas this answer left without a photograph, as a correction.
+     *
+     * Returned as findings rather than thrown, so it joins the loop that
+     * already exists: the model is asked again with what was wrong attached,
+     * and a month still incomplete after the last attempt is stored anyway with
+     * the finding beside it. An operator who clicks Propose and gets nothing
+     * cannot act; an operator who gets a month and a note can.
+     *
+     * Named rather than counted. "Three ideas have no shot" sends the model
+     * looking; the keys tell it where.
+     *
+     * @param  list<array<string, mixed>>  $ideas
+     * @return list<string>
+     */
+    private function missingShots(array $ideas): array
+    {
+        $missing = [];
+
+        foreach ($ideas as $idea) {
+            $shot = $idea['shot'] ?? null;
+
+            if (! is_string($shot) || trim($shot) === '') {
+                $missing[] = is_string($idea['idea_key'] ?? null) ? $idea['idea_key'] : '(unnamed)';
+            }
+        }
+
+        if ($missing === []) {
+            return [];
+        }
+
+        return [sprintf(
+            'These ideas have no `shot`: %s. Every idea needs one — a single sentence naming what its '
+                .'photograph shows, different from every other shot in the month by more than wording. '
+                .'An idea without one is illustrated by whatever the drafting step invents for it in '
+                .'isolation, which is how a month ends up as forty photographs of the same hand.',
+            implode(', ', $missing),
+        )];
     }
 
     /**

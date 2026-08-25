@@ -431,6 +431,10 @@ class ContentStudioController extends Controller
         $validated = $request->validate([
             'title' => ['sometimes', 'string', 'min:3', 'max:255'],
             'thesis' => ['sometimes', 'string', 'min:3', 'max:5000'],
+            // Editable, because the alternative to letting an operator write
+            // one is the operator watching a picture they did not ask for get
+            // drawn. 500 matches the column.
+            'shot' => ['sometimes', 'nullable', 'string', 'max:500'],
             'content_format' => [
                 'sometimes',
                 'nullable',
@@ -448,10 +452,36 @@ class ContentStudioController extends Controller
             ], 422);
         }
 
+        // Read before the change so the comparison below is against what the
+        // idea used to say, not against what it is about to.
+        $rethought = (array_key_exists('title', $validated) && $validated['title'] !== $idea->title)
+            || (array_key_exists('thesis', $validated) && $validated['thesis'] !== $idea->thesis);
+
         $idea->forceFill(array_filter([
             'title' => $validated['title'] ?? null,
             'thesis' => $validated['thesis'] ?? null,
         ], static fn (mixed $value): bool => $value !== null));
+
+        if (array_key_exists('shot', $validated)) {
+            // An explicit answer wins, including an explicit null — that hands
+            // the choice back to the writer, which is what a null shot has
+            // always meant.
+            $idea->shot = $validated['shot'];
+        } elseif ($rethought) {
+            // The shot was planned for the idea this used to be, and drafting
+            // does not treat it as a suggestion: it tells the writer to make
+            // *exactly* that picture and not to substitute it. So an edited
+            // thesis with a stale shot does not produce a slightly-off image,
+            // it produces a faithful photograph of the superseded concept.
+            //
+            // Cleared rather than re-planned. Re-planning means a model call
+            // from a controller, and the null path is not a hole — the drafting
+            // step still receives every other photograph the month has already
+            // briefed and is told to differ from them. One idea choosing its
+            // own subject against that list is the old behaviour for one post;
+            // twenty of them choosing in parallel and blind was the bug.
+            $idea->shot = null;
+        }
 
         if (array_key_exists('content_format', $validated)) {
             // Null is a real answer here — it hands the choice back to the
@@ -482,6 +512,10 @@ class ContentStudioController extends Controller
             // Whether a person set it, or it is still the kind's guess. The
             // panel says "chosen" or "suggested" on the strength of this.
             'format_chosen' => $idea->content_format !== null,
+            // Returned so a caller that edits the thesis can see what happened
+            // to the photograph. Without it the clear is silent, and silent is
+            // how the stale shot got shipped in the first place.
+            'shot' => $idea->shot,
             'channels' => $idea->channels,
             'production' => $idea->plannedProduction(),
         ];

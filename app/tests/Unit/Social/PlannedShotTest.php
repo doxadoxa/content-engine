@@ -73,6 +73,55 @@ final class PlannedShotTest extends TestCase
         $this->assertStringContainsString('A person may be in it', $rules);
     }
 
+    /**
+     * A fresh answer that left the key out is sent back, not stored quietly.
+     *
+     * Nothing downstream refuses a null shot — the column is nullable because
+     * every idea planned before it existed has none — so a model that simply
+     * omitted it would have restored the fallback this change removes, with no
+     * sign on any screen that it had.
+     */
+    #[Test]
+    public function a_proposal_that_omits_a_shot_is_corrected(): void
+    {
+        $findings = $this->missingShots([
+            ['idea_key' => 'reset-the-table', 'shot' => 'a folded chair against a cleared table'],
+            ['idea_key' => 'the-arrival-window', 'shot' => null],
+            ['idea_key' => 'colour-coded-cloths', 'shot' => '   '],
+        ]);
+
+        $this->assertCount(1, $findings);
+        // Named, because "three ideas have no shot" only sends the model looking.
+        $this->assertStringContainsString('the-arrival-window', $findings[0]);
+        $this->assertStringContainsString('colour-coded-cloths', $findings[0]);
+        $this->assertStringNotContainsString('reset-the-table', $findings[0]);
+    }
+
+    /** And a complete answer is not nagged. */
+    #[Test]
+    public function a_proposal_with_every_shot_passes(): void
+    {
+        $this->assertSame([], $this->missingShots([
+            ['idea_key' => 'one', 'shot' => 'a key on an entrance console'],
+            ['idea_key' => 'two', 'shot' => 'balcony doors moving a sheer curtain'],
+        ]));
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $ideas
+     * @return list<string>
+     */
+    private function missingShots(array $ideas): array
+    {
+        $method = new ReflectionMethod(ContentStudioAssistant::class, 'missingShots');
+        $method->setAccessible(true);
+
+        /** @var list<string> $findings */
+        $findings = $method->invoke(app(ContentStudioAssistant::class), $ideas);
+
+        return $findings;
+    }
+
     private function proposalInstructions(): string
     {
         $method = new ReflectionMethod(ContentStudioAssistant::class, 'proposalInstructions');
