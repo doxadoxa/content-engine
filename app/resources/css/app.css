@@ -68,6 +68,50 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+
+    /*
+     * The brand, under the names it actually wears.
+     *
+     * These five hexes were already scattered through `dashboard.tsx`,
+     * `marketing.tsx` and the auth layout as raw values, because the
+     * `--brand-*` variables cannot spell them: those are declared outside
+     * `@theme`, so they generate no utilities, and two of the names are
+     * inherited lies — `--brand-violet` is terracotta and `--brand-coral` is
+     * cobalt everywhere the signed-in product renders. Aliasing them through
+     * `var(--brand-violet)` would carry that confusion into the class names and
+     * be wrong besides: `:root` still holds the pre-Avyo violet, and only
+     * `.product-shell` and `.marketing-page` override it.
+     *
+     * So they are literals. The forest panel is forest in both schemes by
+     * design — the same decision `--brand-on-ink` documents below — which makes
+     * a constant the honest shape for all of them.
+     *
+     * **They are also the only brand colours that currently survive the shell.**
+     * `@theme` above emits `--color-card: var(--card)` into `:root`, and a
+     * `var()` inside a custom property is substituted where that property is
+     * *declared* — so `--color-card` resolves against `:root`'s palette once and
+     * the resolved value is what inherits. Redefining `--card` on
+     * `.product-shell` therefore changes nothing that `bg-card` can see: inside
+     * the signed-in app `bg-card` is white rather than `#fffaf0`, `bg-accent` is
+     * the pre-Avyo lavender rather than `#f2d9d0`, and so on down the semantic
+     * set. That is why `dashboard.tsx` and `marketing.tsx` spell the brand in
+     * raw hex instead of in tokens.
+     *
+     * The one-line fix is `@theme inline`, which inlines `var(--card)` into the
+     * utility so it resolves at the element and the scoped override lands. It is
+     * deliberately not applied here: it would repaint every signed-in screen
+     * from the cool default palette to the warm one in a single commit, which is
+     * a product decision rather than a cleanup.
+     */
+    --color-forest: #17352f;
+    --color-terracotta: #d6533c;
+    --color-terracotta-wash: #f2d9d0;
+    --color-terracotta-shade: #563b35;
+    --color-terracotta-deep: #b8402b;
+    --color-honey: #f3cf6a;
+    --color-cobalt: #3155a5;
+    --color-sage: #6c8f78;
+    --color-cream: #fffaf0;
 }
 
 :root {

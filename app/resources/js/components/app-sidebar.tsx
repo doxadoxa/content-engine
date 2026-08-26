@@ -6,13 +6,11 @@ import {
     Gauge,
     House,
     Inbox,
-    LayoutDashboard,
     LayoutList,
     MessagesSquare,
     Radio,
     Send,
     Sparkles,
-    Sun,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
@@ -30,6 +28,7 @@ import {
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
 import { index as approvalsIndex } from '@/routes/approvals';
+import { index as chatIndex } from '@/routes/assistant';
 import { index as auditIndex } from '@/routes/audit';
 import { edit as briefEdit } from '@/routes/brief';
 import { index as calendarIndex } from '@/routes/calendar';
@@ -44,7 +43,6 @@ import {
     index as socialIndex,
     plan as socialPlan,
 } from '@/routes/social';
-import { index as todayIndex } from '@/routes/today';
 import { index as visibilityIndex } from '@/routes/visibility';
 
 /**
@@ -79,7 +77,7 @@ export function AppSidebar() {
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
-                            <Link href={dashboard()} prefetch>
+                            <Link href={homeIndex()} prefetch>
                                 <AppLogoIcon className="size-8 shrink-0" />
                                 <span className="text-base font-semibold tracking-[-0.04em]">
                                     Avyo
@@ -96,37 +94,40 @@ export function AppSidebar() {
                 <SidebarGroup className="px-3 py-2">
                     <SidebarGroupContent>
                         <SidebarMenu>
-                            {/* First, because it is the only row that answers
-                                "what should I do" rather than "what happened".
-                                The dashboard stays below it: that one reports
-                                on the engine — runs, impressions, citations,
-                                health — which is a different question asked at
-                                a different time, and most of it is the article
-                                half this release does not touch. */}
+                            {/* One row, and it took three tries to get here.
+                                This group was Home, Today and Dashboard — and
+                                to anybody who had not built them, all three
+                                read as "dashboard". The defence in the code was
+                                that they answered different questions: what
+                                should I do, what happened today, what is the
+                                engine doing. They did not. They asked one
+                                question at three levels of anxiety, and the
+                                proof was that all three counted the same drafts
+                                with different queries and different words, so
+                                Home said "38 social drafts" where the dashboard
+                                said "52 waiting for you" about the same
+                                morning.
+
+                                A row you do not trust to differ from its
+                                neighbours is a row you stop clicking, which is
+                                how the product ended up with three landing
+                                screens and no landing screen. */}
                             <NavLink
                                 href={homeIndex().url}
                                 icon={House}
                                 label="Home"
                                 current={url}
+                                also={[dashboard().url]}
                             />
-                            {/* §7's own summary: "одна сводка и пять минут".
-                                Still its own row rather than folded into Home,
-                                because three of its four sections are the
-                                Threads presence — the conversations, the plan's
-                                refusals, the trend — and none of that exists
-                                where the presence is off. */}
-                            {social && (
-                                <NavLink
-                                    href={todayIndex().url}
-                                    icon={Sun}
-                                    label="Today"
-                                    current={url}
-                                />
-                            )}
+                            {/* Its own row, and genuinely a different question
+                                from the one above: Home is what the project is
+                                doing, this is what you have been discussing.
+                                Conversations have names and addresses, so a
+                                list of them is a place rather than a panel. */}
                             <NavLink
-                                href={dashboard().url}
-                                icon={LayoutDashboard}
-                                label="Dashboard"
+                                href={chatIndex().url}
+                                icon={MessagesSquare}
+                                label="Chats"
                                 current={url}
                             />
                         </SidebarMenu>

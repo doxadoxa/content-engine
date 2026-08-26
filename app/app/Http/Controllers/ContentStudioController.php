@@ -338,7 +338,13 @@ class ContentStudioController extends Controller
     public function storeIdea(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'title' => ['required', 'string', 'min:3', 'max:255'],
+            // Optional, because the composer on Home is one box and a title is
+            // not a second thought a person has — it is the first line of the
+            // one they already had. The Studio still sends both, and a caller
+            // that sends a title keeps it verbatim; only the absence is filled
+            // in, and it is filled in from the thesis rather than from a model,
+            // so writing a post never waits on a round trip to name it.
+            'title' => ['nullable', 'string', 'min:3', 'max:255'],
             'thesis' => ['required', 'string', 'min:3', 'max:5000'],
             'kind' => ['required', 'string', 'in:'.implode(',', array_column(PostKind::cases(), 'value'))],
             'date' => ['required', 'date'],
@@ -364,6 +370,7 @@ class ContentStudioController extends Controller
 
         $plan = ContentPlan::query()->firstOrCreate(['month' => $date->copy()->startOfMonth()]);
         $kind = PostKind::from($validated['kind']);
+        $title = self::titleFor($validated['title'] ?? null, $validated['thesis']);
 
         $idea = $plan->contentIdeas()->create([
             // The live version, so it appears on a board and in a proposal that
@@ -379,8 +386,8 @@ class ContentStudioController extends Controller
             // promising the idea is on it. It was not, and would not be until
             // an assistant proposal happened to arrive.
             'proposal_version' => $plan->assistant_version,
-            'idea_key' => $this->ideaKey($plan, $validated['title']),
-            'title' => $validated['title'],
+            'idea_key' => $this->ideaKey($plan, $title),
+            'title' => $title,
             'kind' => $kind,
             'pillar' => 'Operator',
             'thesis' => $validated['thesis'],
@@ -551,6 +558,42 @@ class ContentStudioController extends Controller
             // is the failure this codebase has now found four times.
             'formats' => ContentFormat::availability($idea->channels),
         ];
+    }
+
+    /**
+     * A name for an idea that arrived without one.
+     *
+     * The first line of the thesis, cut to something a board row can hold. Not
+     * a model call: naming is the one part of writing a post that is instant
+     * and reversible, and paying a round trip for it would make the composer
+     * feel slower than the form it replaced — for a string an operator can
+     * change on the card.
+     *
+     * The floor is the same `min:3` the validator puts on a supplied title, so
+     * a thesis of "ok." cannot slip a two-character title past the rule the
+     * other branch enforces.
+     */
+    private static function titleFor(?string $supplied, string $thesis): string
+    {
+        if ($supplied !== null && trim($supplied) !== '') {
+            return trim($supplied);
+        }
+
+        $first = trim((string) Str::of($thesis)->trim()->explode("\n")->first());
+
+        // A sentence if the thought ends in one, and otherwise the first 80
+        // characters cut at a word. Not `Str::limit()` on its own: the default
+        // cuts at the character, so "you are paying for the wait" came back as
+        // "you are paying for th" — a title that reads as a bug in the product
+        // rather than as a summary of the post.
+        $sentence = preg_split('/(?<=[.!?])\s+/u', $first, 2)[0] ?? $first;
+        $title = mb_strlen($sentence) <= 80
+            ? $sentence
+            : rtrim(Str::limit($first, 80, '', preserveWords: true), " \t\n\r\0\x0B,;:-–—");
+
+        return mb_strlen($title) >= 3
+            ? $title
+            : Str::limit(trim($thesis), 80, '', preserveWords: true);
     }
 
     /**

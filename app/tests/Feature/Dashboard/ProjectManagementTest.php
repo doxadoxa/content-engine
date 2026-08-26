@@ -237,7 +237,7 @@ final class ProjectManagementTest extends TestCase
         $project = Project::factory()->create(['name' => 'Shared project']);
         $operator->projects()->attach($project, ['role' => 'operator']);
 
-        $this->actingAs($operator)->get('/dashboard')->assertOk();
+        $this->actingAs($operator)->get('/home')->assertOk();
         $this->actingAs($operator)->get('/channels')->assertOk();
         $this->actingAs($operator)->get('/projects')
             ->assertInertia(fn (AssertableInertia $page) => $page
@@ -282,12 +282,12 @@ final class ProjectManagementTest extends TestCase
         $operator->projects()->attach([$alpha->getKey(), $beta->getKey()]);
 
         $this->actingAs($operator)
-            ->from('/dashboard')
+            ->from('/home')
             ->post("/projects/{$beta->getKey()}/switch")
-            ->assertRedirect('/dashboard');
+            ->assertRedirect('/home');
 
         $this->actingAs($operator)
-            ->get('/dashboard')
+            ->get('/home')
             ->assertInertia(fn (AssertableInertia $page) => $page->where('auth.project.name', 'Beta'));
     }
 
@@ -312,7 +312,7 @@ final class ProjectManagementTest extends TestCase
 
         $this->actingAs($operator)
             ->withSession([ProjectManager::SESSION_KEY => 'a-project-that-is-gone'])
-            ->get('/dashboard')
+            ->get('/home')
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
                 ->where('auth.project.id', $project->getKey())

@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\PullContentController;
 use App\Http\Controllers\ApprovalController;
+use App\Http\Controllers\ArticleController;
+use App\Http\Controllers\AssistantController;
 use App\Http\Controllers\BrandBriefController;
 use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\ChannelController;
 use App\Http\Controllers\ContentItemController;
 use App\Http\Controllers\ContentItemDetailController;
 use App\Http\Controllers\ContentStudioController;
-use App\Http\Controllers\DailySummaryController;
-use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\FeedbackController;
 use App\Http\Controllers\GoogleConnectionController;
@@ -51,12 +51,30 @@ Route::get('/', fn () => Inertia::render('marketing'))->name('home');
 $social = (bool) config('social.enabled');
 
 Route::middleware(['auth'])->group(function () use ($social): void {
-    // Where somebody starts: a chip to type into, the activation checklist,
-    // and what is waiting today. Beside the dashboard rather than instead of
-    // it — see HomeController for why the two answer different questions.
+    // Where somebody starts, and now the only place they can: a box to type
+    // into, what needs a person, the figures, both halves of the engine, and
+    // what it refused to do. See HomeController for why this absorbed the other
+    // two rather than sitting beside them.
     Route::get('home', HomeController::class)->name('home.index');
 
-    Route::get('dashboard', DashboardController::class)->name('dashboard');
+    // Conversations with the engine (see `AssistantController`). Each one has
+    // a URL, because a chat you cannot get back to is a chat you only have
+    // once. The two that spend money are throttled; a turn can run several tool
+    // calls and each one is a bill.
+    Route::get('chat', [AssistantController::class, 'index'])->name('assistant.index');
+    Route::post('chat', [AssistantController::class, 'store'])
+        ->middleware('throttle:30,1')->name('assistant.store');
+    Route::get('chat/{thread}', [AssistantController::class, 'show'])->name('assistant.show');
+    Route::post('chat/{thread}', [AssistantController::class, 'reply'])
+        ->middleware('throttle:30,1')->name('assistant.reply');
+    Route::patch('chat/{thread}', [AssistantController::class, 'rename'])->name('assistant.rename');
+    Route::delete('chat/{thread}', [AssistantController::class, 'destroy'])->name('assistant.destroy');
+
+    // Kept as a redirect rather than deleted. The name is linked from
+    // `OnboardingController`, from bookmarks, and from anything that ever sent
+    // somebody a `/dashboard` URL; a 404 for those is a worse answer than the
+    // screen that replaced it.
+    Route::redirect('dashboard', '/home')->name('dashboard');
 
     // Creating a project is a wizard, not a form (§3.1): URL in, a reading of
     // the site, then the operator correcting it — and the engine starts itself.
@@ -129,14 +147,14 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // `engage.*` below — this is the operator's morning routine and not an
     // ownership privilege. Everything it reads is tenant-scoped already.
     //
-    // Three of its four sections are social — the conversations, the plan's
-    // refusals, the §6 trend — so with the presence off the summary is a screen
-    // of empty headings, and §7's promise is that this is the one screen worth
-    // opening. Gone rather than thinned out.
-    if ($social) {
-        Route::get('today', DailySummaryController::class)->name('today.index');
-    }
-
+    // §7's summary has no route of its own any more. It asked for *one*
+    // summary and five minutes, and it had become the middle of three landing
+    // screens that all read as "dashboard" — so the two parts of it that
+    // existed nowhere else moved to Home: the refusal ledger, which is now
+    // `App\Social\RefusalLedger` and renders on every load, and the §6 trend,
+    // which is two of the three figures. The rest of it was the reply queue,
+    // re-rendered one click from the reply queue.
+    //
     // The operator's day (§7): the queue, the calendar, the card.
     Route::get('approvals', [ApprovalController::class, 'index'])->name('approvals.index');
     Route::post('content/{item}/approve', [ApprovalController::class, 'approve'])->name('content.approve');
@@ -244,6 +262,15 @@ Route::middleware(['auth'])->group(function () use ($social): void {
         ->name('studio.image.choose');
 
     Route::get('content', [ContentItemController::class, 'index'])->name('content.index');
+
+    // The article half's two operator verbs, which it did not have — see
+    // `ArticleController`. Throttled like the studio's, because both put a
+    // model call behind one press.
+    Route::post('content/articles', [ArticleController::class, 'store'])
+        ->middleware('throttle:10,1')->name('content.articles.store');
+    Route::post('content/plan', [ArticleController::class, 'plan'])
+        ->middleware('throttle:5,1')->name('content.plan');
+
     Route::get('content/{item}', ContentItemDetailController::class)->name('content.show');
 
     Route::get('channels', [ChannelController::class, 'index'])->name('channels.index');

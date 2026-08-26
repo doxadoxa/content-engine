@@ -67,9 +67,12 @@ final class FreshInstallationTest extends TestCase
         // The comparison the fix is measured against, kept as an assertion so
         // that "identical condition" stays true rather than being a claim in a
         // commit message.
-        foreach (['today.index', 'dashboard'] as $route) {
-            $this->actingAs($this->operator)->get(route($route))->assertOk();
-        }
+        //
+        // One route where there were two: `today.index` no longer exists and
+        // `dashboard` is a redirect to this same screen, both because the three
+        // landing screens became one. The property under test is unchanged —
+        // this screen degrades on a fresh installation rather than erroring.
+        $this->actingAs($this->operator)->get(route('home.index'))->assertOk();
     }
 
     #[Test]

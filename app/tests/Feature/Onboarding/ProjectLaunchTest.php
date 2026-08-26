@@ -249,7 +249,7 @@ final class ProjectLaunchTest extends TestCase
 
         $this->assertSame(OnboardingStatus::Launching, $project->refresh()->onboarding_status);
 
-        $this->actingAs($operator)->get('/dashboard')->assertOk();
+        $this->actingAs($operator)->get('/home')->assertOk();
 
         $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
     }
@@ -267,7 +267,7 @@ final class ProjectLaunchTest extends TestCase
 
         // Research is still pending. Settling on a timer rather than on the
         // fact would cut a slow queue off mid-launch.
-        $this->actingAs($operator)->get('/dashboard')->assertOk();
+        $this->actingAs($operator)->get('/home')->assertOk();
 
         $this->assertSame(OnboardingStatus::Launching, $project->refresh()->onboarding_status);
     }
@@ -327,7 +327,7 @@ final class ProjectLaunchTest extends TestCase
             ->whereNot('pipeline', 'site_audit')
             ->update(['status' => PipelineRunStatus::Completed, 'finished_at' => now()]);
 
-        $this->actingAs($operator)->get('/dashboard')->assertOk();
+        $this->actingAs($operator)->get('/home')->assertOk();
 
         $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
         $this->assertTrue(
