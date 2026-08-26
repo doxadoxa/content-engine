@@ -6,6 +6,7 @@ namespace Tests\Feature\Assistant;
 
 use App\Ai\Assistant\Assistant;
 use App\Ai\Contracts\ConversationGateway;
+use App\Ai\ConversationFailed;
 use App\Ai\ConversationRequest;
 use App\Ai\ConversationResponse;
 use App\Ai\FakeConversationGateway;
@@ -17,7 +18,6 @@ use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\User;
-use App\Pipelines\Exceptions\RetryableStepFailure;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
@@ -187,13 +187,47 @@ final class AssistantTest extends TestCase
     }
 
     #[Test]
+    public function work_already_started_is_recorded_even_when_the_turn_breaks(): void
+    {
+        // The failure mode this pins: LarAgent runs the tools *inside*
+        // `respond()`, so a break on the last leg — the request that asks for
+        // the words to say about them — lands after the article is written and
+        // queued. Losing the receipt would tell the operator nothing happened,
+        // and the obvious response is to ask again, which writes a second one.
+        $this->app->instance(ConversationGateway::class, new class implements ConversationGateway
+        {
+            public function converse(ConversationRequest $request): ConversationResponse
+            {
+                throw new ConversationFailed('the wire broke', [[
+                    'name' => 'write_article',
+                    'arguments' => [],
+                    'result' => ['ok' => true, 'title' => 'How to clean a door'],
+                ]]);
+            }
+        });
+
+        $reply = app(Assistant::class)->reply($this->project, $this->thread(), 'write about doors');
+
+        app(CurrentProject::class)->run($this->project, function () use ($reply): void {
+            $tool = AssistantMessage::query()->where('role', AssistantMessage::TOOL)->firstOrFail();
+
+            $this->assertSame('write_article', $tool->tool_name);
+            $this->assertSame('How to clean a door', $tool->tool_result['title']);
+
+            // And the apology says so, rather than implying nothing happened.
+            $this->assertStringContainsString('started the work above', (string) $reply->body);
+            $this->assertStringContainsString('Nothing needs doing twice', (string) $reply->body);
+        });
+    }
+
+    #[Test]
     public function the_question_survives_a_provider_that_fell_over(): void
     {
         $this->app->instance(ConversationGateway::class, new class implements ConversationGateway
         {
             public function converse(ConversationRequest $request): ConversationResponse
             {
-                throw new RetryableStepFailure('the wire broke');
+                throw new ConversationFailed('the wire broke');
             }
         });
 

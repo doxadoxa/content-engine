@@ -8,7 +8,6 @@ use App\ContentStudio\ContentStudioAction;
 use App\ContentStudio\ContentStudioOperations;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
-use App\Enums\PipelineRunStatus;
 use App\Enums\PostKind;
 use App\Models\BrandBrief;
 use App\Models\ContentItem;
@@ -16,6 +15,7 @@ use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Core\PipelineRunner;
+use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use App\Visibility\VisibilityReport;
 use Carbon\CarbonImmutable;
@@ -54,6 +54,7 @@ final class MarketingTools
         private readonly CurrentProject $current,
         private readonly PipelineRunner $runner,
         private readonly ContentStudioOperations $operations,
+        private readonly MonthPlanner $planner,
     ) {}
 
     /**
@@ -291,19 +292,19 @@ final class MarketingTools
             'Choose a month of article topics out of the keyword research and write them up as a plan. '
             .'Takes a few minutes. Refused while one is already running.',
         )->setCallback(function (): array {
-            $running = PipelineRun::query()
-                ->where('pipeline', 'planning')
-                ->whereIn('status', [PipelineRunStatus::Pending, PipelineRunStatus::Running])
-                ->exists();
-
-            if ($running) {
-                return ['ok' => false, 'error' => 'A month is already being planned.'];
+            // Through the same starter the button uses, so the check and the
+            // start happen under one lock. Two callers each doing their own
+            // `exists()` first is exactly how a month gets planned twice — and
+            // a model presses faster than a person.
+            try {
+                $run = $this->planner->start($this->project());
+            } catch (Throwable $e) {
+                return ['ok' => false, 'error' => 'The planner could not start: '.$e->getMessage()];
             }
 
-            return $this->started(
-                fn () => $this->runner->start('planning', $this->project()),
-                ['ok' => true, 'started' => 'planning', 'note' => 'Planning the month. This takes a few minutes.'],
-            );
+            return $run === null
+                ? ['ok' => false, 'error' => 'A month is already being planned.']
+                : ['ok' => true, 'started' => 'planning', 'note' => 'Planning the month. This takes a few minutes.'];
         });
     }
 

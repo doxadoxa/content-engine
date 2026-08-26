@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace App\Ai\Assistant;
 
 use App\Ai\Contracts\ConversationGateway;
+use App\Ai\ConversationFailed;
 use App\Ai\ConversationRequest;
 use App\Models\AssistantMessage;
 use App\Models\AssistantThread;
 use App\Models\Project;
-use App\Pipelines\Exceptions\RetryableStepFailure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -70,18 +70,31 @@ final class Assistant
                 history: $this->history($thread, $asked),
                 tools: $this->tools->all(),
             ));
-        } catch (RetryableStepFailure|AssistantException $e) {
+        } catch (ConversationFailed|AssistantException $e) {
             // Recorded as a turn rather than thrown at the screen. A
             // conversation that loses its thread every time a provider hiccups
             // is not a conversation, and the operator is owed the sentence
             // saying what happened in the place they are already looking.
             $thread->touchConversation();
 
-            return AssistantMessage::query()->create([
-                'assistant_thread_id' => $thread->getKey(),
-                'role' => AssistantMessage::ASSISTANT,
-                'body' => 'I could not finish that just now — '.$e->getMessage(),
-            ]);
+            // The receipts first, and this is not tidiness. A turn that ran a
+            // write tool and then failed on the last leg has already started
+            // the work; without these rows the screen says nothing happened,
+            // and the obvious response — ask again — starts it twice.
+            $done = $e instanceof ConversationFailed ? $e->toolCalls : [];
+
+            return DB::transaction(function () use ($thread, $done, $e): AssistantMessage {
+                $this->recordTools($thread, $done);
+
+                return AssistantMessage::query()->create([
+                    'assistant_thread_id' => $thread->getKey(),
+                    'role' => AssistantMessage::ASSISTANT,
+                    'body' => $done === []
+                        ? 'I could not finish that just now — '.$e->getMessage()
+                        : 'I started the work above, but could not finish writing back — '
+                            .$e->getMessage().' Nothing needs doing twice.',
+                ]);
+            });
         }
 
         $thread->touchConversation();
@@ -90,15 +103,7 @@ final class Assistant
             // The tools first, in the order they ran, so the transcript reads
             // the way the turn happened: it looked something up, it made
             // something, and then it said what it had done.
-            foreach ($response->toolCalls as $call) {
-                AssistantMessage::query()->create([
-                    'assistant_thread_id' => $thread->getKey(),
-                    'role' => AssistantMessage::TOOL,
-                    'tool_name' => $call['name'],
-                    'tool_arguments' => $call['arguments'],
-                    'tool_result' => is_array($call['result']) ? $call['result'] : ['value' => $call['result']],
-                ]);
-            }
+            $this->recordTools($thread, $response->toolCalls);
 
             return AssistantMessage::query()->create([
                 'assistant_thread_id' => $thread->getKey(),
@@ -108,6 +113,24 @@ final class Assistant
                 'output_tokens' => $response->outputTokens,
             ]);
         });
+    }
+
+    /**
+     * The engine's receipts, one row each.
+     *
+     * @param  list<array{name: string, arguments: array<string, mixed>, result: mixed}>  $calls
+     */
+    private function recordTools(AssistantThread $thread, array $calls): void
+    {
+        foreach ($calls as $call) {
+            AssistantMessage::query()->create([
+                'assistant_thread_id' => $thread->getKey(),
+                'role' => AssistantMessage::TOOL,
+                'tool_name' => $call['name'],
+                'tool_arguments' => $call['arguments'],
+                'tool_result' => is_array($call['result']) ? $call['result'] : ['value' => $call['result']],
+            ]);
+        }
     }
 
     /**

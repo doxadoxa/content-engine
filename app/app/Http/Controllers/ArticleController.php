@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\ContentItemType;
-use App\Enums\PipelineRunStatus;
 use App\Models\ContentItem;
-use App\Models\PipelineRun;
 use App\Pipelines\Core\PipelineRunner;
+use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -39,6 +38,7 @@ class ArticleController extends Controller
     public function __construct(
         private readonly CurrentProject $current,
         private readonly PipelineRunner $runner,
+        private readonly MonthPlanner $planner,
     ) {}
 
     /**
@@ -96,10 +96,9 @@ class ArticleController extends Controller
     /**
      * A month of articles, chosen from the research.
      *
-     * Refused rather than queued while one is in flight, the same way
-     * {@see SiteAuditController::recheck()} refuses a second crawl: planning
-     * reads the whole keyword set and writes a month of units, and two of them
-     * racing would plan the same month twice.
+     * Refused rather than queued while one is in flight — see
+     * {@see MonthPlanner}, which holds the lock this check has to happen under
+     * and which the assistant's `plan_month` tool shares.
      */
     public function plan(): RedirectResponse
     {
@@ -109,22 +108,15 @@ class ArticleController extends Controller
             return $this->say('error', 'Choose a project first.');
         }
 
-        $running = PipelineRun::query()
-            ->where('pipeline', 'planning')
-            ->whereIn('status', [PipelineRunStatus::Pending, PipelineRunStatus::Running])
-            ->exists();
-
-        if ($running) {
-            return $this->say('info', 'A month is already being planned.');
-        }
-
         try {
-            $this->runner->start('planning', $project);
+            $run = $this->planner->start($project);
         } catch (Throwable) {
             return $this->say('error', 'The planner could not start. Try again in a moment.');
         }
 
-        return $this->say('success', 'Planning the next month. This takes a few minutes.');
+        return $run === null
+            ? $this->say('info', 'A month is already being planned.')
+            : $this->say('success', 'Planning the next month. This takes a few minutes.');
     }
 
     /**

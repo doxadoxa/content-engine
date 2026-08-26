@@ -6,7 +6,6 @@ namespace App\Ai;
 
 use App\Ai\Agents\EngineAgent;
 use App\Ai\Contracts\ConversationGateway;
-use App\Pipelines\Exceptions\RetryableStepFailure;
 use Illuminate\Support\Str;
 use LarAgent\Context\SessionIdentity;
 use LarAgent\History\InMemoryChatHistory;
@@ -64,14 +63,16 @@ class LaragentConversationGateway implements ConversationGateway
         try {
             $answer = $agent->respond($request->message);
         } catch (Throwable $e) {
-            // Same reasoning as the one-shot gateway: LarAgent re-throws the
-            // vendor SDK's exception as-is and those carry no status code worth
-            // inspecting, so transient is the useful default. The caller shows
-            // this to a person rather than retrying it, because a person who
-            // just typed a sentence would rather be told than left waiting.
-            throw new RetryableStepFailure(
+            // With whatever already ran. LarAgent executes the tools *inside*
+            // `respond()`, so a failure on the last leg — the request that asks
+            // for the words to say about them — arrives after the work is
+            // committed and queued. Throwing the history away here would tell
+            // an operator the turn did not finish while an article was being
+            // written, and their second ask would write a second one.
+            throw new ConversationFailed(
                 "The {$choice->provider} conversation failed: {$e->getMessage()}",
-                previous: $e,
+                $this->toolCallsSince($history, $before),
+                $e,
             );
         }
 
