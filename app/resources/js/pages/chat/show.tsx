@@ -35,7 +35,7 @@ export default function ChatShow({ thread, turns, threads }: Props) {
 
     return (
         <>
-            <Head title={thread.title ?? 'Conversation'} />
+            <Head title={thread.title ?? 'Chat'} />
 
             <WorkspacePage width="reading">
                 <div className="mx-auto flex w-full max-w-[52rem] flex-col gap-5">
@@ -82,7 +82,7 @@ function Header({
                     <Input
                         value={title}
                         autoFocus
-                        aria-label="Conversation name"
+                        aria-label="Chat name"
                         onChange={(event) => setTitle(event.target.value)}
                         onKeyDown={(event) => {
                             if (event.key === 'Enter') {
@@ -100,14 +100,14 @@ function Header({
                         size="icon"
                         variant="ghost"
                         onClick={save}
-                        aria-label="Save the name"
+                        aria-label="Save chat name"
                     >
                         <Check className="size-4" aria-hidden="true" />
                     </Button>
                     <Button
                         size="icon"
                         variant="ghost"
-                        aria-label="Keep the old name"
+                        aria-label="Keep current chat name"
                         onClick={() => {
                             setTitle(thread.title ?? '');
                             setRenaming(false);
@@ -119,13 +119,13 @@ function Header({
             ) : (
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                     <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">
-                        {thread.title ?? 'Conversation'}
+                        {thread.title ?? 'Chat'}
                     </h1>
                     <Button
                         size="icon"
                         variant="ghost"
                         className="size-8 shrink-0"
-                        aria-label="Rename this conversation"
+                        aria-label="Rename this chat"
                         onClick={() => setRenaming(true)}
                     >
                         <Pencil className="size-3.5" aria-hidden="true" />
@@ -155,7 +155,7 @@ function Header({
                     size="icon"
                     variant="ghost"
                     className="size-8 text-muted-foreground"
-                    aria-label="Delete this conversation"
+                    aria-label="Delete this chat"
                     onClick={() => router.delete(destroyChat(thread.id).url)}
                 >
                     <Trash2 className="size-3.5" aria-hidden="true" />

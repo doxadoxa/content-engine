@@ -6,15 +6,13 @@ import { edit as editAppearance } from '@/routes/appearance';
 export default function Appearance() {
     return (
         <>
-            <Head title="Appearance settings" />
-
-            <h1 className="sr-only">Appearance settings</h1>
+            <Head title="Appearance" />
 
             <div className="space-y-6">
                 <Heading
                     variant="small"
-                    title="Appearance settings"
-                    description="Update the appearance settings for your account"
+                    title="Appearance"
+                    description="Choose how Avyo looks on this device."
                 />
                 <AppearanceTabs />
             </div>
@@ -25,7 +23,7 @@ export default function Appearance() {
 Appearance.layout = {
     breadcrumbs: [
         {
-            title: 'Appearance settings',
+            title: 'Appearance',
             href: editAppearance(),
         },
     ],

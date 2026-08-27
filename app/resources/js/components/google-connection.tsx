@@ -64,9 +64,8 @@ export function GoogleConnection({
                     Search Console & Analytics
                 </CardTitle>
                 <CardDescription>
-                    Connect Google and the engine can see what its articles
-                    actually did — impressions, clicks, and whether people
-                    stayed once they arrived.
+                    Connect Google to measure article impressions, clicks, and
+                    what visitors do after they arrive.
                 </CardDescription>
             </CardHeader>
             <CardContent>

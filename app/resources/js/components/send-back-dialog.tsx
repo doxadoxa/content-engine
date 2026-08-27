@@ -71,7 +71,7 @@ export function SendBackDialog({
                                 <div className="grid gap-4 py-2">
                                     <div className="grid gap-2">
                                         <Label htmlFor="reason">
-                                            What is wrong with it
+                                            Reason for sending it back
                                         </Label>
                                         <Select name="reason" required>
                                             <SelectTrigger id="reason">
@@ -89,9 +89,8 @@ export function SendBackDialog({
                                             </SelectContent>
                                         </Select>
                                         <p className="text-xs text-muted-foreground">
-                                            Counted across the project, so the
-                                            same complaint forty times becomes a
-                                            signal about the brief.
+                                            Your reason and note are saved with
+                                            this item.
                                         </p>
                                         {errors.reason && (
                                             <p className="text-xs text-destructive">

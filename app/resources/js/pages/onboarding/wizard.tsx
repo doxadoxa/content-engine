@@ -115,7 +115,7 @@ export default function Wizard({ draft: initialDraft, channelTypes }: Props) {
                     eyebrow="New project"
                     context={`Step ${step + 1} of ${STEPS.length}`}
                     title="Set up a project"
-                    description="Start with the website, review what the engine learns, and launch with a brand and publishing plan you control."
+                    description="Start with the website, review what Avyo learns, and launch with a brand and publishing plan you control."
                     actions={
                         <Badge
                             variant="outline"
@@ -300,7 +300,7 @@ function SetupGuide({ step, hasDraft }: { step: number; hasDraft: boolean }) {
                 />
                 <GuideItem
                     done={false}
-                    title="Launch the engine"
+                    title="Launch the project"
                     detail="Research, planning, and first drafts begin."
                 />
             </ol>

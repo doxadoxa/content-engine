@@ -110,7 +110,7 @@ export default function Metering({
                     eyebrow="Administration"
                     context={`${days}-day window`}
                     title="Usage & cost"
-                    description="Project-level model usage, interactive assistant spend, pipeline spend, and the cost of producing each content unit."
+                    description="Project model usage, assistant spend, automated workflow spend, and average cost per item worked on."
                     actions={
                         <Badge
                             variant="outline"
@@ -125,13 +125,13 @@ export default function Metering({
                     <Stat
                         icon={CircleDollarSign}
                         iconClassName="bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
-                        label="Per content unit"
+                        label="Per item worked on"
                         value={
                             per_unit.average_micros === null
                                 ? '—'
                                 : money(per_unit.average_micros)
                         }
-                        hint={`${per_unit.units} unit${per_unit.units === 1 ? '' : 's'}`}
+                        hint={`${per_unit.units} item${per_unit.units === 1 ? '' : 's'} with automated work`}
                     />
                     <Stat
                         icon={Coins}
@@ -253,7 +253,7 @@ export default function Metering({
                                     </CardTitle>
                                     <CardDescription className="mt-1">
                                         Compare days before changing models or
-                                        pipeline settings.
+                                        workflow settings.
                                     </CardDescription>
                                 </div>
                             </div>
@@ -312,10 +312,10 @@ function PublishedPost({ social }: { social: SocialCost }) {
                             What a published post costs
                         </CardTitle>
                         <CardDescription className="mt-1">
-                            The unit is the post that went out, with the
-                            candidates that lost and the slots that came to
-                            nothing folded into it. A report counting model
-                            calls would be wrong by the selection ratio.
+                            Costs are grouped by the post that was published,
+                            including unused candidates and empty publishing
+                            slots. Counting model calls alone would miss that
+                            selection cost.
                         </CardDescription>
                     </div>
                 </div>

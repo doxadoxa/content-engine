@@ -68,14 +68,14 @@ export default function Feedback({
 
     return (
         <>
-            <Head title="Feedback" />
+            <Head title="Article performance" />
 
             <WorkspacePage>
                 <WorkspaceHeader
                     eyebrow="Performance loop"
                     context={`${summary.live} live`}
-                    title="Feedback"
-                    description="What published work earned, where it was cited, and which articles now need another pass."
+                    title="Article performance"
+                    description="How published articles perform in search and AI, and which ones need another pass."
                 />
 
                 <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -185,7 +185,7 @@ export default function Feedback({
                             <Table className="min-w-[760px]">
                                 <TableHeader>
                                     <TableRow className="bg-muted/20 text-xs tracking-wide uppercase">
-                                        <TableHead>Unit</TableHead>
+                                        <TableHead>Article</TableHead>
                                         <TableHead>Indexed</TableHead>
                                         <TableHead>Impressions</TableHead>
                                         <TableHead>Clicks</TableHead>
@@ -361,7 +361,7 @@ function EmptyFeedback() {
                 <span className="flex size-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
                     <Eye className="size-6" aria-hidden="true" />
                 </span>
-                <CardTitle>No published feedback yet</CardTitle>
+                <CardTitle>No performance data yet</CardTitle>
                 <CardDescription>
                     Search and citation results appear here after articles go
                     live and the first feedback sweep runs.
@@ -372,5 +372,5 @@ function EmptyFeedback() {
 }
 
 Feedback.layout = {
-    breadcrumbs: [{ title: 'Feedback', href: index() }],
+    breadcrumbs: [{ title: 'Article performance', href: index() }],
 };

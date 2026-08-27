@@ -52,9 +52,8 @@ export function ThreadsConnection({
             <CardHeader>
                 <CardTitle className="text-base">Threads</CardTitle>
                 <CardDescription>
-                    Connect a Threads account and the engine can post to it and
-                    listen to what people are saying — the questions and the
-                    words they use, which is what the article planner reads.
+                    Connect Threads so Avyo can publish posts and learn from the
+                    questions and language your audience uses.
                 </CardDescription>
             </CardHeader>
             <CardContent>

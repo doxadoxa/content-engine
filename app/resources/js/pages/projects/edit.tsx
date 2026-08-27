@@ -39,7 +39,7 @@ export default function EditProject({
                     eyebrow="Project settings"
                     context={project.slug}
                     title={project.name}
-                    description="Settings for this project. Changing them affects everything the engine writes for it from here on."
+                    description="Settings for this project. Changes affect content Avyo creates from now on."
                     actions={
                         <>
                             <Badge

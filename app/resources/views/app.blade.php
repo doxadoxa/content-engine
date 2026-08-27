@@ -66,7 +66,10 @@
             <title>{{ config('app.name', 'Avyo') }}</title>
         </x-inertia::head>
     </head>
-    <body class="font-sans antialiased">
+    <body @class([
+        'font-sans antialiased',
+        'product-shell' => $page['component'] !== 'marketing',
+    ])>
         <x-inertia::app />
     </body>
 </html>

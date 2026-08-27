@@ -13,8 +13,6 @@ export default function Password() {
         <>
             <Head title="Password settings" />
 
-            <h1 className="sr-only">Password settings</h1>
-
             <div className="space-y-6">
                 <Heading
                     variant="small"

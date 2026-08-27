@@ -24,7 +24,7 @@ enum DeliveryStatus: string
             self::Pending => 'Pending',
             self::Delivered => 'Delivered',
             self::Retrying => 'Retrying',
-            self::DeadLetter => 'Dead letter',
+            self::DeadLetter => 'Failed',
         };
     }
 

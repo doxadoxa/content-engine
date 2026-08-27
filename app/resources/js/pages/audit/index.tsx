@@ -27,6 +27,7 @@ import {
 import {
     WorkspaceHeader,
     WorkspacePage,
+    workspaceHeroClass,
     workspacePanelClass,
 } from '@/components/workspace-page';
 import { fixPlan, index, recheck } from '@/routes/audit';
@@ -273,7 +274,7 @@ export default function SiteAudit({
                     <Card className={workspacePanelClass}>
                         <CardHeader className="border-b pb-5">
                             <CardTitle className="flex items-center gap-2 text-base">
-                                <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                                <span className="flex size-8 items-center justify-center rounded-full bg-[#f3cf6a]/15 text-[#a13220] dark:text-[#f3cf6a]">
                                     <Sparkles
                                         className="size-4"
                                         aria-hidden="true"
@@ -357,15 +358,15 @@ function AuditHero({
 
     return (
         <section
-            className="relative isolate overflow-hidden rounded-[1.75rem] border border-white/8 bg-[#17141f] text-white shadow-[0_24px_80px_rgba(26,20,43,0.22)]"
+            className={workspaceHeroClass}
             aria-labelledby="audit-overview"
         >
             <div
-                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-emerald-500/25 blur-3xl"
+                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-[#3155a5]/18 blur-3xl"
                 aria-hidden="true"
             />
             <div
-                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-orange-500/15 blur-3xl"
+                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-[#d6533c]/14 blur-3xl"
                 aria-hidden="true"
             />
 
@@ -374,7 +375,7 @@ function AuditHero({
                     <div>
                         <h2
                             id="audit-overview"
-                            className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-emerald-200 uppercase"
+                            className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-[#f3cf6a] uppercase"
                         >
                             <Gauge className="size-3.5" aria-hidden="true" />
                             Health score
@@ -415,7 +416,7 @@ function AuditHero({
                                 {measured ? audit.health_score : '—'}
                             </span>
                             {measured && (
-                                <span className="mt-auto mb-4 ml-2 text-2xl text-emerald-300">
+                                <span className="mt-auto mb-4 ml-2 text-2xl text-[#f3cf6a]">
                                     /100
                                 </span>
                             )}
@@ -428,7 +429,7 @@ function AuditHero({
                     </div>
 
                     <div>
-                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/40 uppercase">
+                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/55 uppercase">
                             What makes it up
                         </p>
                         <div className="space-y-4">
@@ -458,7 +459,7 @@ function AuditHero({
                                         }
                                     >
                                         <div
-                                            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-orange-300"
+                                            className="h-full rounded-full bg-gradient-to-r from-[#f3cf6a] to-[#d6533c]"
                                             style={{
                                                 width: `${Math.max(0, Math.min(100, group.score ?? 0))}%`,
                                             }}
@@ -468,7 +469,7 @@ function AuditHero({
                             ))}
                         </div>
                         {groups.some((group) => group.score === null) && (
-                            <p className="mt-4 text-xs leading-relaxed text-white/40">
+                            <p className="mt-4 text-xs leading-relaxed text-white/55">
                                 An unmeasured section is left out of the
                                 headline rather than counted as zero.
                             </p>
@@ -587,7 +588,7 @@ function HeroMetric({
 }) {
     return (
         <div className="sm:px-5 sm:first:pl-0 sm:last:pr-0">
-            <dt className="text-[11px] tracking-wide text-white/40 uppercase">
+            <dt className="text-[11px] tracking-wide text-white/55 uppercase">
                 {label}
             </dt>
             <dd className="mt-1.5 text-xl font-semibold tabular-nums">

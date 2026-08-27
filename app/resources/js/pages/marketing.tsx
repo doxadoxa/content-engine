@@ -139,7 +139,11 @@ function ArrowLink({ children }: { children: React.ReactNode }) {
 
 function ProductPreview() {
     return (
-        <div className="relative mx-auto mt-14 max-w-[1120px] px-3 sm:mt-20 sm:px-6 lg:px-8">
+        <div
+            role="img"
+            aria-label="Avyo workspace preview showing a weekly content proposal, channel drafts, quality checks, publishing status, and visibility feedback."
+            className="relative mx-auto mt-14 max-w-[1120px] px-3 sm:mt-20 sm:px-6 lg:px-8"
+        >
             <div
                 aria-hidden="true"
                 className="absolute top-[-8%] left-[12%] h-[62%] w-[76%] rounded-full bg-[#d6533c]/16 blur-[80px]"
@@ -180,7 +184,7 @@ function ProductPreview() {
                                     return (
                                         <div
                                             key={label as string}
-                                            className={`flex h-9 items-center gap-2.5 rounded-lg px-2 ${index === 2 ? 'bg-[#f2d9d0] text-[#d6533c]' : 'text-[#8c877f]'}`}
+                                            className={`flex h-9 items-center gap-2.5 rounded-lg px-2 ${index === 2 ? 'bg-[#f2d9d0] text-[#a13220]' : 'text-[#8c877f]'}`}
                                         >
                                             <SidebarIcon className="size-4 shrink-0" />
                                             <span className="hidden text-[11px] font-medium sm:block">
@@ -394,7 +398,7 @@ function ChannelStrip() {
     return (
         <section className="border-y border-[#d8cebd] bg-white py-7 sm:py-9">
             <div className="mx-auto flex max-w-7xl flex-col items-center gap-5 px-6 lg:flex-row lg:justify-between lg:px-8">
-                <p className="shrink-0 text-[10px] font-semibold tracking-[0.16em] text-[#8a847d] uppercase">
+                <p className="shrink-0 text-[10px] font-semibold tracking-[0.16em] text-[#6a645e] uppercase">
                     One strategy, every place you need to show up
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3 sm:gap-x-8 lg:justify-end">
@@ -419,7 +423,7 @@ function StrategyCard() {
     return (
         <div className="relative h-full overflow-hidden rounded-[28px] bg-[#f2d9d0] p-6 sm:p-8 lg:col-span-7 lg:min-h-[500px]">
             <div className="relative z-10 max-w-lg">
-                <p className="text-[10px] font-semibold tracking-[0.15em] text-[#d6533c] uppercase">
+                <p className="text-[10px] font-semibold tracking-[0.15em] text-[#a13220] uppercase">
                     Living brand intelligence
                 </p>
                 <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[#201d2d] sm:text-3xl">
@@ -476,7 +480,7 @@ function StrategyCard() {
 function SocialCard() {
     return (
         <div className="relative h-full overflow-hidden rounded-[28px] bg-[#3155a5] p-6 text-white sm:p-8 lg:col-span-5 lg:min-h-[500px]">
-            <p className="text-[10px] font-semibold tracking-[0.15em] text-white/70 uppercase">
+            <p className="text-[10px] font-semibold tracking-[0.15em] text-white/80 uppercase">
                 Social content studio
             </p>
             <h3 className="mt-2 max-w-md text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">
@@ -499,7 +503,7 @@ function SocialCard() {
                         Your content calendar is not a strategy. The decisions
                         behind it are.
                     </p>
-                    <div className="mt-4 flex gap-3 text-[8px] text-white/45">
+                    <div className="mt-4 flex gap-3 text-[8px] text-white/65">
                         <span>12 replies</span>
                         <span>38 saves</span>
                     </div>
@@ -507,7 +511,7 @@ function SocialCard() {
                 <div className="absolute top-0 right-0 w-[51%] rotate-3 rounded-2xl border border-black/10 bg-[#fff8e9] p-3 text-[#232027] shadow-xl">
                     <div className="aspect-[4/3] rounded-xl bg-[#d7e0f6] p-3">
                         <div className="flex h-full flex-col justify-between rounded-lg border border-[#d6533c]/20 bg-white/55 p-3">
-                            <span className="text-[9px] font-semibold tracking-[0.12em] text-[#d6533c] uppercase">
+                            <span className="text-[9px] font-semibold tracking-[0.12em] text-[#a13220] uppercase">
                                 Slide 01
                             </span>
                             <p className="text-[13px] leading-tight font-semibold tracking-[-0.04em]">
@@ -570,7 +574,7 @@ function FeedbackCard() {
         <div className="overflow-hidden rounded-[28px] bg-[#17352f] p-6 text-white sm:p-8 lg:col-span-7">
             <div className="grid gap-8 sm:grid-cols-[.8fr_1.2fr] sm:items-end">
                 <div>
-                    <p className="text-[10px] font-semibold tracking-[0.15em] text-white/45 uppercase">
+                    <p className="text-[10px] font-semibold tracking-[0.15em] text-white/65 uppercase">
                         Performance feedback
                     </p>
                     <h3 className="mt-2 text-xl font-semibold tracking-[-0.035em] sm:text-2xl">
@@ -584,7 +588,7 @@ function FeedbackCard() {
                 <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-[9px] text-white/45">
+                            <p className="text-[9px] text-white/65">
                                 Organic visibility
                             </p>
                             <p className="mt-1 text-xl font-semibold">+38.4%</p>
@@ -720,7 +724,7 @@ export default function Marketing() {
                             </Link>
                         </div>
 
-                        <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-[#79736d]">
+                        <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-[#6f6962]">
                             <span className="flex items-center gap-1.5">
                                 <Check className="size-3.5 text-[#4f955d]" />
                                 No prompt engineering
@@ -802,7 +806,7 @@ export default function Marketing() {
                                     <h3 className="mt-8 text-base font-semibold">
                                         {title}
                                     </h3>
-                                    <p className="mt-2 text-sm leading-6 text-white/45">
+                                    <p className="mt-2 text-sm leading-6 text-white/60">
                                         {description}
                                     </p>
                                 </div>
@@ -817,7 +821,7 @@ export default function Marketing() {
                 >
                     <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                         <div className="mx-auto max-w-3xl text-center">
-                            <p className="text-[10px] font-semibold tracking-[0.17em] text-[#d6533c] uppercase">
+                            <p className="text-[10px] font-semibold tracking-[0.17em] text-[#a13220] uppercase">
                                 From URL to momentum
                             </p>
                             <h2 className="mt-5 text-4xl leading-[1.03] font-semibold tracking-[-0.055em] text-balance sm:text-5xl lg:text-6xl">
@@ -866,7 +870,7 @@ export default function Marketing() {
                 >
                     <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                         <div className="max-w-3xl">
-                            <p className="text-[10px] font-semibold tracking-[0.17em] text-[#d6533c] uppercase">
+                            <p className="text-[10px] font-semibold tracking-[0.17em] text-[#a13220] uppercase">
                                 The Avyo workspace
                             </p>
                             <h2 className="mt-5 text-4xl leading-[1.03] font-semibold tracking-[-0.055em] text-balance sm:text-5xl lg:text-6xl">
@@ -890,7 +894,7 @@ export default function Marketing() {
                     <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                         <div className="grid gap-12 lg:grid-cols-[.72fr_1.28fr] lg:gap-20">
                             <div>
-                                <p className="text-[10px] font-semibold tracking-[0.17em] text-[#d6533c] uppercase">
+                                <p className="text-[10px] font-semibold tracking-[0.17em] text-[#a13220] uppercase">
                                     Everything connected
                                 </p>
                                 <h2 className="mt-5 text-4xl leading-[1.04] font-semibold tracking-[-0.055em] text-balance sm:text-5xl">
@@ -908,7 +912,7 @@ export default function Marketing() {
                                 {engineFeatures.map((feature, index) => (
                                     <div key={feature.title}>
                                         <div className="flex items-center gap-3">
-                                            <span className="font-serif text-xl text-[#d6533c] italic">
+                                            <span className="font-serif text-xl text-[#a13220] italic">
                                                 0{index + 1}
                                             </span>
                                             <span className="h-px flex-1 bg-[#d9d0c4]" />
@@ -928,18 +932,18 @@ export default function Marketing() {
 
                 <section
                     id="why-avyo"
-                    className="scroll-mt-20 bg-[#d6533c] py-20 text-white sm:py-28 lg:py-36"
+                    className="scroll-mt-20 bg-[#d6533c] py-20 text-[#151419] sm:py-28 lg:py-36"
                 >
                     <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                         <div className="grid gap-12 lg:grid-cols-[.95fr_1.05fr] lg:items-center lg:gap-20">
                             <div>
-                                <p className="text-[10px] font-semibold tracking-[0.17em] text-white/60 uppercase">
+                                <p className="text-[10px] font-semibold tracking-[0.17em] uppercase">
                                     Why Avyo
                                 </p>
                                 <h2 className="mt-5 text-4xl leading-[1.02] font-semibold tracking-[-0.055em] text-balance sm:text-5xl lg:text-6xl">
                                     Most AI tools stop when the content exists
                                 </h2>
-                                <p className="mt-6 max-w-xl text-lg leading-8 text-white/68">
+                                <p className="mt-6 max-w-xl text-lg leading-8">
                                     Avyo keeps going until the work is reviewed,
                                     delivered, measured, and turned into a
                                     better next decision.
@@ -948,7 +952,7 @@ export default function Marketing() {
 
                             <div className="rounded-[28px] border border-white/20 bg-white/10 p-5 backdrop-blur sm:p-7">
                                 <div className="rounded-2xl bg-[#10241f] p-5 sm:p-7">
-                                    <p className="text-[10px] font-semibold tracking-[0.15em] text-white/45 uppercase">
+                                    <p className="text-[10px] font-semibold tracking-[0.15em] text-white/65 uppercase">
                                         The Avyo loop
                                     </p>
                                     <div className="mt-6 space-y-2.5">
@@ -986,7 +990,7 @@ export default function Marketing() {
                                                         <span className="block text-[11px] font-semibold text-white">
                                                             {title}
                                                         </span>
-                                                        <span className="block truncate text-[9px] text-white/38">
+                                                        <span className="block truncate text-[9px] text-white/65">
                                                             {detail}
                                                         </span>
                                                     </span>
@@ -1026,7 +1030,7 @@ export default function Marketing() {
                                     <h3 className="mt-6 text-lg font-semibold tracking-[-0.025em]">
                                         {title}
                                     </h3>
-                                    <p className="mt-2 text-sm leading-6 text-white/58">
+                                    <p className="mt-2 text-sm leading-6">
                                         {description}
                                     </p>
                                 </div>
@@ -1041,7 +1045,7 @@ export default function Marketing() {
                 >
                     <div className="mx-auto grid max-w-7xl gap-12 px-5 sm:px-6 lg:grid-cols-[.72fr_1.28fr] lg:gap-24 lg:px-8">
                         <div>
-                            <p className="text-[10px] font-semibold tracking-[0.17em] text-[#d6533c] uppercase">
+                            <p className="text-[10px] font-semibold tracking-[0.17em] text-[#a13220] uppercase">
                                 Good questions
                             </p>
                             <h2 className="mt-5 text-4xl font-semibold tracking-[-0.055em] sm:text-5xl">

@@ -105,14 +105,14 @@ class DeliveryController extends Controller
         abort_unless(
             $delivery->status->isSettled(),
             409,
-            'This delivery has not finished yet. Replaying one that is still in flight would send it twice.',
+            'This delivery has not finished yet. Resending one that is still in flight would send it twice.',
         );
 
         $replay = $publishers->forDelivery($delivery)->replay($delivery);
 
         Inertia::flash('toast', [
             'type' => 'success',
-            'message' => "Replayed as {$replay->delivery_id}.",
+            'message' => "Resent as {$replay->delivery_id}.",
         ]);
 
         return back();

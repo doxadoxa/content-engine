@@ -486,7 +486,7 @@ export default function SocialPlan({
                               : `Version ${readyPlan.version} · not accepted`
                     }
                     title={label}
-                    description="What this month is aiming at, and why it is thought reachable. Ideas and drafts live on Create and the board."
+                    description="Set this month’s goal and strategy. Create drafts on Create and track progress on Overview."
                     actions={
                         <>
                             <Button

@@ -53,14 +53,14 @@ type Props = {
 export default function ContentIndex({ items }: Props) {
     return (
         <>
-            <Head title="Content plan — list" />
+            <Head title="Content plan — List" />
 
             <WorkspacePage>
                 <WorkspaceHeader
                     eyebrow="Content plan"
                     context={`${items.total} ${items.total === 1 ? 'article' : 'articles'}`}
-                    title="All content"
-                    description="One row is one unit — its languages and social derivatives stay together as one piece of work."
+                    title="All articles"
+                    description="Each row is one article. Its language versions and related social posts stay grouped together."
                     actions={<PlanViews active="list" />}
                 />
 
@@ -83,7 +83,7 @@ export default function ContentIndex({ items }: Props) {
                                         <TableHead>Title</TableHead>
                                         <TableHead>Type</TableHead>
                                         <TableHead>Languages</TableHead>
-                                        <TableHead>Derived</TableHead>
+                                        <TableHead>Related posts</TableHead>
                                         <TableHead>Plan</TableHead>
                                         <TableHead>State</TableHead>
                                     </TableRow>
@@ -225,7 +225,10 @@ function MobileContentCard({ item }: { item: ContentRow }) {
                 {item.derivatives > 0 && (
                     <span className="flex items-center gap-1">
                         <GitBranch className="size-3.5" aria-hidden="true" />
-                        {item.derivatives} derived
+                        {item.derivatives}{' '}
+                        {item.derivatives === 1
+                            ? 'related post'
+                            : 'related posts'}
                     </span>
                 )}
                 {item.plan_month !== null && (
@@ -244,11 +247,10 @@ function EmptyContent() {
                     className="size-8 text-muted-foreground"
                     aria-hidden="true"
                 />
-                <CardTitle>Nothing here yet</CardTitle>
+                <CardTitle>No articles yet</CardTitle>
                 <CardDescription>
-                    Units appear once research and planning start producing
-                    them. This list is read-only: the calendar and the approvals
-                    queue that act on them come with the operator dashboard.
+                    Plan a month to create article ideas, then use Calendar to
+                    schedule them and Approvals to review drafts.
                 </CardDescription>
             </CardHeader>
         </Card>
@@ -256,5 +258,5 @@ function EmptyContent() {
 }
 
 ContentIndex.layout = {
-    breadcrumbs: [{ title: 'Content', href: index() }],
+    breadcrumbs: [{ title: 'Content plan', href: index() }],
 };

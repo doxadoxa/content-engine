@@ -87,7 +87,7 @@ export default function Calendar({
 
     return (
         <>
-            <Head title={`Calendar — ${label}`} />
+            <Head title={`Content plan — ${label}`} />
 
             <WorkspacePage>
                 <WorkspaceHeader
@@ -470,8 +470,7 @@ function EmptyMonth() {
                 />
                 <CardTitle>Nothing scheduled this month</CardTitle>
                 <CardDescription>
-                    Run the planning pipeline to turn the idea pool into a
-                    month.
+                    Plan this month to schedule article ideas.
                 </CardDescription>
             </CardHeader>
         </Card>
@@ -479,5 +478,5 @@ function EmptyMonth() {
 }
 
 Calendar.layout = {
-    breadcrumbs: [{ title: 'Calendar', href: index() }],
+    breadcrumbs: [{ title: 'Content plan', href: index() }],
 };

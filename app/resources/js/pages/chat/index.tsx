@@ -26,14 +26,14 @@ export default function ChatIndex({ threads }: Props) {
 
             <WorkspacePage width="reading">
                 <WorkspaceHeader
-                    eyebrow="With the engine"
+                    eyebrow="AI assistant"
                     title="Chats"
-                    description="Every conversation, and what it was about."
+                    description="Every chat with Avyo, newest first."
                     actions={
                         <Button asChild variant="outline">
                             <Link href={homeIndex()}>
                                 <Plus className="size-4" aria-hidden="true" />
-                                New conversation
+                                New chat
                             </Link>
                         </Button>
                     }
@@ -44,8 +44,8 @@ export default function ChatIndex({ threads }: Props) {
                         className={`${workspacePanelClass} px-5 py-10 text-center`}
                     >
                         <p className="text-sm text-muted-foreground">
-                            No conversations yet. Ask something from the box on
-                            Home and it starts one.
+                            No chats yet. Ask something from the box on Home to
+                            start one.
                         </p>
                         <Button asChild className="mt-5">
                             <Link href={homeIndex()}>Go to Home</Link>
