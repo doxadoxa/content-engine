@@ -136,7 +136,7 @@ export default function SocialCreate({
                     eyebrow="Social"
                     context={label}
                     title="Create"
-                    description="Pick an idea, or answer something the world said."
+                    description="Start from a planned idea or respond to a recent signal."
                 />
 
                 <SocialTabs current="create" month={month} />
@@ -562,7 +562,7 @@ function Signals({ signals, kinds }: { signals: Signal[]; kinds: Kind[] }) {
                             Signals
                         </h2>
                         <p className="text-xs text-muted-foreground">
-                            Questions, news and mentions the engine picked up
+                            Questions, news, and mentions Avyo found
                         </p>
                     </div>
                 </div>
@@ -577,13 +577,11 @@ function Signals({ signals, kinds }: { signals: Signal[]; kinds: Kind[] }) {
             {signals.length === 0 ? (
                 <div className={`${socialInsetClass} px-5 py-10 text-center`}>
                     <p className="text-sm text-muted-foreground">
-                        Nothing is listening yet.
+                        No signals yet.
                     </p>
                     <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-muted-foreground">
-                        Signals arrive from the Threads contour, RSS feeds and
-                        the keyword pool. Where a deployment runs none of those,
-                        this shelf stays empty rather than inventing something
-                        to react to.
+                        Connect Threads, add RSS feeds, or track keywords to see
+                        timely topics here.
                     </p>
                 </div>
             ) : (

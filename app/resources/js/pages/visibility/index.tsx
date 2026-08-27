@@ -72,7 +72,7 @@ type Props = {
 const INTENT_TONE: Record<string, string> = {
     buying: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
     comparison:
-        'bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
+        'bg-[#3155a5]/10 text-[#27478a] dark:bg-[#3155a5]/25 dark:text-[#bdc9e8]',
     learning: 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
 };
 
@@ -97,18 +97,18 @@ export default function Visibility({
 
     return (
         <>
-            <Head title="Prompt analysis" />
+            <Head title="AI visibility" />
 
             <WorkspacePage>
                 <WorkspaceHeader
-                    eyebrow="AI visibility"
+                    eyebrow="AI search"
                     context={
                         summary.last_asked_on === null
                             ? 'Awaiting first sweep'
                             : `Measured ${summary.last_asked_on}`
                     }
-                    title="Prompt analysis"
-                    description="Where your brand appears when someone asks an assistant, and which sources it cites instead."
+                    title="AI visibility"
+                    description="See how often assistants mention your brand and which sources they cite instead."
                 />
 
                 {!summary.configured && (
@@ -116,8 +116,8 @@ export default function Visibility({
                         <CardHeader className="flex-row items-center gap-2">
                             <AlertTriangle className="size-4 text-amber-600" />
                             <CardDescription className="text-amber-900 dark:text-amber-200">
-                                No assistant panel is connected, so nothing is
-                                being asked. Set the DataForSEO credentials to
+                                AI visibility is not configured, so no prompts
+                                are being checked. Add DataForSEO credentials to
                                 start measuring.
                             </CardDescription>
                         </CardHeader>
@@ -134,7 +134,7 @@ export default function Visibility({
                 <Card className={workspacePanelClass}>
                     <CardHeader className="border-b pb-5">
                         <CardTitle className="flex items-center gap-2 text-base">
-                            <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                            <span className="flex size-8 items-center justify-center rounded-full bg-[#d6533c]/10 text-[#a13220] dark:text-[#f3cf6a]">
                                 <Sparkles
                                     className="size-4"
                                     aria-hidden="true"
@@ -213,12 +213,11 @@ export default function Visibility({
                     <Card className={workspacePanelClass}>
                         <CardHeader>
                             <CardTitle className="text-sm">
-                                Cited instead of you
+                                Competitor sources
                             </CardTitle>
                             <CardDescription>
-                                Sites the assistants pointed at, directories
-                                removed. These are the pages to be mentioned on
-                                or to out-answer.
+                                Sites assistants cite instead of your brand,
+                                excluding directories.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-2">
@@ -245,10 +244,9 @@ export default function Visibility({
                                 Top sources
                             </CardTitle>
                             <CardDescription>
-                                Everything cited, including the directories — a
-                                directory at the top means the assistants do not
-                                know the businesses directly, and getting listed
-                                there is the cheaper move.
+                                All cited sources, including directories. A
+                                directory near the top can be a practical place
+                                to earn a listing.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-2">
@@ -363,15 +361,15 @@ function VisibilityHero({
 
     return (
         <section
-            className="relative isolate min-h-[30rem] overflow-hidden rounded-[1.75rem] border border-white/8 bg-[#17141f] text-white shadow-[0_24px_80px_rgba(26,20,43,0.22)]"
+            className="relative isolate min-h-[30rem] overflow-hidden rounded-[1.75rem] border border-[#f3ecdd]/10 bg-[#17352f] text-[#f3ecdd] shadow-[0_24px_80px_rgba(16,36,31,0.24)]"
             aria-labelledby="visibility-overview"
         >
             <div
-                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-violet-500/30 blur-3xl"
+                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-[#d6533c]/22 blur-3xl"
                 aria-hidden="true"
             />
             <div
-                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-orange-500/15 blur-3xl"
+                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-[#3155a5]/18 blur-3xl"
                 aria-hidden="true"
             />
 
@@ -380,7 +378,7 @@ function VisibilityHero({
                     <div>
                         <h2
                             id="visibility-overview"
-                            className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-violet-200 uppercase"
+                            className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-[#f3cf6a] uppercase"
                         >
                             <Sparkles className="size-3.5" aria-hidden="true" />
                             Brand visibility
@@ -410,14 +408,14 @@ function VisibilityHero({
                             }
                         >
                             <Eye
-                                className="mt-1 mr-3 size-5 text-violet-300"
+                                className="mt-1 mr-3 size-5 text-[#f3cf6a]"
                                 aria-hidden="true"
                             />
                             <span className="text-[5.5rem] leading-[0.82] sm:text-[7rem]">
                                 {measured ? summary.score : '—'}
                             </span>
                             {measured && (
-                                <span className="ml-2 text-2xl text-violet-300">
+                                <span className="ml-2 text-2xl text-[#f3cf6a]">
                                     %
                                 </span>
                             )}
@@ -471,7 +469,7 @@ function VisibilityHero({
                                             }
                                         >
                                             <div
-                                                className="h-full rounded-full bg-gradient-to-r from-violet-400 to-orange-300"
+                                                className="h-full rounded-full bg-gradient-to-r from-[#f3cf6a] to-[#d6533c]"
                                                 style={{
                                                     width: `${Math.max(0, Math.min(100, row.score ?? 0))}%`,
                                                 }}
@@ -483,10 +481,11 @@ function VisibilityHero({
                         )}
                         {unmeasuredLocales.length > 0 && (
                             <p className="mt-4 text-xs leading-relaxed text-white/55">
+                                Prompts in{' '}
                                 {unmeasuredLocales
                                     .map((row) => row.locale)
                                     .join(', ')}{' '}
-                                has prompts awaiting its first answer sweep.
+                                are awaiting their first answer sweep.
                             </p>
                         )}
                     </div>
@@ -497,7 +496,10 @@ function VisibilityHero({
                         label="Monitored prompts"
                         value={summary.monitored_prompts}
                     />
-                    <HeroMetric label="Answers read" value={summary.answered} />
+                    <HeroMetric
+                        label="Answers checked"
+                        value={summary.answered}
+                    />
                     <HeroMetric
                         label="Brand mentions"
                         value={summary.mentions}
@@ -557,7 +559,7 @@ function Bar({
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
-                    className="h-full rounded-full bg-gradient-to-r from-violet-500 to-orange-400"
+                    className="h-full rounded-full bg-gradient-to-r from-[#3155a5] to-[#d6533c]"
                     style={{
                         width: `${Math.max(4, (value / Math.max(1, max)) * 100)}%`,
                     }}
@@ -568,5 +570,5 @@ function Bar({
 }
 
 Visibility.layout = {
-    breadcrumbs: [{ title: 'Prompt analysis', href: index() }],
+    breadcrumbs: [{ title: 'AI visibility', href: index() }],
 };

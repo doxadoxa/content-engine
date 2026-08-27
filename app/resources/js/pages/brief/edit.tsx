@@ -157,7 +157,7 @@ export default function BrandBriefEdit({
                     <WorkspaceHeader
                         eyebrow="Brand system"
                         title="Brand brief"
-                        description="How this project sounds, and what it will not say."
+                        description="The voice, visual style, examples, and guardrails Avyo uses whenever it plans or writes content."
                     />
                     <Card className={`${workspacePanelClass} py-10`}>
                         <CardHeader>
@@ -186,7 +186,7 @@ export default function BrandBriefEdit({
                             : `Version ${versions[0].version} live`
                     }
                     title="Brand brief"
-                    description="How this project sounds, and what it will not say. Every pipeline compiles this into its prompts."
+                    description="The voice, visual style, examples, and guardrails Avyo uses whenever it plans or writes content."
                     actions={
                         <Badge
                             variant={isOwner ? 'default' : 'secondary'}
@@ -293,7 +293,7 @@ export default function BrandBriefEdit({
                                         The part something draws with rather
                                         than reads. Visual language above tells
                                         an image model what to make; these tell
-                                        the engine what colour to fill, what to
+                                        Avyo what colour to fill, what to
                                         emphasise with, and where to put the
                                         words when it lays out a panel itself.
                                     </CardDescription>
@@ -630,9 +630,9 @@ function VersionEntry({
                                 <Badge variant="outline">
                                     {version.publications}{' '}
                                     {version.publications === 1
-                                        ? 'unit'
-                                        : 'units'}{' '}
-                                    written on it
+                                        ? 'piece'
+                                        : 'pieces'}{' '}
+                                    created from this version
                                 </Badge>
                             )}
                         </div>
@@ -814,15 +814,15 @@ function Colours({
             <div className="sm:col-span-2">
                 <Label className="text-sm">Rest of the palette</Label>
                 <p className="mt-1 text-xs text-muted-foreground">
-                    Not drawn with directly. The engine borrows from these when
-                    the accent is too close to the brand colour to be read.
+                    Not drawn with directly. Avyo borrows from these when the
+                    accent is too close to the brand colour to be read.
                 </p>
 
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                     {brandPalette.length === 0 && (
                         <p className="text-xs text-muted-foreground">
-                            Empty — the engine falls back to the text colour, as
-                            it always has.
+                            Empty — Avyo falls back to the text colour, as it
+                            always has.
                         </p>
                     )}
 
@@ -895,7 +895,7 @@ function Colours({
                                 ? 'Photographing your site and counting its colours…'
                                 : (paletteOutcome?.message ??
                                   (palette === null
-                                      ? 'The engine can photograph your site and count the colours it uses.'
+                                      ? 'Avyo can photograph your site and count the colours it uses.'
                                       : palette.accent === null
                                         ? 'Counted off a picture of your site — it uses one colour, so there is no accent to suggest.'
                                         : 'Counted off a picture of your site.'))}
@@ -1000,10 +1000,10 @@ function Colours({
                         )}
                         {siteFont !== null && (
                             <p className="text-xs text-muted-foreground">
-                                Your site sets its type in {siteFont}. The
-                                engine draws panels in its own face — this is
-                                here so the brief and the site can be compared,
-                                not because anything reads it yet.
+                                Your site sets its type in {siteFont}. Avyo
+                                draws generated panels in its own typeface —
+                                this is here so the brief and the site can be
+                                compared, not because anything reads it yet.
                             </p>
                         )}
                     </div>

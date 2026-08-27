@@ -187,7 +187,7 @@ export default function Engage({
                     eyebrow="Conversation queue"
                     context={`${conversations.total} ${conversations.total === 1 ? 'reply' : 'replies'} owed`}
                     title="Conversations"
-                    description="Incoming replies and mentions, longest wait first. Answering is worth as much as posting, and it is worth most in the first hour."
+                    description="Replies and mentions waiting for you, oldest first. Responding within the first hour has the most impact."
                 />
 
                 {rows.length > 0 && (
@@ -450,7 +450,7 @@ function Composer({
                             >
                                 <PenLine className="size-4" aria-hidden />
                                 {byHand
-                                    ? 'Let the engine send it'
+                                    ? 'Let Avyo send it'
                                     : 'I posted it myself'}
                             </Button>
                         )}
@@ -664,7 +664,7 @@ function RowNotes({
                         No draft.
                     </span>{' '}
                     {conversation.state === 'new'
-                        ? 'The engine has not written a reply for this conversation — the drafting run failed or has not landed yet. Write the reply yourself, or skip it with a reason.'
+                        ? 'Avyo has not prepared a draft yet. Write the reply yourself, or skip it with a reason.'
                         : 'The draft was thrown away. Write the reply yourself, or skip it with a reason.'}
                 </p>
             )}
@@ -676,7 +676,7 @@ function RowNotes({
                     </span>{' '}
                     {foreignRepliesAllowed
                         ? 'This thread is not ours to answer through the API. Copy the reply, post it in the thread, then mark it as sent.'
-                        : 'We did not publish this thread, and replying to other people’s posts through the API is undocumented. Copy the reply, post it in the thread, then mark it as sent.'}
+                        : 'Threads does not document automatic replies to posts you did not publish. Copy Avyo’s draft, post it in the thread, then mark it as sent.'}
                 </p>
             )}
 
@@ -797,7 +797,7 @@ function QueueSummary({
                     </Badge>
                     {foreignRepliesAllowed
                         ? 'These threads are not ours to answer through the API.'
-                        : 'Replying to other people’s posts through the API is undocumented, so the engine writes these and you post them.'}
+                        : 'Threads does not document automatic replies to posts you did not publish, so Avyo drafts the response and you post it manually.'}
                 </p>
             )}
         </section>

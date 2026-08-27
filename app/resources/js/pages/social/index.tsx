@@ -126,7 +126,7 @@ export default function SocialOverview({
                             : 'No goal set'
                     }
                     title={label}
-                    description="What this month is for, and what is left of it. Nothing publishes from this screen."
+                    description="See this month’s goal, progress, and remaining work. Nothing publishes from this screen."
                     actions={
                         <>
                             <Button

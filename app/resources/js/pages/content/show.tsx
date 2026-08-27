@@ -452,7 +452,7 @@ export default function ContentShow({
                 {derivatives.length > 0 && (
                     <Card className={workspacePanelClass}>
                         <CardHeader>
-                            <CardTitle>Derived posts</CardTitle>
+                            <CardTitle>Related social posts</CardTitle>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-2">
                             {derivatives.map((child) => (
@@ -473,9 +473,9 @@ export default function ContentShow({
 
                 <Card className={workspacePanelClass}>
                     <CardHeader>
-                        <CardTitle>Deliveries</CardTitle>
+                        <CardTitle>Delivery history</CardTitle>
                         <CardDescription>
-                            Every attempt to hand this unit to a channel.
+                            Every attempt to publish this article to a channel.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2">

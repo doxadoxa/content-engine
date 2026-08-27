@@ -207,7 +207,7 @@ export function DutyHoursField({ value, onChange, timezone, error }: Props) {
             <p className="text-xs text-muted-foreground">
                 Hours that touch or overlap are saved as one window, and a range
                 we cannot read is dropped — so what you see after saving is what
-                the engine will use.
+                Avyo will use.
             </p>
 
             <InputError message={error} />

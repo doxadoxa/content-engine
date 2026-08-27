@@ -163,6 +163,7 @@ type Work = {
     failed: {
         id: string;
         pipeline: string;
+        action: string | null;
         subject: string | null;
         step: string | null;
         message: string | null;
@@ -690,7 +691,7 @@ function Composer({
                                 setIntent(value as 'ask' | 'post' | 'article');
                             }
                         }}
-                        aria-label="What should the engine make?"
+                        aria-label="What should Avyo make?"
                         className="flex w-full flex-wrap justify-start gap-1.5 border-b border-border/70 px-3 pt-1 pb-2.5 sm:px-4"
                     >
                         {INTENTS.map((option) => (
@@ -1130,7 +1131,8 @@ function NeedsYou({ needs }: { needs?: Needs }) {
         return (
             <section className={`${workspacePanelClass} ${BAND} px-5 py-6`}>
                 <p className="text-center text-sm text-muted-foreground">
-                    Nothing needs you. The engine will say when something does.
+                    Nothing needs you. Avyo will let you know when something
+                    does.
                 </p>
             </section>
         );
@@ -1445,7 +1447,7 @@ function Halves({ halves }: { halves?: { articles: Half; social: Half } }) {
                     id="halves-heading"
                     className="text-sm font-semibold tracking-tight"
                 >
-                    What the engine has
+                    Current work
                 </h2>
             </header>
 
@@ -1574,7 +1576,7 @@ function RefusalBand({ refusals }: { refusals: Refusals }) {
                     />
                 )}
                 <span className="min-w-0 flex-1 text-sm font-medium">
-                    What the engine did not do this week
+                    Work skipped this week
                 </span>
                 {refusals.nothing_to_report ? (
                     <span className="shrink-0 text-xs text-muted-foreground">
@@ -1780,7 +1782,8 @@ function WorkInProgress({ work }: { work?: Work }) {
                     {work.failed.map((run) => (
                         <li key={run.id} className="px-5 py-3.5">
                             <p className="text-xs font-medium tracking-wide text-terracotta-deep uppercase dark:text-[#e58a76]">
-                                Stopped · {run.pipeline.replace(/_/g, ' ')}
+                                Stopped ·{' '}
+                                {labelFor(run.pipeline, run.action).one}
                             </p>
                             <p className="mt-1 text-sm">
                                 {run.subject ?? run.step ?? 'A run stopped.'}
@@ -1893,7 +1896,7 @@ function StoppedNotice({
                     aria-hidden="true"
                 />
                 <span>
-                    The engine is not running.{' '}
+                    Automated work is not running.{' '}
                     <span className="font-normal">
                         {health.reason ??
                             'Nothing will be written or published until it is back.'}
@@ -1915,8 +1918,8 @@ function NoProject({ hasProjects }: { hasProjects: boolean }) {
                     </h1>
                     <p className="mt-2 text-sm text-muted-foreground">
                         {hasProjects
-                            ? 'Pick one from the switcher and the engine has something to read.'
-                            : 'Create a project and the engine has something to read.'}
+                            ? 'Select a project to see its work.'
+                            : 'Create a project to get started.'}
                     </p>
                     {!hasProjects && (
                         <Button asChild className="mt-5">

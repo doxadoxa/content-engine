@@ -51,13 +51,10 @@ import { index as visibilityIndex } from '@/routes/visibility';
  * Every link here goes to a page that does something today — a column of links
  * to pages that do not exist yet teaches an operator to distrust the menu.
  *
- * Grouped by **product line**, because this engine does two jobs that share
- * almost nothing. It writes articles for search and posts for social, and
- * `ContentItem::scopeRoots()` excludes social posts outright — so Content plan,
- * Feedback, Prompt analysis and Site audit are article screens however general
- * their names sound. A single flat "Workflow" list put them beside the social
- * screens with nothing saying which was which, and no amount of ordering fixes
- * a label that does not say what it covers.
+ * Grouped by job: social publishing, search and AI performance, publishing
+ * operations, and project setup. `ContentItem::scopeRoots()` excludes social
+ * posts outright, so Content plan and Article performance remain with the
+ * search surfaces rather than beside the social board.
  *
  * Two screens serve both halves and sit in neither group: the approvals queue
  * and the delivery log. Cross-project and owner-only administration lives in the
@@ -135,15 +132,9 @@ export function AppSidebar() {
                 </SidebarGroup>
 
                 {/*
-                    Grouped by product line, and that is the whole point of the
-                    labels. This engine does two different jobs — it writes
-                    articles for search and it writes posts for social — and
-                    they share almost nothing: `ContentItem::scopeRoots()`
-                    excludes social posts outright, so "Content plan", Feedback,
-                    Prompt analysis and Site audit are *articles only* however
-                    general their names sound. One flat "Workflow" list put them
-                    beside the social screens with nothing saying which was
-                    which, and the answer was not discoverable from the label.
+                    Grouped by the job the operator is doing. Social publishing
+                    has its own section; planning, article performance, AI
+                    visibility and site health sit together as Search & AI.
                 */}
                 <SidebarGroup className="px-3 py-2">
                     <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
@@ -159,7 +150,7 @@ export function AppSidebar() {
                             <NavLink
                                 href={socialIndex().url}
                                 icon={LayoutList}
-                                label="Social"
+                                label="Posts"
                                 current={url}
                                 also={[socialCreate().url, socialPlan().url]}
                             />
@@ -180,7 +171,7 @@ export function AppSidebar() {
 
                 <SidebarGroup className="px-3 py-2">
                     <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
-                        Articles
+                        Search &amp; AI
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
@@ -198,13 +189,13 @@ export function AppSidebar() {
                             <NavLink
                                 href={feedbackIndex().url}
                                 icon={Activity}
-                                label="Feedback"
+                                label="Article performance"
                                 current={url}
                             />
                             <NavLink
                                 href={visibilityIndex().url}
                                 icon={Sparkles}
-                                label="Prompt analysis"
+                                label="AI visibility"
                                 current={url}
                             />
                             {/* Last, and deliberately: the other two are about
@@ -224,13 +215,13 @@ export function AppSidebar() {
 
                 <SidebarGroup className="px-3 py-2">
                     <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
-                        Review
+                        Publishing
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
                             {/* The two screens that genuinely serve both
                                 halves, which is why they are neither under
-                                Social nor under Articles. §7 makes the queue
+                                Social nor Search & AI. §7 makes the queue
                                 the screen an operator opens every morning and
                                 it stays one queue; what changed is where a row
                                 goes — a post opens the composer, an article the
@@ -244,7 +235,7 @@ export function AppSidebar() {
                             <NavLink
                                 href={deliveriesIndex().url}
                                 icon={Send}
-                                label="Deliveries"
+                                label="Delivery log"
                                 current={url}
                             />
                         </SidebarMenu>

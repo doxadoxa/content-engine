@@ -120,8 +120,8 @@ export function ProjectForm({
                         <CardHeader>
                             <CardTitle>Identity</CardTitle>
                             <CardDescription>
-                                What this project is called, and the handle the
-                                engine uses for it when publishing.
+                                What this project is called and the identifier
+                                Avyo uses when publishing.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -177,7 +177,7 @@ export function ProjectForm({
                         <CardHeader>
                             <CardTitle>Publishing</CardTitle>
                             <CardDescription>
-                                The clock the daily pipelines run on, and the
+                                The schedule for automated work and the
                                 languages this project publishes in.
                             </CardDescription>
                         </CardHeader>
@@ -223,7 +223,7 @@ export function ProjectForm({
                                 </Select>
                                 <p className="text-xs text-muted-foreground">
                                     Paused projects keep their data but are
-                                    skipped by scheduled pipelines.
+                                    skipped by scheduled work.
                                 </p>
                                 <InputError message={errors.status} />
                             </div>
@@ -260,12 +260,11 @@ export function ProjectForm({
                                     }
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    Comma separated. Each locale is a content
-                                    unit of its own, not a translation of
-                                    another — and each is measured separately in
-                                    prompt analysis, so a language you sell in
-                                    but do not list here reads as no visibility
-                                    rather than as unmeasured.
+                                    Comma separated. Avyo creates and measures
+                                    each language separately in AI visibility,
+                                    rather than treating it as a translation.
+                                    Add every language you serve so an omitted
+                                    one does not look like zero visibility.
                                 </p>
                                 <InputError message={errors['locales.0']} />
                             </div>
@@ -308,9 +307,9 @@ export function ProjectForm({
                         <CardHeader>
                             <CardTitle>Research</CardTitle>
                             <CardDescription>
-                                What the engine looks for, and how much of it to
-                                write. When a project comes back with nothing,
-                                this is almost always why.
+                                What Avyo researches and how much content it
+                                plans. Check these settings when a project comes
+                                back with too few ideas.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-4">

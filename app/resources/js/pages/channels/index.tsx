@@ -100,7 +100,7 @@ export default function ChannelsIndex({ channels, types }: Props) {
                     eyebrow="Distribution"
                     context={`${channels.length} ${channels.length === 1 ? 'channel' : 'channels'}`}
                     title="Channels"
-                    description="Where this project publishes, how each destination is secured, and whether it has answered a signed test."
+                    description="Where this project publishes and whether each destination is configured and verified."
                     actions={
                         isOwner ? (
                             <Button
@@ -117,7 +117,7 @@ export default function ChannelsIndex({ channels, types }: Props) {
                 {channels.length > 0 && <ChannelSummary channels={channels} />}
 
                 {channels.length === 0 ? (
-                    <EmptyChannels />
+                    <EmptyChannels isOwner={isOwner} />
                 ) : (
                     <>
                         <div className="flex flex-col gap-3 sm:hidden">
@@ -651,7 +651,7 @@ function ConnectDialog({
  * Says why the list is empty and what fills it, rather than offering an "Add
  * channel" button that would write a configuration nothing can yet deliver to.
  */
-function EmptyChannels() {
+function EmptyChannels({ isOwner }: { isOwner: boolean }) {
     return (
         <Card className={`${workspacePanelClass} py-12`}>
             <CardHeader className="items-center text-center">
@@ -661,10 +661,9 @@ function EmptyChannels() {
                 />
                 <CardTitle>No channels yet</CardTitle>
                 <CardDescription>
-                    A channel is a place this project publishes to — a webhook
-                    receiver, a blog, a social account. The connection wizard
-                    comes with the operator dashboard; until then channels are
-                    created by seeders and the console.
+                    {isOwner
+                        ? 'Connect a channel to publish to a website, webhook, or social account.'
+                        : 'Ask a project owner to connect a website, webhook, or social account.'}
                 </CardDescription>
             </CardHeader>
         </Card>
