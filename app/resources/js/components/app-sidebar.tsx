@@ -146,7 +146,7 @@ export function AppSidebar() {
                     which, and the answer was not discoverable from the label.
                 */}
                 <SidebarGroup className="px-3 py-2">
-                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
                         Social
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
@@ -179,7 +179,7 @@ export function AppSidebar() {
                 </SidebarGroup>
 
                 <SidebarGroup className="px-3 py-2">
-                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
                         Articles
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
@@ -223,7 +223,7 @@ export function AppSidebar() {
                 </SidebarGroup>
 
                 <SidebarGroup className="px-3 py-2">
-                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
                         Review
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
@@ -252,7 +252,7 @@ export function AppSidebar() {
                 </SidebarGroup>
 
                 <SidebarGroup className="px-3 py-2">
-                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/45 uppercase">
+                    <SidebarGroupLabel className="text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
                         Project
                     </SidebarGroupLabel>
                     <SidebarGroupContent>

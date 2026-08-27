@@ -162,7 +162,13 @@ export default function SocialPost({ post, editing }: Props) {
 
     return (
         <>
-            <Head title={`${post.title} — ${post.channel_label}`} />
+            <Head
+                title={
+                    post.idea
+                        ? `${post.idea.title} — ${post.channel_label}`
+                        : post.title
+                }
+            />
 
             <WorkspacePage
                 className={
@@ -211,9 +217,12 @@ export default function SocialPost({ post, editing }: Props) {
                         going to be a usable place to think in.
                     */
                     <div className="mx-auto grid w-full max-w-[78rem] min-w-0 gap-6 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_23rem]">
-                        <main className="order-1 min-w-0 xl:min-h-0">
+                        <section
+                            aria-label="Edit conversation"
+                            className="order-1 min-w-0 xl:min-h-0"
+                        >
                             <EditChat post={post} />
-                        </main>
+                        </section>
                         <aside className="order-2 grid min-w-0 content-start gap-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
                             <Artifact post={post} chosen={chosen} />
                             <Objections post={post} />
@@ -222,9 +231,9 @@ export default function SocialPost({ post, editing }: Props) {
                     </div>
                 ) : (
                     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-                        <main className="min-w-0">
+                        <section aria-label="Post preview" className="min-w-0">
                             <Preview post={post} chosen={chosen} />
-                        </main>
+                        </section>
 
                         <aside className="grid min-w-0 content-start gap-4">
                             <Objections post={post} />
@@ -435,6 +444,7 @@ function Panels({ post }: { post: Post }) {
                         <button
                             type="button"
                             onClick={() => setLooking(frame)}
+                            aria-label={`View slide: ${frame.alt}`}
                             className="block w-full overflow-hidden rounded-xl focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
                         >
                             <img

@@ -429,11 +429,11 @@ function VisibilityHero({
                     </div>
 
                     <div>
-                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/40 uppercase">
+                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/55 uppercase">
                             Visibility by language
                         </p>
                         {byLocale.length === 0 ? (
-                            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-5 text-sm text-white/45">
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-5 text-sm text-white/60">
                                 No prompt results yet. Language performance will
                                 appear here after the first sweep.
                             </div>
@@ -482,7 +482,7 @@ function VisibilityHero({
                             </div>
                         )}
                         {unmeasuredLocales.length > 0 && (
-                            <p className="mt-4 text-xs leading-relaxed text-white/40">
+                            <p className="mt-4 text-xs leading-relaxed text-white/55">
                                 {unmeasuredLocales
                                     .map((row) => row.locale)
                                     .join(', ')}{' '}
@@ -508,7 +508,7 @@ function VisibilityHero({
                     />
                 </dl>
                 {summary.declined > 0 && (
-                    <p className="mt-4 text-xs text-white/40">
+                    <p className="mt-4 text-xs text-white/55">
                         {summary.declined} declined{' '}
                         {summary.declined === 1 ? 'answer was' : 'answers were'}{' '}
                         excluded from the score.
@@ -528,7 +528,7 @@ function HeroMetric({
 }) {
     return (
         <div className="sm:px-5 sm:first:pl-0 sm:last:pr-0">
-            <dt className="text-[11px] tracking-wide text-white/40 uppercase">
+            <dt className="text-[11px] tracking-wide text-white/55 uppercase">
                 {label}
             </dt>
             <dd className="mt-1.5 text-xl font-semibold tabular-nums">

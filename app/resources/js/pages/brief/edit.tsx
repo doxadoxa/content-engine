@@ -1147,7 +1147,7 @@ function AccentField({
                 disabled={disabled || none}
                 className="h-9 w-full rounded-md border bg-background px-1 disabled:opacity-45"
             />
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex min-h-8 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                 <input
                     type="checkbox"
                     checked={none}
@@ -1155,7 +1155,7 @@ function AccentField({
                         onChange(event.target.checked ? '' : remembered)
                     }
                     disabled={disabled}
-                    className="size-3.5"
+                    className="size-4"
                 />
                 Same as the text colour
             </label>

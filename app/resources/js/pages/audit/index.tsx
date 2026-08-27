@@ -428,7 +428,7 @@ function AuditHero({
                     </div>
 
                     <div>
-                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/40 uppercase">
+                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/55 uppercase">
                             What makes it up
                         </p>
                         <div className="space-y-4">
@@ -468,7 +468,7 @@ function AuditHero({
                             ))}
                         </div>
                         {groups.some((group) => group.score === null) && (
-                            <p className="mt-4 text-xs leading-relaxed text-white/40">
+                            <p className="mt-4 text-xs leading-relaxed text-white/55">
                                 An unmeasured section is left out of the
                                 headline rather than counted as zero.
                             </p>
@@ -587,7 +587,7 @@ function HeroMetric({
 }) {
     return (
         <div className="sm:px-5 sm:first:pl-0 sm:last:pr-0">
-            <dt className="text-[11px] tracking-wide text-white/40 uppercase">
+            <dt className="text-[11px] tracking-wide text-white/55 uppercase">
                 {label}
             </dt>
             <dd className="mt-1.5 text-xl font-semibold tabular-nums">

@@ -71,7 +71,7 @@ export function Chips({
                             <button
                                 type="button"
                                 aria-label={`Remove ${value}`}
-                                className="rounded-sm opacity-60 hover:opacity-100"
+                                className="inline-flex size-6 items-center justify-center rounded-full opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                                 onClick={() =>
                                     onChange(values.filter((v) => v !== value))
                                 }
