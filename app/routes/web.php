@@ -17,6 +17,7 @@ use App\Http\Controllers\FeedbackController;
 use App\Http\Controllers\GoogleConnectionController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\InteractionController;
+use App\Http\Controllers\LegalController;
 use App\Http\Controllers\MeteringController;
 use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\ProjectController;
@@ -34,6 +35,19 @@ use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 Route::get('/', fn () => Inertia::render('marketing'))->name('home');
+
+/*
+ * The three public documents (see `LegalController`). Outside the auth group
+ * deliberately: a privacy policy you can only read once you have an account is
+ * not one, and the cookie banner links here before anybody has signed in.
+ *
+ * `/cookies` rather than `/cookie-policy` because the banner, the footer and
+ * the policy itself all name it, and the shortest honest path is the one people
+ * can retype.
+ */
+Route::get('terms', [LegalController::class, 'terms'])->name('legal.terms');
+Route::get('privacy', [LegalController::class, 'privacy'])->name('legal.privacy');
+Route::get('cookies', [LegalController::class, 'cookies'])->name('legal.cookies');
 
 /*
  * Whether this deployment has a social presence at all (config/social.php).
