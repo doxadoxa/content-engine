@@ -19,6 +19,7 @@ import {
 import {
     WorkspaceHeader,
     WorkspacePage,
+    workspaceHeroClass,
     workspacePanelClass,
 } from '@/components/workspace-page';
 import { index } from '@/routes/visibility';
@@ -361,7 +362,7 @@ function VisibilityHero({
 
     return (
         <section
-            className="relative isolate min-h-[30rem] overflow-hidden rounded-[1.75rem] border border-[#f3ecdd]/10 bg-[#17352f] text-[#f3ecdd] shadow-[0_24px_80px_rgba(16,36,31,0.24)]"
+            className={`${workspaceHeroClass} min-h-[30rem]`}
             aria-labelledby="visibility-overview"
         >
             <div

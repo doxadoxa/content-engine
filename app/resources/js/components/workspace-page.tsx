@@ -92,3 +92,7 @@ export function WorkspaceHeader({
 /** Dashboard-aligned surface for substantial page sections. */
 export const workspacePanelClass =
     'rounded-[1.5rem] border border-border/90 bg-card/90 shadow-[0_1px_2px_rgba(23,53,47,0.03),0_18px_48px_rgba(23,53,47,0.06)] backdrop-blur-sm';
+
+/** Brand surface shared by the workspace's high-level score summaries. */
+export const workspaceHeroClass =
+    'relative isolate overflow-hidden rounded-[1.75rem] border border-[#f3ecdd]/10 bg-[#17352f] text-[#f3ecdd] shadow-[0_24px_80px_rgba(16,36,31,0.24)]';
