@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Billing\Entitlements;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use App\Support\Tenancy\ProjectScope;
@@ -28,10 +29,22 @@ final class EnsureCurrentProject
     public function __construct(
         private readonly ProjectManager $projects,
         private readonly CurrentProject $current,
+        private readonly Entitlements $entitlements,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
+        // Whatever the last request decided is not this request's answer.
+        //
+        // {@see Entitlements} memoises per project so that the several readers
+        // inside one request cannot disagree with each other, and that memo is
+        // scoped to a request by nothing but the container being rebuilt
+        // between them — which php-fpm does and a long-lived worker does not.
+        // The queued-job boundary is handled in AppServiceProvider; this is the
+        // http one, and it is the same rule: a memo belongs to the request that
+        // filled it.
+        $this->entitlements->forget();
+
         $user = $request->user();
 
         if ($user !== null) {
