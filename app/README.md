@@ -56,8 +56,12 @@ The important groups are:
 - `GOOGLE_*` for per-project Search Console and GA4 OAuth.
 - `ATLASCLOUD_API_KEY` for optional hero images.
 - `PULL_TOKEN_HASH_KEY` for stable HMAC lookup of pull-channel bearer tokens.
-- `HORIZON_ALLOWED_EMAILS` for trusted system administrators. Project
-  membership alone never grants Horizon access.
+- `HORIZON_ALLOWED_EMAILS` to name the first administrator on a fresh
+  deployment. After that, administration is `users.is_admin`; project
+  membership never grants it.
+- `STRIPE_*` and `BILLING_*` for checkout, the billing portal and the trial.
+  Entitlement works without them — see
+  [Billing and entitlement](#billing-and-entitlement).
 - `TRUSTED_PROXIES` and `OUTBOUND_*` for deployment and outbound-network
   policy. Production requires HTTPS outbound targets by default.
 
@@ -129,8 +133,95 @@ Membership roles are enforced server-side:
 - **Operators** can run the daily content workflow: inspect work, approve or
   reject publishable drafts, explicitly publish approved content, and replay
   deliveries. Owner-only controls are not rendered for them.
-- **System administrators** are a separate email allow-list used for Horizon;
-  this is not a project role.
+- **System administrators** are `users.is_admin`, which is not a project role
+  and is never derived from one. It opens `/admin` and Horizon. See
+  [Running the service](#running-the-service).
+
+## Billing and entitlement
+
+A subscription belongs to a **project**, because a project is the tenant: the
+scope every read is filtered by, the thing spend accrues against, and what a
+customer calls "my site". The Stripe customer is the *account*, so one saved
+card can hold several projects — Cashier names each subscription after the
+project's ULID.
+
+Plans live in [`config/billing.php`](config/billing.php), versioned the way
+model prices are: re-pricing publishes a new version and never edits a
+published one, so a project keeps what it was sold. The trial is a plan in that
+same list, for the same reason.
+
+There are **two layers of limit**, and they fail differently:
+
+- The **unit quota** — articles, social posts, audits, plans, assistant turns —
+  is what the customer agreed to, and it is what a refusal names. It is
+  consumed on *approval*, not on generation: the engine writes eight social
+  posts to keep one, and charging for the seven it discarded would make the
+  number on the screen meaningless.
+- The **cost ceiling** is a `cost_micros` fuse at roughly three times measured
+  cost of goods. It is invisible to the customer and exists for the retry storm
+  and the mispriced model, not for legitimate use. The seven discarded drafts
+  land here.
+
+A plan's article allowance also clamps `weekly_target`, the dial `engine:tick`
+already reads. Clamped on read and never written back, so a downgrade does not
+overwrite a setting somebody chose — and the engine paces itself rather than
+stopping dead on the 22nd.
+
+Where the gates are:
+
+- `engine:tick` filters on entitlement beside `status = active`. Everything
+  unattended flows from that one list.
+- `project.entitled:<metric>` sits beside the throttles on the routes a person
+  can press to spend money.
+- **Publishing is never gated on quota** and survives a failed payment to the
+  end of the dunning grace. Approved work was already paid for.
+- **Reading is never gated at all.** An expired project's articles, briefs,
+  metrics and audits stay reachable for ever; the project moves to
+  `ProjectStatus::Paused`, which already meant exactly this.
+
+```sh
+php artisan billing:assign <project> <plan> [--payer=email] [--resume]
+php artisan billing:sweep [--dry]      # ends trials and graces, rolls periods
+php artisan billing:reconcile [--dry]  # compares local entitlement to Stripe
+```
+
+`billing:reconcile` is not optional. Entitlement is read from a local
+projection of what Stripe told us, so a webhook lost to a deploy or a signature
+mismatch leaves a project silently entitled or silently stopped — and neither
+raises anything, because both look exactly like normal operation.
+
+Stripe sits behind `App\Billing\Contracts\BillingProvider`, held to the same
+two rules as the model and conversation gateways: it is the only door, and the
+suite binds a fake over it so no test reaches the network. Webhooks project
+straight from the payload into `project_subscriptions` and are idempotent by
+event id.
+
+Without Stripe keys nothing breaks — entitlement is decided from local rows and
+`billing:assign` works with no provider at all. What stops working is checkout,
+the billing portal and the reconciler.
+
+## Running the service
+
+`users.is_admin` is the permission for `/admin` and for Horizon. The
+`HORIZON_ALLOWED_EMAILS` allow-list is kept only to name the first
+administrator on a fresh deployment; it was never a permission model, since it
+cannot be revoked without a deploy and records nothing about who is on it.
+
+Five screens: an overview with **margin per project** — the figure no payment
+provider can compute, because it needs what a customer pays *and* what they
+cost — plus accounts, projects, subscriptions, and one project in detail with
+its plan, trial and pause controls. Every mutation writes an `admin_actions`
+row with before and after.
+
+Everything there reads across tenants, which is the one thing the rest of this
+application is built to prevent, so every query opts into `acrossProjects()` or
+names its project explicitly. `ProjectScope` failing closed is what makes that
+safe: a forgotten opt-in shows an empty table rather than another tenant's
+rows.
+
+Impersonation is deliberately absent. It is the one feature here that can act
+*as* a customer, and it should arrive with its own audit trail and its own
+argument.
 
 ## Publishing contracts
 
@@ -231,6 +322,7 @@ php artisan wayfinder:generate --with-form
 ## Repository map
 
 ```text
+app/Billing/                     plans, entitlement, and the one Stripe door
 app/Pipelines/Core/              durable pipeline orchestration
 app/Pipelines/Definitions/       pipeline graphs
 app/Audit/                       site audit checks, crawler, and scoring
@@ -238,6 +330,7 @@ app/Publishing/                  webhook/pull contracts and delivery
 app/Support/Http/                outbound network and URL safety
 app/Support/Tenancy/             current-project context and scope
 app/Http/Controllers/            operator and pull API endpoints
+app/Http/Controllers/Admin/      cross-tenant administration
 resources/js/pages/              Inertia screens
 resources/js/components/ui/      shared accessible UI primitives
 packages/engine-receiver/        Laravel receiver package

@@ -388,6 +388,49 @@ money attached.
 
 ---
 
+## What changed while building it
+
+The plan above survived contact largely intact. Six things did not, and each is
+worth recording because each was discovered rather than anticipated.
+
+**The trial moved into the versioned plan list.** It was written here as its
+own block of config, which made it the one entitlement a re-pricing could still
+change under somebody who was mid-trial — the exact thing versioning exists to
+prevent, and the hardest to notice, because a trial lasts three days.
+
+**Periods have to be rolled over by something.** A period is not only what the
+unit counters are keyed to; it is the window the cost ceiling sums spend
+across. Nothing advanced it, so a hand-assigned subscription would have
+exhausted its quotas once and never reset, and accumulated spend for ever
+against a fuse sized for a month. `billing:sweep` rolls them.
+
+**The grandfathering window is a month, not a year.** The first instinct —
+nothing renews these, so give them a long window — was wrong for the same
+reason: a year-long period accumulates a year of spend against a one-month
+fuse and trips it about ninety days in, which is the same outage the
+grandfathering exists to prevent, merely postponed and made harder to read.
+
+**Publishing had to honour an expired grace on the dates**, not on a column the
+sweep flips. Waiting for the sweep meant a stopped scheduler kept publishing
+for a customer whose dunning ended a week ago.
+
+**Status has to be set through the transitions, never as a column.** Stripe
+does not order its deliveries, so a subscription update carrying `past_due` can
+land before the invoice event that explains it — and a row that reaches that
+state without a grace deadline has nothing to expire.
+
+**Quota exhaustion needed a prop of its own.** Running out of articles is not a
+global refusal — the engine keeps cutting social posts — so it does not belong
+in `refusal`. Without a separate `exhausted` list, running out was invisible
+everywhere except a usage bar on a page nobody had a reason to open.
+
+Two things in the plan were dropped as written. The `weekly_target` clamp is
+applied by `Project::weeklyTarget()` rather than by the tick alone, because
+four things read that dial. And `projects.billing_user_id` became
+`project_subscriptions.billing_user_id`, since the payer belongs to the
+subscription rather than to the project — a project can outlive the account
+that paid for it.
+
 ## Success is measurable
 
 - No project outside its entitlement starts scheduled work — assert on
