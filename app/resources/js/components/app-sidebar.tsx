@@ -18,6 +18,7 @@ import { ProjectSwitcher } from '@/components/project-switcher';
 import {
     Sidebar,
     SidebarContent,
+    SidebarFooter,
     SidebarGroup,
     SidebarGroupContent,
     SidebarGroupLabel,
@@ -26,6 +27,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { openPreferences } from '@/lib/consent';
 import { dashboard } from '@/routes';
 import { index as approvalsIndex } from '@/routes/approvals';
 import { index as chatIndex } from '@/routes/assistant';
@@ -38,6 +40,7 @@ import { index as deliveriesIndex } from '@/routes/deliveries';
 import { index as engageIndex } from '@/routes/engage';
 import { index as feedbackIndex } from '@/routes/feedback';
 import { index as homeIndex } from '@/routes/home';
+import { cookies, privacy, terms } from '@/routes/legal';
 import {
     create as socialCreate,
     index as socialIndex,
@@ -264,6 +267,35 @@ export function AppSidebar() {
                     </SidebarGroupContent>
                 </SidebarGroup>
             </SidebarContent>
+
+            {/*
+                The public documents, reachable from inside the product.
+                Without this they exist only for people who have not signed in
+                yet — an operator wanting to check what we do with their
+                customers' data would have to log out to read it, and the right
+                to withdraw cookie consent would be exercisable on the landing
+                page but not on any screen they actually use.
+            */}
+            <SidebarFooter>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 pb-1 text-[11px] text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
+                    <Link href={privacy.url()} className="hover:underline">
+                        Privacy
+                    </Link>
+                    <Link href={terms.url()} className="hover:underline">
+                        Terms
+                    </Link>
+                    <Link href={cookies.url()} className="hover:underline">
+                        Cookies
+                    </Link>
+                    <button
+                        type="button"
+                        onClick={openPreferences}
+                        className="hover:underline"
+                    >
+                        Cookie settings
+                    </button>
+                </div>
+            </SidebarFooter>
         </Sidebar>
     );
 }

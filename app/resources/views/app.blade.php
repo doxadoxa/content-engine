@@ -4,6 +4,13 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#151419">
+
+        {{-- The version of the cookie inventory this page was rendered with.
+             resources/js/lib/consent.ts compares a stored answer against it and
+             treats a mismatch as no answer, so bumping legal.consent_version
+             re-asks everybody rather than carrying old consent forward onto a
+             list they never saw. --}}
+        <meta name="consent-version" content="{{ config('legal.consent_version') }}">
         <meta name="description" content="Avyo turns brand strategy into search content, social posts, and measurable organic growth.">
         <meta property="og:site_name" content="Avyo">
         <meta property="og:type" content="website">
@@ -68,7 +75,7 @@
     </head>
     <body @class([
         'font-sans antialiased',
-        'product-shell' => $page['component'] !== 'marketing',
+        'product-shell' => $page['component'] !== 'marketing' && ! str_starts_with($page['component'], 'legal/'),
     ])>
         <x-inertia::app />
     </body>

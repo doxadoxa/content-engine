@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
+import { openPreferences } from '@/lib/consent';
 import { login } from '@/routes';
 
 type Feature = {
@@ -1147,10 +1148,32 @@ export default function Marketing() {
                         <Link href={login()} className="hover:text-[#17352f]">
                             Log in
                         </Link>
+                        <Link href="/terms" className="hover:text-[#17352f]">
+                            Terms
+                        </Link>
+                        <Link href="/privacy" className="hover:text-[#17352f]">
+                            Privacy
+                        </Link>
+                        <Link href="/cookies" className="hover:text-[#17352f]">
+                            Cookies
+                        </Link>
+                        {/* Withdrawing consent has to be as easy as giving it,
+                            which in practice means reachable from the page
+                            everybody lands on. */}
+                        <button
+                            type="button"
+                            onClick={openPreferences}
+                            className="underline underline-offset-2 hover:text-[#17352f]"
+                        >
+                            Cookie settings
+                        </button>
                     </div>
                 </div>
                 <div className="mx-auto mt-8 flex max-w-7xl flex-col gap-2 border-t border-[#e5e1dc] pt-5 text-[10px] text-[#918b84] sm:flex-row sm:items-center sm:justify-between">
-                    <span>© {new Date().getFullYear()} Avyo</span>
+                    <span>
+                        © {new Date().getFullYear()} Avyo · Courtly Ltd,
+                        registered in England and Wales, company number 17009343
+                    </span>
                     <span>Strategy in. Momentum out.</span>
                 </div>
             </footer>

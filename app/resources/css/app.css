@@ -16,6 +16,15 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The consent banner is the one component that renders on both sides of this
+   application: the marketing and legal pages, which are painted light by their
+   own literals and stay light whatever the operating system prefers, and the
+   product shell, which follows the theme. `dark:` cannot tell them apart —
+   the class it keys off lives on <html>, so a landing page in a dark-mode
+   browser would get a dark banner sitting on a cream page. This variant asks
+   the narrower question: dark theme *and* inside the shell that opted into it. */
+@custom-variant shell-dark (&:is(.dark .product-shell *));
+
 @theme inline {
     --font-sans:
         'Instrument Sans', ui-sans-serif, system-ui, sans-serif,
