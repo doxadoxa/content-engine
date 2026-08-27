@@ -64,10 +64,17 @@ class AdminProjectController extends Controller
             ->get()
             ->keyBy('project_id');
 
+        // Batched for the same reason the overview batches it: one page of
+        // twenty-five would otherwise be fifty extra round trips.
+        /** @var list<string> $ids */
+        $ids = $projects->pluck('id')->values()->all();
+
+        $spends = ProjectSpend::totals($ids, $since);
+
         return Inertia::render('admin/projects', [
             'q' => $search,
             'currency' => (string) config('billing.currency', 'eur'),
-            'projects' => $projects->through(function (Project $project) use ($subscriptions, $since): array {
+            'projects' => $projects->through(function (Project $project) use ($subscriptions, $spends): array {
                 $subscription = $subscriptions->get($project->getKey());
 
                 return [
@@ -80,7 +87,7 @@ class AdminProjectController extends Controller
                     'billing_status' => $subscription?->status->value,
                     'trial_ends_at' => $subscription?->trial_ends_at?->toIso8601String(),
                     'price_cents' => $subscription?->plan()->priceCents ?? 0,
-                    'cost_micros' => ProjectSpend::total($project, $since),
+                    'cost_micros' => $spends[$project->getKey()] ?? 0,
                 ];
             }),
         ]);

@@ -40,7 +40,15 @@ class AdminOverviewController extends Controller
         $revenueCents = $paying->sum(fn (ProjectSubscription $s): int => $s->plan()->priceCents);
 
         // Spend across every tenant, which is the one reading in this
-        // application that legitimately spans them.
+        // application that legitimately spans them — and in two queries rather
+        // than two per project, because this screen reads all of them and a
+        // loop of `ProjectSpend::total()` is fine at three tenants and a page
+        // load at three hundred.
+        /** @var list<string> $ids */
+        $ids = $subscriptions->pluck('project_id')->values()->all();
+
+        $spends = ProjectSpend::totals($ids, $since);
+
         $costMicros = 0;
         $margins = [];
 
@@ -51,7 +59,9 @@ class AdminOverviewController extends Controller
                 continue;
             }
 
-            $spend = ProjectSpend::total($project, $since);
+            // Absent means nothing spent: a project with no rows and a project
+            // that cost nothing are the same thing to every reader here.
+            $spend = $spends[$project->getKey()] ?? 0;
             $costMicros += $spend;
 
             $priceCents = $subscription->status === BillingStatus::Active && $subscription->plan !== 'trial'

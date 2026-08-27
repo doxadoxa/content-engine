@@ -16,6 +16,7 @@ use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
@@ -126,6 +127,30 @@ final class AdminPanelTest extends TestCase
                 ->where('cost_micros', 3_000_000)
                 ->where('margins.0.name', 'Cleaning Point')
             );
+    }
+
+    #[Test]
+    public function the_overview_reads_spend_for_every_tenant_in_a_bounded_number_of_queries(): void
+    {
+        foreach (Project::factory()->count(5)->create() as $other) {
+            $run = PipelineRun::factory()->for($other)->create();
+            PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => 1_000]);
+        }
+
+        // Two queries for spend however many tenants there are, rather than
+        // two per tenant: fine at three projects and a page load at three
+        // hundred.
+        DB::enableQueryLog();
+
+        $this->actingAs($this->admin)->get('/admin')->assertOk();
+
+        $spendQueries = collect(DB::getQueryLog())
+            ->filter(fn (array $entry): bool => str_contains((string) $entry['query'], 'sum(cost_micros)'))
+            ->count();
+
+        DB::disableQueryLog();
+
+        $this->assertSame(2, $spendQueries);
     }
 
     #[Test]

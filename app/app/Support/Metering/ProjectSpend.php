@@ -10,6 +10,7 @@ use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Support\Tenancy\ProjectScope;
 use DateTimeInterface;
+use Illuminate\Support\Facades\DB;
 
 /**
  * What a project has cost us, all of it, in one number.
@@ -89,6 +90,49 @@ final readonly class ProjectSpend
      * disagree with the metering screen, which reads steps. So this reads
      * steps, which are written as each one settles.
      */
+    /**
+     * The same figure for many projects at once.
+     *
+     * Two grouped queries rather than two per project. The administrative
+     * overview reads every tenant on one screen, and `for()` in a loop is 2N
+     * round trips — fine at three projects and a page-load at three hundred.
+     *
+     * Projects that spent nothing are absent from the result rather than zero,
+     * which is what `?? 0` at the call site is for: a project with no rows and
+     * a project that cost nothing are the same thing to every reader here.
+     *
+     * @param  list<string>  $projectIds
+     * @return array<string, int>
+     */
+    public static function totals(array $projectIds, DateTimeInterface $since): array
+    {
+        if ($projectIds === []) {
+            return [];
+        }
+
+        $totals = [];
+
+        $steps = PipelineStep::acrossProjects()
+            ->whereIn('project_id', $projectIds)
+            ->where('created_at', '>=', $since)
+            ->groupBy('project_id')
+            ->pluck(DB::raw('sum(cost_micros) as spent'), 'project_id');
+
+        $turns = AssistantMessage::acrossProjects()
+            ->whereIn('project_id', $projectIds)
+            ->where('created_at', '>=', $since)
+            ->groupBy('project_id')
+            ->pluck(DB::raw('sum(cost_micros) as spent'), 'project_id');
+
+        foreach ([$steps, $turns] as $side) {
+            foreach ($side as $projectId => $spent) {
+                $totals[(string) $projectId] = ($totals[(string) $projectId] ?? 0) + (int) $spent;
+            }
+        }
+
+        return $totals;
+    }
+
     private static function pipelines(Project $project, DateTimeInterface $since, ?DateTimeInterface $until): int
     {
         return (int) PipelineStep::acrossProjects()
