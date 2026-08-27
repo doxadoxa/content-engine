@@ -3,6 +3,8 @@ export type User = {
     name: string;
     email: string;
     email_verified_at: string | null;
+    /** Runs the service rather than a project. See routes/admin.php. */
+    is_admin?: boolean;
     created_at: string;
     updated_at: string;
     [key: string]: unknown;

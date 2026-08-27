@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Billing\Plan;
+use App\Billing\PlanCatalog;
 use App\Http\Controllers\Api\PullContentController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\ArticleController;
@@ -36,7 +38,32 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
-Route::get('/', fn () => Inertia::render('marketing'))->name('home');
+/*
+ * The landing page, and the prices on it.
+ *
+ * Read from `config/billing.php` rather than written into the page, because
+ * there is one price list and a second copy of it in a marketing component is
+ * a second copy to forget. Only the self-serve plans: Enterprise is a
+ * conversation, and a "Choose" button under it would promise a checkout that
+ * does not exist.
+ */
+Route::get('/', fn (PlanCatalog $plans) => Inertia::render('marketing', [
+    'pricing' => [
+        'currency' => (string) config('billing.currency', 'eur'),
+        'trial_days' => $plans->trialDays(),
+        'plans' => array_map(static fn (Plan $plan): array => [
+            'key' => $plan->key,
+            'name' => $plan->name,
+            'price_cents' => $plan->priceCents,
+            'limits' => [
+                'articles' => $plan->limit('articles'),
+                'social_posts' => $plan->limit('social_posts'),
+                'locales' => $plan->limit('locales'),
+                'seats' => $plan->limit('seats'),
+            ],
+        ], $plans->selfServe()),
+    ],
+]))->name('home');
 
 /*
  * The three public documents (see `LegalController`). Outside the auth group
@@ -384,3 +411,4 @@ if ($social) {
 }
 
 require __DIR__.'/settings.php';
+require __DIR__.'/admin.php';
