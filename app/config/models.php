@@ -76,6 +76,20 @@ return [
             'model' => env('MODEL_OUTLINE', 'gpt-5'),
         ],
         // Cheap and short: classification, extraction, tidying.
+        /*
+         * The conversation (`App\Ai\Assistant`).
+         *
+         * Its own role for two reasons: it goes through the Responses endpoint,
+         * which is the only one a reasoning model will use tools on, and it is
+         * the one model call in the product a person is sitting and waiting for
+         * — so it is worth being able to move it to a faster model without
+         * touching what writes the articles.
+         */
+        'assistant' => [
+            'provider' => env('MODEL_ASSISTANT_PROVIDER', 'openai_responses'),
+            'model' => env('MODEL_ASSISTANT', 'gpt-5'),
+        ],
+
         'utility' => [
             'provider' => env('MODEL_UTILITY_PROVIDER', 'openai'),
             'model' => env('MODEL_UTILITY', 'gpt-5-mini'),

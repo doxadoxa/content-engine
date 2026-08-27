@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
-use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\HomeController;
 
 /**
  * The one thing a month of social is trying to move.
@@ -18,9 +18,9 @@ use App\Http\Controllers\DashboardController;
  * Each case declares the measurement it needs. That declaration is the whole
  * reason this is an enum rather than three strings: a KPI the engine cannot
  * source is a number that renders as a confident zero, and a confident zero is
- * worse than an empty state — the same argument
- * {@see DashboardController::stats()} makes about cards
- * that read "—" forever.
+ * worse than an empty state — the same argument {@see HomeController} makes
+ * when it keeps its figure strip to three: a card that reads "—" forever
+ * teaches an operator to stop reading the row it is in.
  */
 enum SocialKpi: string
 {

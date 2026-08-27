@@ -98,7 +98,10 @@ final class FeaturePresenceTest extends TestCase
 
     /** Every path the feature owns, as a path rather than as a route name. */
     private const SOCIAL_PATHS = [
-        ['GET', '/today'],
+        // `/today` was here until the three landing screens became one. The two
+        // parts of it that existed nowhere else — the refusal ledger and the §6
+        // trend — moved onto Home, which is not a social route: it renders with
+        // the presence off, so it cannot be asserted to disappear with it.
         ['GET', '/engage'],
         ['GET', '/api/threads/webhook'],
         ['POST', '/api/threads/webhook'],
@@ -188,7 +191,7 @@ final class FeaturePresenceTest extends TestCase
                 ->getStatusCode(),
         );
 
-        foreach (['today.index', 'engage.index', 'threads.connect', 'threads.disconnect',
+        foreach (['engage.index', 'threads.connect', 'threads.disconnect',
             'threads.callback', 'threads.webhook.verify', 'threads.webhook.receive'] as $name) {
             $this->assertFalse(Route::has($name), "The route {$name} still exists.");
         }
@@ -335,7 +338,7 @@ final class FeaturePresenceTest extends TestCase
         // The sidebar is rendered on every page from a shared prop, so this is
         // the whole of the Today and Conversations entries being gone.
         $this->actingAs($this->operator)
-            ->get('/dashboard')
+            ->get('/home')
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page->where('social.enabled', false));
 
@@ -388,7 +391,7 @@ final class FeaturePresenceTest extends TestCase
         $this->assertTrue(app(ChannelPublisherRegistry::class)->publishes(ChannelType::Threads));
 
         $this->actingAs($this->operator)
-            ->get('/dashboard')
+            ->get('/home')
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page->where('social.enabled', true));
     }

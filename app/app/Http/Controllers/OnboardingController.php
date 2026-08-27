@@ -183,7 +183,7 @@ class OnboardingController extends Controller
         $this->projects->switchTo($user, $project);
 
         if ($started === false) {
-            return to_route('dashboard');
+            return to_route('home.index');
         }
 
         Inertia::flash('toast', [
@@ -191,7 +191,7 @@ class OnboardingController extends Controller
             'message' => "{$project->name} is set up. Research and the first social content proposal have started.",
         ]);
 
-        return to_route('dashboard');
+        return to_route('home.index');
     }
 
     /**

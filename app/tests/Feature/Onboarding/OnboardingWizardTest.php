@@ -336,7 +336,7 @@ final class OnboardingWizardTest extends TestCase
 
         $this->actingAs($operator)
             ->post("/onboarding/{$id}/launch")
-            ->assertRedirect('/dashboard');
+            ->assertRedirect('/home');
 
         $project->refresh();
 
@@ -434,10 +434,10 @@ final class OnboardingWizardTest extends TestCase
         $operator->projects()->attach($project, ['role' => 'owner']);
 
         $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch")
-            ->assertRedirect('/dashboard');
+            ->assertRedirect('/home');
 
         $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch")
-            ->assertRedirect('/dashboard');
+            ->assertRedirect('/home');
 
         $this->assertSame(
             1,
@@ -633,7 +633,7 @@ final class OnboardingWizardTest extends TestCase
         // with no brief, no plan and nothing running — and put it in the
         // switcher looking exactly like a real one.
         $this->actingAs($operator)
-            ->get('/dashboard')
+            ->get('/home')
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->where('project', null)

@@ -33,7 +33,7 @@ final class SharedPropsTest extends TestCase
         $operator->projects()->attach(Project::factory()->count($projects)->create());
 
         DB::enableQueryLog();
-        $this->actingAs($operator)->get('/dashboard')->assertOk();
+        $this->actingAs($operator)->get('/home')->assertOk();
         $queries = DB::getQueryLog();
         DB::disableQueryLog();
 
@@ -53,7 +53,7 @@ final class SharedPropsTest extends TestCase
         $operator->projects()->attach($project, ['role' => 'owner']);
 
         $this->actingAs($operator)
-            ->get('/dashboard')
+            ->get('/home')
             ->assertInertia(fn (AssertableInertia $page) => $page
                 ->where('auth.project.role', 'owner')
             );
@@ -71,11 +71,11 @@ final class SharedPropsTest extends TestCase
         $operator->projects()->attach([$alpha->getKey(), $beta->getKey()]);
 
         $this->actingAs($operator)
-            ->from('/dashboard')
+            ->from('/home')
             ->post("/projects/{$beta->getKey()}/switch");
 
         $this->actingAs($operator)
-            ->get('/dashboard')
+            ->get('/home')
             ->assertOk()
             ->assertSee('Now working in Beta', escape: false);
     }

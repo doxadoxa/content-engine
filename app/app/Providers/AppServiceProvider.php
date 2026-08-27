@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Ai\Contracts\ConversationGateway;
 use App\Ai\Contracts\EmbeddingGateway;
 use App\Ai\Contracts\ModelGateway;
+use App\Ai\FakeConversationGateway;
 use App\Ai\FakeEmbeddingGateway;
 use App\Ai\FakeModelGateway;
+use App\Ai\LaragentConversationGateway;
 use App\Ai\LaragentModelGateway;
 use App\Ai\OpenAiEmbeddingGateway;
 use App\Audit\PageSpeed\Contracts\PageSpeedGateway;
@@ -67,6 +70,14 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(ModelGateway::class, fn (): ModelGateway => $this->app->environment('testing')
             ? new FakeModelGateway
             : $this->app->make(LaragentModelGateway::class));
+
+        // The second door (§3.3): the same arrangement for the conversation,
+        // which needs a history and a tool set the one-shot door has no place
+        // to carry. Faked in testing for the same reason and by the same rule —
+        // no test reaches a provider, in any phase.
+        $this->app->singleton(ConversationGateway::class, fn (): ConversationGateway => $this->app->environment('testing')
+            ? new FakeConversationGateway
+            : $this->app->make(LaragentConversationGateway::class));
 
         // Same arrangement for embeddings (§8.4) and images (§8.3).
         $this->app->singleton(EmbeddingGateway::class, fn (): EmbeddingGateway => $this->app->environment('testing')

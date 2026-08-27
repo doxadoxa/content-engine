@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Social;
 
 use App\Enums\ContentItemState;
+use App\Integrations\Google\GooglePanel;
 use App\Models\BrandBrief;
 use App\Models\Channel;
 use App\Models\ContentGoal;
@@ -32,14 +33,32 @@ use Illuminate\Support\Carbon;
  * here needs anything. Setting a goal before connecting a channel is a perfectly
  * sensible order and the checklist does not pretend otherwise. The reward for
  * that honesty is that this deployment — no Meta app, `social.enabled` off — can
- * still complete four of five steps, where the reference's shape would show it
- * five padlocks and no way forward.
+ * still complete most of the list, where the reference's shape would show it a
+ * column of padlocks and no way forward.
  */
 final class ActivationChecklist
 {
     /**
+     * The four questions the steps answer, in the order they arise.
+     *
+     * Grouping is presentation, so it could have lived in the component — but
+     * the reason `goal`, `post` and `approve` belong together is that they are
+     * the one loop an operator repeats every month, and that is a fact about
+     * the product rather than about a card. A screen that grouped them by
+     * guessing from the key would guess wrong the first time a step was added.
+     */
+    public const string GROUP_BRAND = 'Teach it your brand';
+
+    public const string GROUP_MAKE = 'Make something';
+
+    public const string GROUP_SEND = 'Send it somewhere';
+
+    public const string GROUP_SEE = 'See what it did';
+
+    /**
      * @return list<array{
      *     key: string,
+     *     group: string,
      *     label: string,
      *     detail: string,
      *     done: bool,
@@ -68,29 +87,35 @@ final class ActivationChecklist
             ->whereNotNull('verified_at')
             ->exists();
 
+        // Both halves of it. One without the other leaves a real hole — search
+        // impressions with no sessions, or the reverse — so the step is not
+        // done until the engine can see the whole trip.
+        $google = app(GooglePanel::class)->connectionState($project);
+        $measured = $google['search_console'] && $google['analytics'];
+
         return [
             self::step(
-                'brief', 'Write the brand brief',
+                'brief', self::GROUP_BRAND, 'Write the brand brief',
                 'The voice every post is written from. Without it the engine guesses.',
                 done: $hasBrief, action: '/brief', actionLabel: 'Open the brief',
             ),
             self::step(
-                'analysis', 'Read the website',
+                'analysis', self::GROUP_BRAND, 'Read the website',
                 'Where the facts, the offer and the audience come from.',
                 done: $analysed, action: '/onboarding', actionLabel: 'Analyse the site',
             ),
             self::step(
-                'goal', 'Set this month’s goal',
+                'goal', self::GROUP_MAKE, 'Set this month’s goal',
                 'One KPI and a cadence, so the month has something to be measured against.',
                 done: $hasGoal, action: '/social', actionLabel: 'Set the goal',
             ),
             self::step(
-                'post', 'Create your first post',
+                'post', self::GROUP_MAKE, 'Create your first post',
                 'Pick an idea and write it — one idea at a time, not a whole month.',
                 done: $written > 0, action: '/social', actionLabel: 'Open the board',
             ),
             self::step(
-                'approve', 'Approve a post',
+                'approve', self::GROUP_MAKE, 'Approve a post',
                 'Nothing in this engine publishes without a person saying so.',
                 done: $approved,
                 // The only real lock on the list: there is nothing to approve
@@ -100,9 +125,21 @@ final class ActivationChecklist
                 action: '/approvals', actionLabel: 'Open the queue',
             ),
             self::step(
-                'channel', 'Connect somewhere to publish',
+                'channel', self::GROUP_SEND, 'Connect somewhere to publish',
                 'Approved posts wait here until a verified channel can take them.',
                 done: $connected, action: '/channels', actionLabel: 'Connect a channel',
+            ),
+            // Was a card of its own on the dashboard, which is a setup step
+            // wearing a panel — and when that screen was folded into Home the
+            // step would have had nowhere left to be announced. It is only
+            // reachable by an owner, so a member sees it as a fact about the
+            // project rather than as an instruction they can act on.
+            self::step(
+                'google', self::GROUP_SEE, 'Connect Search Console and Analytics',
+                'Until you do, the engine is writing without seeing what any of it did.',
+                done: $measured,
+                action: '/projects/'.$project->getKey().'/edit',
+                actionLabel: 'Connect Google',
             ),
         ];
     }
@@ -110,6 +147,7 @@ final class ActivationChecklist
     /**
      * @return array{
      *     key: string,
+     *     group: string,
      *     label: string,
      *     detail: string,
      *     done: bool,
@@ -121,6 +159,7 @@ final class ActivationChecklist
      */
     private static function step(
         string $key,
+        string $group,
         string $label,
         string $detail,
         bool $done,
@@ -131,6 +170,7 @@ final class ActivationChecklist
     ): array {
         return [
             'key' => $key,
+            'group' => $group,
             'label' => $label,
             'detail' => $detail,
             'done' => $done,

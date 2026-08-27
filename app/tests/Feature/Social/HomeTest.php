@@ -69,7 +69,10 @@ final class HomeTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
                 ->component('home/index')
-                ->has('checklist', 6)
+                // Seven since the dashboard's Google panel became a step:
+                // a setup task wearing a card had nowhere to go when that
+                // screen was folded into this one.
+                ->has('checklist', 7)
                 ->where('checklist.0.key', 'brief')
                 ->where('checklist.0.done', false)
                 ->where('checklist.0.locked', false)
@@ -205,6 +208,87 @@ final class HomeTest extends TestCase
     }
 
     #[Test]
+    public function an_idea_typed_without_a_title_is_named_from_its_point(): void
+    {
+        $this->fakeDrafting();
+
+        // What the composer on Home sends: one box, one kind, one date. A
+        // title is the first line of the thought somebody already had, not a
+        // second thought they have to be asked for.
+        $this->postJson('/studio/ideas', [
+            'thesis' => "A cleaner should never have to guess the standard.\nSo we wrote it down.",
+            'kind' => 'take',
+            'date' => '2026-08-20',
+        ])->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $idea = ContentIdea::query()->firstOrFail();
+
+            // The first line only — a thesis is allowed two, and a title that
+            // swallowed the second would read as a paragraph on every board
+            // row it appears in.
+            $this->assertSame(
+                'A cleaner should never have to guess the standard.',
+                $idea->title,
+            );
+            $this->assertNotSame('', $idea->idea_key);
+        });
+    }
+
+    #[Test]
+    public function a_derived_title_is_cut_at_a_word_and_not_at_a_letter(): void
+    {
+        $this->fakeDrafting();
+
+        // One line, one sentence, comfortably past the 80-character ceiling —
+        // so there is no sentence break to take and the length rule has to do
+        // the cutting on its own.
+        $this->postJson('/studio/ideas', [
+            'thesis' => 'Limescale needs contact time and there is no way at all to hurry the chemistry of it',
+            'kind' => 'take',
+            'date' => '2026-08-20',
+        ])->assertStatus(202);
+
+        $thesis = 'Limescale needs contact time and there is no way at all to hurry the chemistry of it';
+
+        app(CurrentProject::class)->run($this->project, function () use ($thesis): void {
+            $title = ContentIdea::query()->firstOrFail()->title;
+
+            $this->assertLessThanOrEqual(80, mb_strlen($title));
+            $this->assertTrue(str_starts_with($thesis, $title));
+            $this->assertSame($title, rtrim($title));
+
+            // The invariant, rather than a guess at where the cut lands: the
+            // character the title stops before is whitespace. A character-wise
+            // cut ended this one on "chemis", which reads as a broken product
+            // rather than as a summary of the post.
+            $this->assertSame(' ', mb_substr($thesis, mb_strlen($title), 1));
+        });
+    }
+
+    #[Test]
+    public function a_typed_idea_keeps_a_title_it_was_given(): void
+    {
+        $this->fakeDrafting();
+
+        $this->postJson('/studio/ideas', [
+            'title' => 'The standard, written down',
+            'thesis' => 'A cleaner should never have to guess it.',
+            'kind' => 'take',
+            'date' => '2026-08-20',
+        ])->assertStatus(202);
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            // The Studio still sends both, and deriving over a supplied title
+            // would quietly rename every idea it wrote.
+            $this->assertSame(
+                'The standard, written down',
+                ContentIdea::query()->firstOrFail()->title,
+            );
+        });
+    }
+
+    #[Test]
     public function a_typed_idea_is_refused_without_a_point_or_a_real_kind(): void
     {
         $this->postJson('/studio/ideas', [
@@ -248,11 +332,14 @@ final class HomeTest extends TestCase
         // Asserted on the JSON rather than through `assertInertia`: a partial
         // response carries only the props that were asked for, which is not the
         // whole page object that helper insists on.
-        $this->get('/home', $this->partial('waiting'))
+        $this->get('/home', $this->partial('needs'))
             ->assertOk()
-            ->assertJsonPath('props.waiting.social_draft_count', 2)
-            ->assertJsonCount(2, 'props.waiting.social_drafts')
-            ->assertJsonPath('props.waiting.failed_deliveries', 0);
+            ->assertJsonPath('props.needs.social_drafts', 2)
+            ->assertJsonPath('props.needs.dead_deliveries', 0)
+            // One count for the whole morning, across both halves. This band
+            // replaced three that each counted a different subset with a
+            // different query and none of which said which subset it meant.
+            ->assertJsonPath('props.needs.total', 2);
     }
 
     /**
