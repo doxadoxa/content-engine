@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Billing\TrialEligibility;
 use Database\Factories\UserFactory;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -15,7 +17,16 @@ use Laravel\Cashier\Billable;
 
 #[Fillable(['name', 'email', 'password'])]
 #[Hidden(['password', 'remember_token'])]
-class User extends Authenticatable
+/**
+ * `MustVerifyEmail`, because an unverified account is an open tab.
+ *
+ * The engine spends real money at a provider on every trial — measured, about
+ * $2.83 of model and image calls — so the address has to be proved before the
+ * wizard is allowed to start anything. It is the cheapest of the three checks
+ * in {@see TrialEligibility} and the one that makes the other
+ * two worth having.
+ */
+class User extends Authenticatable implements MustVerifyEmail
 {
     /**
      * The account is the Stripe customer; a *project* is the subscription.

@@ -94,17 +94,27 @@ Route::middleware(['auth'])->group(function () use ($social): void {
 
     // Creating a project is a wizard, not a form (§3.1): URL in, a reading of
     // the site, then the operator correcting it — and the engine starts itself.
-    Route::get('onboarding', [OnboardingController::class, 'show'])->name('onboarding.show');
-    // Throttled: each call makes an outbound fetch and a model call on nothing
-    // more than a string somebody typed, which is a bill and a request-forgery
-    // surface an unbounded loop would make worse.
-    Route::post('onboarding/analyse', [OnboardingController::class, 'analyse'])
-        ->middleware('throttle:20,1')
-        ->name('onboarding.analyse');
-    Route::post('onboarding/{project}/save', [OnboardingController::class, 'save'])
-        ->middleware('project.owner')->name('onboarding.save');
-    Route::post('onboarding/{project}/launch', [OnboardingController::class, 'launch'])
-        ->middleware('project.owner')->name('onboarding.launch');
+    //
+    // The whole wizard is behind `verified`, and that is the earliest honest
+    // place for it. Every step of it spends something — the first one fetches
+    // somebody's site and asks a model about it — and the last one starts a
+    // free trial that costs us real provider calls. Putting the check only on
+    // the final step would let somebody fill in six screens before being told
+    // to go and read their email; putting it on the whole application would
+    // lock a signed-in operator out of work they already paid for.
+    Route::middleware('verified')->group(function (): void {
+        Route::get('onboarding', [OnboardingController::class, 'show'])->name('onboarding.show');
+        // Throttled: each call makes an outbound fetch and a model call on
+        // nothing more than a string somebody typed, which is a bill and a
+        // request-forgery surface an unbounded loop would make worse.
+        Route::post('onboarding/analyse', [OnboardingController::class, 'analyse'])
+            ->middleware('throttle:20,1')
+            ->name('onboarding.analyse');
+        Route::post('onboarding/{project}/save', [OnboardingController::class, 'save'])
+            ->middleware('project.owner')->name('onboarding.save');
+        Route::post('onboarding/{project}/launch', [OnboardingController::class, 'launch'])
+            ->middleware('project.owner')->name('onboarding.launch');
+    });
 
     // What the project is on, and what else there is. Not behind
     // `project.owner`: an operator who has run out of articles should be able

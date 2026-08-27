@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Billing\Subscriptions;
+use App\Billing\TrialEligibility;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
@@ -47,6 +48,7 @@ class OnboardingController extends Controller
         private readonly CurrentProject $current,
         private readonly ChannelPublisherRegistry $publishers,
         private readonly Subscriptions $subscriptions,
+        private readonly TrialEligibility $trials,
     ) {}
 
     /** The wizard itself, resuming whatever draft the operator has open. */
@@ -142,6 +144,17 @@ class OnboardingController extends Controller
 
         /** @var User $user */
         $user = $request->user();
+
+        // Before anything is written, because everything below this line
+        // spends money: the brief is a model call, and `begin()` starts
+        // research. A refusal has to cost nothing.
+        $refusal = $this->trials->refusalFor($user, $project);
+
+        if ($refusal !== null) {
+            Inertia::flash('toast', ['type' => 'error', 'message' => $refusal]);
+
+            return back();
+        }
 
         // The row lock makes the status transition a single winner. Two final
         // clicks can arrive before either response returns; only the request

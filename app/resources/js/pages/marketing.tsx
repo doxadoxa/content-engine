@@ -19,7 +19,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
 import { openPreferences } from '@/lib/consent';
-import { login } from '@/routes';
+import { login, register } from '@/routes';
 
 type Feature = {
     title: string;
@@ -669,13 +669,13 @@ export default function Marketing() {
                         >
                             Log in
                         </Link>
-                        <a
-                            href="#product"
+                        <Link
+                            href={register()}
                             className="group inline-flex h-10 items-center gap-2 rounded-full bg-[#17352f] px-4 text-[12px] font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5 sm:px-5"
                         >
-                            See Avyo in action
+                            Start free
                             <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </a>
+                        </Link>
                     </div>
                 </div>
             </header>
@@ -711,18 +711,18 @@ export default function Marketing() {
                         </p>
 
                         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-                            <a
-                                href="#how-it-works"
+                            <Link
+                                href={register()}
                                 className="group inline-flex h-12 w-full items-center justify-center rounded-full bg-[#17352f] px-6 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(21,20,25,0.18)] transition-all hover:-translate-y-0.5 hover:shadow-[0_14px_30px_rgba(21,20,25,0.22)] sm:w-auto"
                             >
-                                <ArrowLink>Explore the workflow</ArrowLink>
-                            </a>
-                            <Link
-                                href={login()}
+                                <ArrowLink>Start free</ArrowLink>
+                            </Link>
+                            <a
+                                href="#how-it-works"
                                 className="inline-flex h-12 w-full items-center justify-center rounded-full border border-[#d0c4b1] bg-white px-6 text-sm font-semibold text-[#332f2b] transition-colors hover:bg-[#f1eeea] sm:w-auto"
                             >
-                                Open Avyo
-                            </Link>
+                                Explore the workflow
+                            </a>
                         </div>
 
                         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-[#6f6962]">
@@ -1106,10 +1106,10 @@ export default function Marketing() {
                             </p>
                             <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
                                 <Link
-                                    href={login()}
+                                    href={register()}
                                     className="group inline-flex h-12 items-center justify-center rounded-full bg-white px-6 text-sm font-semibold text-[#10241f] transition-transform hover:-translate-y-0.5"
                                 >
-                                    <ArrowLink>Open Avyo</ArrowLink>
+                                    <ArrowLink>Start free</ArrowLink>
                                 </Link>
                                 <a
                                     href="#top"
