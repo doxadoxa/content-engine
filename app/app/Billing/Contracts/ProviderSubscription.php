@@ -20,6 +20,15 @@ final readonly class ProviderSubscription
     public function __construct(
         public string $id,
         public BillingStatus $status,
+        /**
+         * Stripe's own word for it, unmapped.
+         *
+         * Kept beside the mapped one because `project_subscriptions.stripe_status`
+         * is documented as holding what the provider said, and writing our
+         * reduced vocabulary into it would destroy the only record of which of
+         * `incomplete`, `unpaid` and `past_due` we were actually told.
+         */
+        public string $rawStatus,
         public ?string $priceId,
         public ?Carbon $periodStart,
         public ?Carbon $periodEnd,

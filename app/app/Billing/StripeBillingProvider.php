@@ -96,6 +96,7 @@ class StripeBillingProvider implements BillingProvider
         return new ProviderSubscription(
             id: $subscription->id,
             status: self::statusFrom($subscription->status),
+            rawStatus: (string) $subscription->status,
             priceId: $subscription->items->data[0]->price->id ?? null,
             periodStart: self::at($subscription->items->data[0]->current_period_start ?? null),
             periodEnd: self::at($subscription->items->data[0]->current_period_end ?? null),

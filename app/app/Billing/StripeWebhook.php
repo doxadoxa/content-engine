@@ -47,55 +47,60 @@ class StripeWebhook
             return;
         }
 
-        // Claimed before anything is acted on, so a duplicate arriving while
-        // the first is still in flight loses on the primary key rather than
-        // racing it. One statement, not `exists` then `insert`: the window
-        // between those two is the bug.
-        //
-        // `insertOrIgnore` rather than insert-and-catch. Postgres aborts the
-        // whole transaction on a constraint violation, so catching the
-        // exception leaves every subsequent statement failing with "current
-        // transaction is aborted" — a duplicate webhook would take out whatever
-        // transaction happened to enclose it instead of being the no-op it is
-        // supposed to be.
-        $claimed = DB::table('stripe_events')->insertOrIgnore([
-            'id' => $id,
-            'type' => $type,
-            'created_at' => Carbon::now(),
-        ]);
-
-        if ($claimed === 0) {
-            Log::info('Stripe event already handled; ignored', ['event' => $id, 'type' => $type]);
-
-            return;
-        }
-
         /** @var array<string, mixed> $object */
         $object = is_array($payload['data']['object'] ?? null) ? $payload['data']['object'] : [];
 
-        // Resolved once, here, and never taken from the payload again. An id
-        // Stripe names that we do not have is an ordinary event — a test-mode
-        // object, another deployment's customer, a project deleted since — and
-        // stamping it on the row unresolved would fail the foreign key, throw a
-        // 500 back at Stripe, and buy an event that can never succeed a week of
-        // retries.
-        $project = str_starts_with($type, 'invoice.')
-            ? $this->projectFromInvoice($object)
-            : $this->project($object);
+        // The claim and the work are one transaction, and that is the whole of
+        // this method's shape.
+        //
+        // Claiming first is what makes a re-delivery a no-op — Stripe delivers
+        // at least once and says so. But claiming *outside* the work meant that
+        // anything thrown while handling — a deadlock, a dropped connection —
+        // left the claim committed and the work undone: Stripe's retry would
+        // arrive, find the id already recorded, log "already handled" and
+        // return. A paid subscription would never be projected, the project
+        // would sit on an expired trial, and nothing anywhere would say so.
+        //
+        // Inside a transaction the rollback takes the claim with it, so a retry
+        // is a fresh attempt. A concurrent duplicate still loses: it blocks on
+        // the primary key until this commits, then reads zero inserted rows.
+        DB::transaction(function () use ($id, $type, $object): void {
+            $claimed = DB::table('stripe_events')->insertOrIgnore([
+                'id' => $id,
+                'type' => $type,
+                'created_at' => Carbon::now(),
+            ]);
 
-        $outcome = match ($type) {
-            'customer.subscription.created',
-            'customer.subscription.updated' => $this->sync($object, $project),
-            'customer.subscription.deleted' => $this->ended($project),
-            'invoice.payment_failed' => $this->failed($project),
-            'invoice.payment_succeeded', 'invoice.paid' => $this->paid($project),
-            default => 'ignored',
-        };
+            if ($claimed === 0) {
+                Log::info('Stripe event already handled; ignored', ['event' => $id, 'type' => $type]);
 
-        StripeEvent::query()->whereKey($id)->update([
-            'outcome' => $outcome,
-            'project_id' => $project?->getKey(),
-        ]);
+                return;
+            }
+
+            // Resolved once, here, and never taken from the payload again. An
+            // id Stripe names that we do not have is an ordinary event — a
+            // test-mode object, another deployment's customer, a project
+            // deleted since — and stamping it on the row unresolved would fail
+            // the foreign key, throw a 500 back at Stripe, and buy an event
+            // that can never succeed a week of retries.
+            $project = str_starts_with($type, 'invoice.')
+                ? $this->projectFromInvoice($object)
+                : $this->project($object);
+
+            $outcome = match ($type) {
+                'customer.subscription.created',
+                'customer.subscription.updated' => $this->sync($object, $project),
+                'customer.subscription.deleted' => $this->ended($project),
+                'invoice.payment_failed' => $this->failed($project),
+                'invoice.payment_succeeded', 'invoice.paid' => $this->paid($project),
+                default => 'ignored',
+            };
+
+            StripeEvent::query()->whereKey($id)->update([
+                'outcome' => $outcome,
+                'project_id' => $project?->getKey(),
+            ]);
+        });
     }
 
     /**
@@ -105,6 +110,20 @@ class StripeWebhook
      * about status and dates; the *plan* comes from the metadata the checkout
      * was created with, because a price id is Stripe's name for a thing and
      * `config/billing.php` is ours.
+     *
+     * Three different things arrive down this one event type, and they must not
+     * be treated alike:
+     *
+     * - **A new subscription, or a change of plan.** A new arrangement, so
+     *   `assign()`: counters reset, and any bespoke limits belonging to the old
+     *   arrangement go with it.
+     * - **A renewal.** `renew()`, which moves the window and resets the
+     *   counters and touches nothing else. This used to call `assign()`, which
+     *   quietly cleared an Enterprise customer's overrides at their first
+     *   renewal and moved every paying customer onto the newest price list —
+     *   which is precisely what `plan_version` exists to prevent.
+     * - **Everything else** — a card swapped, a quantity changed, Stripe
+     *   touching metadata. Status and ids are updated; the period is not.
      *
      * @param  array<string, mixed>  $object
      */
@@ -128,27 +147,28 @@ class StripeWebhook
             return 'unknown_plan';
         }
 
-        $status = StripeBillingProvider::statusFrom((string) ($object['status'] ?? ''));
+        $rawStatus = (string) ($object['status'] ?? '');
+        $status = StripeBillingProvider::statusFrom($rawStatus);
         $existing = $this->existing($project);
 
-        // Only a *new* period resets the counters. A subscription updated for
-        // any other reason — a card swapped, a quantity changed, Stripe
-        // touching metadata — must not hand somebody a fresh month's quota
-        // partway through the one they are paying for.
-        $periodStart = $this->at($object, 'current_period_start');
-        $renewed = $periodStart !== null
-            && ($existing === null || $existing->period_started_at === null
-                || ! $existing->period_started_at->equalTo($periodStart));
+        // Falls back to now when Stripe sends no window we can read. A missing
+        // period used to mean a subscription with no local row was never
+        // created at all — the event was already claimed, so Stripe's week of
+        // retries went to a no-op and a completed checkout produced no
+        // entitlement whatsoever.
+        $periodStart = $this->at($object, 'current_period_start') ?? Carbon::now();
+        $periodEnd = $this->at($object, 'current_period_end') ?? $periodStart->copy()->addMonth();
 
-        if ($renewed) {
-            $this->subscriptions->assign(
-                $project,
-                $plan,
-                $this->payer($object, $project),
-                $periodStart,
-                $this->at($object, 'current_period_end'),
-            );
-        }
+        $outcome = match (true) {
+            $existing === null, $existing->plan !== $plan => $this->arrange(
+                $project, $plan, $object, $periodStart, $periodEnd, $existing === null,
+            ),
+            $existing->period_started_at === null,
+            ! $existing->period_started_at->equalTo($periodStart) => $this->rolled(
+                $project, $periodStart, $periodEnd,
+            ),
+            default => 'synced',
+        };
 
         $subscription = $this->existing($project);
 
@@ -157,16 +177,94 @@ class StripeWebhook
         }
 
         $subscription->fill([
-            'status' => $status,
-            'plan' => $plan,
             'stripe_id' => is_string($object['id'] ?? null) ? $object['id'] : null,
-            'stripe_status' => (string) ($object['status'] ?? ''),
+            // Stripe's own word, unmapped: the column records what we were
+            // told, and our reduced vocabulary would destroy the difference
+            // between `incomplete`, `unpaid` and `past_due`.
+            'stripe_status' => $rawStatus,
             'stripe_price' => $this->priceId($object),
             'trial_ends_at' => $this->at($object, 'trial_end'),
             'canceled_at' => $this->at($object, 'canceled_at'),
         ])->save();
 
-        return $renewed ? 'renewed' : 'synced';
+        // Status last, and through the transitions rather than as a column.
+        //
+        // Writing `past_due` straight into the row left `grace_ends_at` null,
+        // and a later `invoice.payment_failed` would then find the status
+        // already past due and do nothing — so there was no deadline, nothing
+        // for the sweep's expiry query to find, and the project published
+        // indefinitely on a dead card.
+        $this->settle($project, $status);
+
+        return $outcome;
+    }
+
+    /**
+     * A new subscription, or a move to a different plan.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    private function arrange(
+        Project $project,
+        string $plan,
+        array $object,
+        Carbon $periodStart,
+        Carbon $periodEnd,
+        bool $isNew,
+    ): string {
+        $this->subscriptions->assign(
+            $project,
+            $plan,
+            $this->payer($object, $project),
+            $periodStart,
+            $periodEnd,
+            // The version the checkout was stamped with, so a session opened
+            // under one price list and completed after the next was published
+            // buys the one it was opened under.
+            version: $this->planVersion($object),
+        );
+
+        return $isNew ? 'subscribed' : 'plan_changed';
+    }
+
+    private function rolled(Project $project, Carbon $periodStart, Carbon $periodEnd): string
+    {
+        $this->subscriptions->renew($project, $periodStart, $periodEnd);
+
+        return 'renewed';
+    }
+
+    /**
+     * Put the row into the state Stripe describes, through the transitions.
+     *
+     * Each of these carries a rule with it — a grace deadline, a cancellation
+     * timestamp — that a bare column write would skip.
+     */
+    private function settle(Project $project, BillingStatus $status): void
+    {
+        match ($status) {
+            BillingStatus::PastDue => $this->subscriptions->markPastDue($project),
+            BillingStatus::Canceled => $this->subscriptions->cancel($project),
+            default => $this->clearDunning($project),
+        };
+    }
+
+    /**
+     * Back to healthy: a card that worked, or a subscription reactivated.
+     */
+    private function clearDunning(Project $project): void
+    {
+        $subscription = $this->existing($project);
+
+        if ($subscription === null) {
+            return;
+        }
+
+        $subscription->fill([
+            'status' => BillingStatus::Active,
+            'grace_ends_at' => null,
+            'canceled_at' => null,
+        ])->save();
     }
 
     private function ended(?Project $project): string
@@ -307,6 +405,32 @@ class StripeWebhook
         }
 
         return null;
+    }
+
+    /**
+     * The price list this arrangement was sold under.
+     *
+     * Stamped into the checkout's metadata and read back here, so a session
+     * opened under version 1 and completed after version 2 was published buys
+     * version 1. Null — meaning today's list — when there is no metadata to
+     * read, which is the right answer for a subscription created directly in
+     * the Stripe dashboard.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    private function planVersion(array $object): ?int
+    {
+        $version = $object['metadata']['plan_version'] ?? null;
+
+        if (! is_string($version) && ! is_int($version)) {
+            return null;
+        }
+
+        $version = (int) $version;
+
+        return $version > 0 && app(PlanCatalog::class)->has($this->planKey($object) ?? '', $version)
+            ? $version
+            : null;
     }
 
     /** @param array<string, mixed> $object */

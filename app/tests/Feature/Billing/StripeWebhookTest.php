@@ -201,6 +201,105 @@ final class StripeWebhookTest extends TestCase
         $this->assertSame($payer->getKey(), ProjectSubscription::query()->sole()->billing_user_id);
     }
 
+    #[Test]
+    public function a_past_due_arriving_before_the_failed_invoice_still_gets_a_deadline(): void
+    {
+        $this->send($this->subscriptionPayload('active'));
+
+        // Stripe does not order its deliveries, so the subscription update can
+        // land before the invoice event that explains it. Writing the status as
+        // a plain column left `grace_ends_at` null, and the later
+        // `invoice.payment_failed` then found the status already past due and
+        // did nothing — no deadline, nothing for the sweep to expire, and the
+        // project published indefinitely on a dead card.
+        $this->send($this->subscriptionPayload('past_due', eventId: 'evt_pastdue'));
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame(BillingStatus::PastDue, $subscription->status);
+        $this->assertNotNull($subscription->grace_ends_at);
+        // Stripe's own word survives beside our reduced one.
+        $this->assertSame('past_due', $subscription->stripe_status);
+    }
+
+    #[Test]
+    public function a_renewal_keeps_the_arrangement_it_is_renewing(): void
+    {
+        $this->send($this->subscriptionPayload('active'));
+
+        ProjectSubscription::query()->sole()->update([
+            'limit_overrides' => ['articles' => 500],
+        ]);
+
+        $this->send($this->subscriptionPayload(
+            'active',
+            eventId: 'evt_renewal',
+            periodStart: Carbon::now()->addMonth(),
+        ));
+
+        // A renewal is not a plan change. Routing it through `assign()` cleared
+        // an Enterprise customer's bespoke limits at their first renewal and
+        // moved every paying customer onto the newest price list — which is
+        // exactly what `plan_version` exists to prevent.
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame(['articles' => 500], $subscription->limit_overrides);
+        $this->assertSame(500, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
+    public function a_change_of_plan_is_a_new_arrangement_and_clears_the_old_one(): void
+    {
+        $this->send($this->subscriptionPayload('active'));
+        ProjectSubscription::query()->sole()->update(['limit_overrides' => ['articles' => 500]]);
+
+        $payload = $this->subscriptionPayload('active', eventId: 'evt_downgrade');
+        $payload['data']['object']['metadata']['plan'] = 'small';
+        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_small';
+
+        $this->send($payload);
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame('small', $subscription->plan);
+        $this->assertSame([], $subscription->limit_overrides);
+        $this->assertSame(10, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
+    public function a_subscription_with_no_period_on_it_is_still_created(): void
+    {
+        // The event id is claimed the moment it arrives, so an event that fell
+        // through this branch silently was an event Stripe would never
+        // successfully redeliver: a completed checkout with no entitlement, and
+        // nothing anywhere saying so.
+        $payload = $this->subscriptionPayload('active');
+        unset(
+            $payload['data']['object']['current_period_start'],
+            $payload['data']['object']['current_period_end'],
+        );
+
+        $this->send($payload);
+
+        $this->assertSame('subscribed', StripeEvent::query()->sole()->outcome);
+        $this->assertTrue($this->entitlement()->mayGenerate());
+    }
+
+    #[Test]
+    public function a_plan_version_is_read_back_from_the_checkout_that_sold_it(): void
+    {
+        // A session opened under one price list and completed after the next
+        // was published bought the one it was opened under. It would be quite
+        // a trick to charge somebody against a list that did not exist when
+        // they clicked.
+        $payload = $this->subscriptionPayload('active');
+        $payload['data']['object']['metadata']['plan_version'] = '1';
+
+        $this->send($payload);
+
+        $this->assertSame(1, ProjectSubscription::query()->sole()->plan_version);
+    }
+
     /** @param array<string, mixed> $payload */
     private function send(array $payload): void
     {

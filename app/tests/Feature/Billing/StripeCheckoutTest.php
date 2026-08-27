@@ -6,7 +6,9 @@ namespace Tests\Feature\Billing;
 
 use App\Billing\Contracts\BillingProvider;
 use App\Billing\Contracts\ProviderSubscription;
+use App\Billing\Entitlements;
 use App\Billing\FakeBillingProvider;
+use App\Billing\Metric;
 use App\Billing\Plan;
 use App\Enums\BillingStatus;
 use App\Enums\OnboardingStatus;
@@ -182,6 +184,7 @@ final class StripeCheckoutTest extends TestCase
         $this->provider->willReport(new ProviderSubscription(
             id: 'sub_test',
             status: BillingStatus::Canceled,
+            rawStatus: 'canceled',
             priceId: 'price_medium',
             periodStart: Carbon::now()->subMonth(),
             periodEnd: Carbon::now(),
@@ -197,17 +200,22 @@ final class StripeCheckoutTest extends TestCase
     #[Test]
     public function a_projection_that_agrees_is_left_alone(): void
     {
+        $started = Carbon::now()->subDays(3)->startOfDay();
+
         ProjectSubscription::factory()->forProject($this->project)->create([
             'stripe_id' => 'sub_test',
             'status' => BillingStatus::Active,
+            'period_started_at' => $started,
+            'period_ends_at' => $started->copy()->addMonth(),
         ]);
 
         $this->provider->willReport(new ProviderSubscription(
             id: 'sub_test',
             status: BillingStatus::Active,
+            rawStatus: 'active',
             priceId: 'price_medium',
-            periodStart: Carbon::now(),
-            periodEnd: Carbon::now()->addMonth(),
+            periodStart: $started,
+            periodEnd: $started->copy()->addMonth(),
             trialEnd: null,
             canceledAt: null,
         ));
@@ -215,6 +223,83 @@ final class StripeCheckoutTest extends TestCase
         $this->reconcile()
             ->assertSuccessful()
             ->expectsOutputToContain('Everything agrees with Stripe');
+    }
+
+    #[Test]
+    public function a_period_that_moved_at_stripe_and_not_here_is_rolled_forward(): void
+    {
+        // Half the point of the command. When a renewal webhook is lost,
+        // nothing else moves a provider-backed period — `billing:sweep` skips
+        // these rows deliberately — so the customer's counters stay exhausted
+        // from last month and spend keeps accumulating against a one-month fuse
+        // until it trips.
+        $lastMonth = Carbon::now()->subMonth()->startOfDay();
+
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+            'status' => BillingStatus::Active,
+            'period_started_at' => $lastMonth,
+            'period_ends_at' => Carbon::now()->startOfDay(),
+        ]);
+
+        app(Entitlements::class)
+            ->record($this->project, Metric::Articles, 30);
+
+        $thisMonth = Carbon::now()->startOfDay();
+
+        $this->provider->willReport(new ProviderSubscription(
+            id: 'sub_test',
+            status: BillingStatus::Active,
+            rawStatus: 'active',
+            priceId: 'price_medium',
+            periodStart: $thisMonth,
+            periodEnd: $thisMonth->copy()->addMonth(),
+            trialEnd: null,
+            canceledAt: null,
+        ));
+
+        $this->reconcile()->assertSuccessful();
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertTrue($subscription->period_started_at?->equalTo($thisMonth));
+        // And the counters reset the way they would have if the webhook had
+        // arrived, rather than the period moving under an exhausted month.
+        $this->assertSame(30, app(Entitlements::class)
+            ->for($this->project->refresh())
+            ->remaining(Metric::Articles));
+    }
+
+    #[Test]
+    public function a_row_corrected_to_past_due_gets_a_deadline_with_it(): void
+    {
+        // Without one there is nothing to expire: `mayPublish()` stays true and
+        // the sweep's expiry query, which requires a grace date, never sees the
+        // row. It would publish for ever on a dead card.
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+            'status' => BillingStatus::Active,
+        ]);
+
+        $this->provider->willReport(new ProviderSubscription(
+            id: 'sub_test',
+            status: BillingStatus::PastDue,
+            rawStatus: 'unpaid',
+            priceId: 'price_medium',
+            periodStart: null,
+            periodEnd: null,
+            trialEnd: null,
+            canceledAt: null,
+        ));
+
+        $this->reconcile()->assertSuccessful();
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame(BillingStatus::PastDue, $subscription->status);
+        $this->assertNotNull($subscription->grace_ends_at);
+        // Stripe's own word, not our reduced one.
+        $this->assertSame('unpaid', $subscription->stripe_status);
     }
 
     #[Test]

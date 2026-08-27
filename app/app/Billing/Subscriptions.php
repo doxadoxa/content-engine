@@ -90,6 +90,7 @@ class Subscriptions
      */
     /**
      * @param  array<string, int|null>  $overrides  limits that differ from the plan's, for this customer
+     * @param  int|null  $version  the price list this was sold under; today's when omitted
      */
     public function assign(
         Project $project,
@@ -98,10 +99,17 @@ class Subscriptions
         ?Carbon $at = null,
         ?Carbon $until = null,
         array $overrides = [],
+        ?int $version = null,
     ): ProjectSubscription {
         // Resolved before anything is written, so an unknown plan is a refusal
         // rather than a half-made subscription.
-        $plan = $this->plans->get($planKey);
+        //
+        // The version is passed by the webhook, which reads it back out of the
+        // metadata the checkout was stamped with: a session opened under
+        // version 1 and completed after version 2 was published bought
+        // version 1, and it would be quite a trick to charge somebody for a
+        // list that did not exist when they clicked.
+        $plan = $this->plans->get($planKey, $version);
 
         $at ??= Carbon::now();
         $until ??= $at->copy()->addMonth();
@@ -191,6 +199,16 @@ class Subscriptions
      * The grace is not extended by a second failure. Stripe retries a failed
      * invoice several times and each retry is another event; taking the later
      * date each time would make dunning last as long as Stripe kept trying.
+     *
+     * But a row that is already past due **with no grace on it** is not a
+     * second failure — it is a first one that arrived by another route, and it
+     * must be given a deadline. Stripe does not order its deliveries, so
+     * `customer.subscription.updated` carrying `past_due` can land before the
+     * `invoice.payment_failed` that explains it. Skipping on status alone left
+     * that project past due for ever with `grace_ends_at` null: nothing to
+     * expire, so `mayPublish()` stayed true and the sweep's expiry query — which
+     * requires a grace date — never saw it. It published indefinitely on a dead
+     * card, which is the single outcome this whole policy exists to bound.
      */
     public function markPastDue(Project $project, ?Carbon $at = null): ?ProjectSubscription
     {
@@ -200,7 +218,7 @@ class Subscriptions
             return null;
         }
 
-        if ($subscription->status !== BillingStatus::PastDue) {
+        if ($subscription->status !== BillingStatus::PastDue || $subscription->grace_ends_at === null) {
             $subscription->fill([
                 'status' => BillingStatus::PastDue,
                 'grace_ends_at' => ($at ?? Carbon::now())->copy()->addDays($this->plans->graceDays()),
