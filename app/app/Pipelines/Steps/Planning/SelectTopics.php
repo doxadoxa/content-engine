@@ -436,7 +436,7 @@ class SelectTopics extends AbstractStep
         // half a month's articles, and the two steps have to agree or the
         // calendar ends up with more units than dates.
         return PlanningWindow::resolve($context->get('month'))
-            ->capacityFor($context->project->weekly_target);
+            ->capacityFor($context->project->weeklyTarget());
     }
 
     private function month(StepContext $context): Carbon

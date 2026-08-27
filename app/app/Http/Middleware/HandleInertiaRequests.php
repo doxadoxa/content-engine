@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Billing\Entitlements;
 use App\Models\Project;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
@@ -24,7 +25,10 @@ class HandleInertiaRequests extends Middleware
      */
     private ?Collection $memberships = null;
 
-    public function __construct(private readonly CurrentProject $current) {}
+    public function __construct(
+        private readonly CurrentProject $current,
+        private readonly Entitlements $entitlements,
+    ) {}
 
     public function version(Request $request): ?string
     {
@@ -60,7 +64,38 @@ class HandleInertiaRequests extends Middleware
                 'project' => fn () => $this->projectProps($request),
                 'projects' => fn () => $this->projectOptions($request),
             ],
+            // What the project may do, on every page.
+            //
+            // Shared rather than passed per screen because the thing it drives
+            // is the frame — a countdown while a trial runs, a sentence when it
+            // has stopped — and a banner that appeared only on the screens
+            // somebody remembered to pass a prop to would be missing from
+            // exactly the screens where the buttons are.
+            //
+            // A closure for the same reason the project is one: this runs
+            // before route middleware, so the tenant is not resolved yet.
+            'billing' => fn () => $this->billingProps(),
         ];
+    }
+
+    /**
+     * What the current project is entitled to, flattened for the frame.
+     *
+     * Null when there is no project — a guest, or somebody mid-onboarding —
+     * because there is nothing to say about a subscription that has no tenant
+     * to belong to, and an empty banner is worse than none.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function billingProps(): ?array
+    {
+        $project = $this->current->get();
+
+        if (! $project instanceof Project) {
+            return null;
+        }
+
+        return $this->entitlements->for($project)->toArray();
     }
 
     /**

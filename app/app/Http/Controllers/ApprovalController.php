@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Content\PostScore;
 use App\Content\UnitScore;
 use App\Enums\ContentItemState;
@@ -53,6 +55,7 @@ class ApprovalController extends Controller
         private readonly UnitScore $score,
         private readonly PipelineRunner $runner,
         private readonly CurrentProject $current,
+        private readonly Entitlements $entitlements,
     ) {}
 
     public function index(): Response
@@ -145,6 +148,17 @@ class ApprovalController extends Controller
             $draft->forceFill(['review' => [], 'reviewed_at' => null])->save();
 
             $draft->approve();
+
+            // The plan's counter moves here, at approval, and not at
+            // generation. The engine writes eight social posts to keep one, and
+            // charging a customer for the seven it discarded would make the
+            // number on their screen mean nothing. The seven were not free —
+            // they are what the cost ceiling is watching, which is the whole
+            // reason there are two layers of limit.
+            $this->entitlements->record(
+                $draft->project,
+                $draft->isSocial() ? Metric::SocialPosts : Metric::Articles,
+            );
 
             return $this->channels->publishAutomatically($draft);
         });

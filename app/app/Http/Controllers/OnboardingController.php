@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Subscriptions;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
@@ -45,6 +46,7 @@ class OnboardingController extends Controller
         private readonly ProjectManager $projects,
         private readonly CurrentProject $current,
         private readonly ChannelPublisherRegistry $publishers,
+        private readonly Subscriptions $subscriptions,
     ) {}
 
     /** The wizard itself, resuming whatever draft the operator has open. */
@@ -145,7 +147,7 @@ class OnboardingController extends Controller
         // clicks can arrive before either response returns; only the request
         // that sees Draft while holding this lock may create the brief,
         // channels, and research run.
-        $started = DB::transaction(function () use ($project, $launch): ?bool {
+        $started = DB::transaction(function () use ($project, $launch, $user): ?bool {
             $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
 
             if ($locked->onboarding_status !== OnboardingStatus::Draft) {
@@ -163,6 +165,22 @@ class OnboardingController extends Controller
                 $this->writeBrief($locked);
                 $this->connectChannels($locked);
             });
+
+            // The free window starts here rather than at registration, and
+            // this is the line that decides it: the clock should start when the
+            // engine does. Somebody who signs up on Friday and finishes the
+            // wizard on Monday has not had a trial over the weekend.
+            //
+            // Inside the lock and before `begin()`, because `begin()` starts
+            // research — which is spend, and spend on a project with no
+            // subscription is refused. A trial minted afterwards would leave
+            // the first run of every new project's life gated out.
+            //
+            // `startTrial()` is idempotent, so the second final click of a
+            // double-press cannot mint a second window. It also returns the
+            // existing subscription untouched, which is what makes relaunching
+            // a project safe.
+            $this->subscriptions->startTrial($locked, $user);
 
             $launch->begin($locked);
 

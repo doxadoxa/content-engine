@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Billing\Entitlements;
 use App\Content\ArticleScore;
 use App\Enums\ContentItemState;
 use App\Enums\ProjectStatus;
@@ -83,8 +84,10 @@ class EngineTickCommand extends Command
 
     protected $description = 'Start whatever each project is due: research, planning, drafting, social, publishing';
 
-    public function __construct(private readonly ArticleScore $score)
-    {
+    public function __construct(
+        private readonly ArticleScore $score,
+        private readonly Entitlements $entitlements,
+    ) {
         parent::__construct();
     }
 
@@ -267,12 +270,12 @@ class EngineTickCommand extends Command
 
         // 3b. Planning, when the calendar is running out and there are ideas to
         //     plan from. Planning an empty pool produces an empty month.
-        if ($plannedAhead < $project->weekly_target && $spareIdeas > 0 && ! $this->ranWithin($project, 'planning', 12)) {
+        if ($plannedAhead < $project->weeklyTarget() && $spareIdeas > 0 && ! $this->ranWithin($project, 'planning', 12)) {
             return [['pipeline' => 'planning', 'why' => 'calendar is running out, planning ahead']];
         }
 
         // 4. Research, when the pool cannot feed the months to come.
-        if ($spareIdeas < $project->weekly_target * 2 && ! $this->ranWithin($project, 'research', 6)) {
+        if ($spareIdeas < $project->weeklyTarget() * 2 && ! $this->ranWithin($project, 'research', 6)) {
             return [['pipeline' => 'research', 'why' => 'idea pool is thin, researching']];
         }
 
@@ -461,6 +464,23 @@ class EngineTickCommand extends Command
     }
 
     /**
+     * Every project this tick may work for.
+     *
+     * Two conditions, and the second one is the whole of billing's hold over
+     * the unattended half of this engine. `status = active` is the operator's
+     * switch; entitlement is ours. Everything else the tick starts — research,
+     * planning, drafting, pictures — flows from this list, so a project that
+     * must not spend money is kept out here rather than checked at each of the
+     * six places that would otherwise have to remember to ask.
+     *
+     * Filtered in PHP rather than joined, deliberately. An entitlement is not a
+     * column: it is a plan read under the version it was sold, a period, a set
+     * of counters and a sum over two spend tables, and the SQL that reproduced
+     * all of that would be a second implementation of the rules to keep in step
+     * with the first. This command already runs several queries per project and
+     * runs hourly; one more is not the cost worth optimising against a rule
+     * existing twice.
+     *
      * @return Collection<int, Project>
      */
     private function projects(): Collection
@@ -473,6 +493,20 @@ class EngineTickCommand extends Command
             $query->where(fn ($q) => $q->where('slug', $handle)->orWhere('id', $handle));
         }
 
-        return $query->get();
+        return $query->get()->filter(function (Project $project): bool {
+            $refusal = $this->entitlements->for($project)->refusal();
+
+            if ($refusal === null) {
+                return true;
+            }
+
+            // Said out loud rather than skipped in silence. An engine that
+            // stops for a billing reason and reports nothing is indispensable
+            // from one that is broken, and the first person to look will be
+            // looking at the wrong thing.
+            $this->line("  {$project->slug}: skipped — {$refusal->message}");
+
+            return false;
+        })->values();
     }
 }

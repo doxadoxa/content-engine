@@ -7,6 +7,7 @@ namespace Database\Factories;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -80,5 +81,47 @@ class ProjectFactory extends Factory
     public function paused(): static
     {
         return $this->state(fn (): array => ['status' => ProjectStatus::Paused]);
+    }
+
+    /**
+     * Every project comes with a subscription, because in the running system
+     * every project has one.
+     *
+     * Onboarding mints a trial the moment the engine starts, and the
+     * grandfathering migration gave one to every project that predates billing
+     * — so a project with no subscription is not a normal state, it is the
+     * anomaly. A factory that built the anomaly by default would make hundreds
+     * of tests about publishing, planning and drafting fail for a billing
+     * reason, which is the fastest way to teach everybody to stop reading
+     * billing failures.
+     *
+     * The anomaly is still buildable, out loud, with {@see unbilled()} — and it
+     * has its own tests, because failing closed is the behaviour that matters
+     * most here.
+     */
+    public function configure(): static
+    {
+        return $this->afterCreating(function (Project $project): void {
+            if (ProjectSubscription::query()->where('project_id', $project->getKey())->exists()) {
+                return;
+            }
+
+            ProjectSubscription::factory()->forProject($project)->create();
+        });
+    }
+
+    /**
+     * A project nobody ever put on a plan.
+     *
+     * Written as a deletion after the fact rather than a flag consulted before
+     * it, because factory callbacks run in the order they were added and a
+     * state cannot reach back into `configure()`. Two writes instead of one, in
+     * a test, to keep the default honest.
+     */
+    public function unbilled(): static
+    {
+        return $this->afterCreating(function (Project $project): void {
+            ProjectSubscription::query()->where('project_id', $project->getKey())->delete();
+        });
     }
 }

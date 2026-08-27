@@ -16,6 +16,8 @@ use App\Ai\OpenAiEmbeddingGateway;
 use App\Audit\PageSpeed\Contracts\PageSpeedGateway;
 use App\Audit\PageSpeed\FakePageSpeed;
 use App\Audit\PageSpeed\GooglePageSpeedInsights;
+use App\Billing\Entitlements;
+use App\Billing\PlanCatalog;
 use App\Enums\ChannelType;
 use App\Feedback\Contracts\AnalyticsGateway;
 use App\Feedback\Contracts\CitationChecker;
@@ -59,6 +61,16 @@ class AppServiceProvider extends ServiceProvider
         // life of the request or job. The tenant id itself lives in the
         // context, not in this instance.
         $this->app->singleton(CurrentProject::class);
+
+        // A singleton, because the memo inside it is the point. Entitlement is
+        // consulted several times within one request — route middleware, then
+        // the shared props the frame renders from, then whatever the controller
+        // does — and three independent reads is three chances to let a route
+        // through and then paint it shut.
+        $this->app->singleton(Entitlements::class);
+
+        // Stateless, and a singleton only to avoid rebuilding it per injection.
+        $this->app->singleton(PlanCatalog::class);
 
         // The one door to a language model (§3.3). Bound here rather than
         // resolved at each call site, so the test environment can put the fake

@@ -6,6 +6,7 @@ namespace Tests\Feature\Onboarding;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
+use App\Enums\BillingStatus;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
 use App\Enums\PipelineRunStatus;
@@ -14,6 +15,7 @@ use App\Models\Channel;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\Contracts\SiteReader;
 use App\Onboarding\FakeSiteReader;
@@ -420,6 +422,56 @@ final class OnboardingWizardTest extends TestCase
         // The checkbox is disabled in the wizard, but a disabled checkbox is a
         // suggestion — money and health content is reviewed whatever was sent.
         $this->assertFalse($project->refresh()->autopublish);
+    }
+
+    #[Test]
+    public function launching_starts_the_free_window_and_the_engine_can_use_it(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        // Unbilled, because this is the state a project is really in when the
+        // wizard's last step is pressed — the trial does not exist yet.
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch")
+            ->assertRedirect('/home');
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame('trial', $subscription->plan);
+        $this->assertSame(BillingStatus::Trialing, $subscription->status);
+        $this->assertTrue($subscription->trial_ends_at?->isFuture());
+        $this->assertSame($operator->getKey(), $subscription->billing_user_id);
+
+        // The clock starts when the engine does, not when the account was made.
+        $this->assertTrue($subscription->trial_ends_at->isSameDay(
+            now()->addDays((int) config('billing.trial.days')),
+        ));
+
+        // And the first run of the project's life was not gated out: the trial
+        // is minted inside the same transaction, before research begins.
+        $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'research')->count());
+    }
+
+    #[Test]
+    public function launching_twice_does_not_mint_a_second_trial(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch");
+        $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch");
+
+        $this->assertSame(1, ProjectSubscription::query()->count());
     }
 
     #[Test]

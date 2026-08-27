@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Middleware\EnsureCurrentProject;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\RequireEntitlement;
 use App\Http\Middleware\RequireProjectOwner;
 use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Foundation\Application;
@@ -24,6 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'project.owner' => RequireProjectOwner::class,
+            // Takes the quota it protects: `project.entitled:articles`.
+            'project.entitled' => RequireEntitlement::class,
         ]);
 
         // Take the scheme and host from X-Forwarded-*. In the container Caddy

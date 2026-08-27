@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Billing\Entitlements;
 use App\Enums\ContentItemState;
 use App\Enums\ProjectStatus;
 use App\Models\ContentItem;
@@ -28,6 +29,11 @@ class PublishApprovedCommand extends Command
         {--unit= : A single unit id, instead of everything approved}';
 
     protected $description = 'Deliver approved content units to verified automatic channels';
+
+    public function __construct(private readonly Entitlements $entitlements)
+    {
+        parent::__construct();
+    }
 
     public function handle(PublishToChannels $channels, CurrentProject $current): int
     {
@@ -54,7 +60,17 @@ class PublishApprovedCommand extends Command
 
     private function everyProject(PublishToChannels $channels, CurrentProject $current): int
     {
-        $projects = Project::query()->where('status', ProjectStatus::Active)->get();
+        // Publishing survives a failed payment and stops only once the
+        // subscription is over. That asymmetry with generation is the whole of
+        // the dunning policy: we stop spending our money at once, and stop
+        // delivering theirs at the end. An article somebody approved was
+        // already paid for, and holding it back turns a billing problem into a
+        // support incident.
+        $projects = Project::query()
+            ->where('status', ProjectStatus::Active)
+            ->get()
+            ->filter(fn (Project $project): bool => $this->entitlements->for($project)->mayPublish())
+            ->values();
 
         foreach ($projects as $project) {
             $this->forProject($project, $channels, $current);

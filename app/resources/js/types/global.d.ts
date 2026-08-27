@@ -8,6 +8,7 @@ declare module 'react' {
     }
 }
 import type { Auth } from '@/types/auth';
+import type { Billing } from '@/types/billing';
 
 declare module '@inertiajs/core' {
     export interface InertiaConfig {
@@ -21,6 +22,12 @@ declare module '@inertiajs/core' {
              * feature do not exist, so a hidden entry is the only honest shape.
              */
             social: { enabled: boolean };
+            /**
+             * What the current project may do. Null when there is no project
+             * to say it about — a guest, or somebody still in the onboarding
+             * wizard, neither of whom has a subscription to describe.
+             */
+            billing: Billing | null;
             [key: string]: unknown;
         };
     }

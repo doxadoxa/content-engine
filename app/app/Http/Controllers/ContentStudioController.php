@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\ContentStudio\ContentStudioAction;
 use App\ContentStudio\ContentStudioAssistant;
 use App\ContentStudio\ContentStudioConflict;
@@ -42,6 +44,7 @@ class ContentStudioController extends Controller
     public function __construct(
         private readonly CurrentProject $current,
         private readonly ContentStudioOperations $operations,
+        private readonly Entitlements $entitlements,
     ) {}
 
     public function index(Request $request): Response
@@ -135,6 +138,12 @@ class ContentStudioController extends Controller
 
         try {
             $updated = $assistant->accept($plan, (int) $validated['version']);
+
+            // Accepting is what makes a plan a plan — proposing and refining
+            // are drafts of one, and counting each revision would charge
+            // somebody for changing their mind about a month they have not
+            // committed to.
+            $this->entitlements->record($updated->project, Metric::ContentPlans);
 
             // The goal comes back too, because accepting confirmed it. Without
             // it the screen would show an accepted plan above a goal still

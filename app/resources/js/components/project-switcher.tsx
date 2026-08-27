@@ -5,6 +5,7 @@ import {
     CircleDollarSign,
     FolderKanban,
     Plus,
+    ReceiptText,
     Settings2,
 } from 'lucide-react';
 import {
@@ -20,6 +21,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { index as billingIndex } from '@/routes/billing';
 import { index as meteringIndex } from '@/routes/metering';
 import { show as startOnboarding } from '@/routes/onboarding';
 import { edit as editProject, index as projectsIndex } from '@/routes/projects';
@@ -133,13 +135,31 @@ export function ProjectSwitcher() {
                             </Link>
                         </DropdownMenuItem>
 
+                        <DropdownMenuSeparator />
+                        <DropdownMenuLabel className="text-xs text-muted-foreground">
+                            Administration
+                        </DropdownMenuLabel>
+
+                        {/*
+                         * Outside the owner check below, deliberately. An
+                         * operator who has run out of articles needs to be
+                         * able to find out why without asking the account
+                         * holder — everything on that screen is a quota
+                         * rather than a figure about money, which is what
+                         * makes "Usage & cost" owner-only.
+                         */}
+                        <DropdownMenuItem asChild>
+                            <Link href={billingIndex()}>
+                                <ReceiptText
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
+                                Plan &amp; usage
+                            </Link>
+                        </DropdownMenuItem>
+
                         {current.role === 'owner' && (
                             <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                                    Administration
-                                </DropdownMenuLabel>
-
                                 <DropdownMenuItem asChild>
                                     <Link href={editProject(current.id)}>
                                         <Settings2

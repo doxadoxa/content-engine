@@ -9,6 +9,8 @@ use App\Ai\ConversationFailed;
 use App\Ai\ConversationRequest;
 use App\Ai\ConversationUsage;
 use App\Ai\ModelCatalog;
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Models\AssistantMessage;
 use App\Models\AssistantThread;
 use App\Models\Project;
@@ -54,11 +56,19 @@ final class Assistant
         private readonly ConversationGateway $gateway,
         private readonly MarketingTools $tools,
         private readonly ModelCatalog $catalog,
+        private readonly Entitlements $entitlements,
     ) {}
 
     public function reply(Project $project, AssistantThread $thread, string $message): AssistantMessage
     {
         $said = trim($message);
+
+        // Counted before the provider is asked, and counted even if the turn
+        // then fails. A turn that broke on the wire still cost us the legs it
+        // completed — see the usage carried on ConversationFailed — so a
+        // customer whose provider is flapping must not get unlimited free
+        // retries out of it.
+        $this->entitlements->record($project, Metric::AssistantTurns);
 
         $asked = AssistantMessage::query()->create([
             'assistant_thread_id' => $thread->getKey(),
