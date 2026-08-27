@@ -24,11 +24,19 @@ final readonly class Refusal
         public ?Metric $metric = null,
     ) {}
 
+    /**
+     * No card yet, which is where every new project starts.
+     *
+     * Worded as the next step rather than as a fault. This fires for a project
+     * whose wizard is finished and whose checkout was abandoned or never
+     * reached — somebody halfway through signing up, not somebody who has done
+     * anything wrong.
+     */
     public static function noSubscription(): self
     {
         return new self(
             'no_subscription',
-            'This project has no plan yet.',
+            'Add a card to start the engine. Nothing is charged today.',
         );
     }
 

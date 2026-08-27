@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
+use App\Billing\Contracts\BillingProvider;
+use App\Billing\FakeBillingProvider;
 use App\Billing\TrialEligibility;
-use App\Enums\BillingStatus;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
@@ -147,18 +148,24 @@ final class RegistrationAndTrialTest extends TestCase
     #[Test]
     public function one_free_window_at_a_time_per_account(): void
     {
+        // Belt-and-braces now rather than load-bearing: with a card taken at
+        // the checkout, a second trial costs somebody a second card. It stays
+        // because it costs nothing to keep.
         $user = User::factory()->create();
 
         $first = $this->draftFor($user);
-        $this->actingAs($user)->post("/onboarding/{$first->getKey()}/launch")->assertRedirect('/home');
+        ProjectSubscription::factory()->forProject($first)->trialing()->create();
 
         $second = $this->draftFor($user, 'https://another-site.test');
-        $this->actingAs($user)->post("/onboarding/{$second->getKey()}/launch")->assertRedirect();
+
+        $this->actingAs($user)
+            ->post("/onboarding/{$second->getKey()}/launch")
+            ->assertRedirect();
 
         // One at a time rather than one ever: somebody who trialled last year,
         // subscribed, cancelled and came back with a different business is a
         // customer. Four trials running at once is the thing to stop.
-        $this->assertSame(1, ProjectSubscription::query()->count());
+        $this->assertNoCheckoutWasOpened();
     }
 
     #[Test]
@@ -166,7 +173,7 @@ final class RegistrationAndTrialTest extends TestCase
     {
         $first = User::factory()->create();
         $firstProject = $this->draftFor($first, 'https://shop.example.test');
-        $this->actingAs($first)->post("/onboarding/{$firstProject->getKey()}/launch")->assertRedirect('/home');
+        ProjectSubscription::factory()->forProject($firstProject)->trialing()->create();
 
         // A different account entirely. Addresses are free and unlimited, so a
         // per-account rule alone is a rule about how much typing somebody is
@@ -178,7 +185,7 @@ final class RegistrationAndTrialTest extends TestCase
             ->post("/onboarding/{$secondProject->getKey()}/launch")
             ->assertRedirect();
 
-        $this->assertSame(1, ProjectSubscription::query()->count());
+        $this->assertNoCheckoutWasOpened();
     }
 
     #[Test]
@@ -187,20 +194,40 @@ final class RegistrationAndTrialTest extends TestCase
         $user = User::factory()->create();
 
         $first = $this->draftFor($user);
-        $this->actingAs($user)->post("/onboarding/{$first->getKey()}/launch")->assertRedirect('/home');
+        ProjectSubscription::factory()->forProject($first)->plan('medium')->create();
 
-        // Trial over, subscription bought. The account may now start a second
+        // Paying rather than trialing. The account may now start a second
         // site — which is the whole shape of per-project billing.
-        ProjectSubscription::query()->sole()->update([
-            'plan' => 'medium',
-            'status' => BillingStatus::Active,
-            'trial_ends_at' => null,
-        ]);
-
         $second = $this->draftFor($user, 'https://another-site.test');
-        $this->actingAs($user)->post("/onboarding/{$second->getKey()}/launch")->assertRedirect('/home');
 
-        $this->assertSame(2, ProjectSubscription::query()->count());
+        $this->actingAs($user)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$second->getKey()}/launch")
+            ->assertStatus(409);
+
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $this->assertSame($second->getKey(), $provider->checkouts[0]['project']);
+    }
+
+    #[Test]
+    public function the_checkout_asks_for_a_card_and_charges_nothing_today(): void
+    {
+        $user = User::factory()->create();
+        $project = $this->draftFor($user);
+
+        $this->actingAs($user)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch")
+            ->assertStatus(409)
+            ->assertHeader(
+                'X-Inertia-Location',
+                'https://checkout.stripe.test/medium/'.$project->getKey(),
+            );
+
+        // Nothing local is created by pressing the button. The subscription —
+        // and with it the free window and its end date — arrives from Stripe.
+        $this->assertSame(0, ProjectSubscription::query()->count());
     }
 
     #[Test]
@@ -213,6 +240,13 @@ final class RegistrationAndTrialTest extends TestCase
         ] as $url => $expected) {
             $this->assertSame($expected, TrialEligibility::hostOf($url));
         }
+    }
+
+    private function assertNoCheckoutWasOpened(): void
+    {
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $this->assertSame([], $provider->checkouts);
     }
 
     private function draftFor(User $user, string $url = 'https://example.test'): Project

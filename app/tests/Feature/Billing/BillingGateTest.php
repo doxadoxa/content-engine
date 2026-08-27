@@ -84,7 +84,7 @@ final class BillingGateTest extends TestCase
         // treated as unlimited.
         $this->console('engine:tick')
             ->assertSuccessful()
-            ->expectsOutputToContain('no plan yet');
+            ->expectsOutputToContain('Add a card to start the engine');
 
         $this->assertSame(0, PipelineRun::acrossProjects()->count());
     }

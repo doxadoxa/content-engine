@@ -5,10 +5,14 @@ declare(strict_types=1);
 namespace App\Billing;
 
 use App\Enums\BillingStatus;
+use App\Enums\OnboardingStatus;
+use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\StripeEvent;
 use App\Models\User;
+use App\Onboarding\ProjectLaunch;
+use App\Support\Tenancy\CurrentProject;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -239,7 +243,49 @@ class StripeWebhook
             version: $this->planVersion($object),
         );
 
+        if ($isNew) {
+            $this->startTheEngineIfWaiting($project);
+        }
+
         return $isNew ? 'subscribed' : 'plan_changed';
+    }
+
+    /**
+     * The moment a new project's engine actually starts.
+     *
+     * The wizard's last step takes a card and starts nothing: research is spend,
+     * and spend before a subscription exists is the thing every gate in this
+     * subsystem refuses. So the launch waits here, for the event that says a
+     * card was accepted.
+     *
+     * Bounded twice. `Launching` is the state the wizard leaves behind, so a
+     * project that is Draft (still being filled in) or Active (running for
+     * months) is not touched — which matters, because this same event fires for
+     * every renewal and plan change a customer ever makes. And a project whose
+     * launch already has runs is left alone, so a webhook re-delivered after
+     * the claim row was somehow lost cannot research a month twice.
+     */
+    private function startTheEngineIfWaiting(Project $project): void
+    {
+        if ($project->onboarding_status !== OnboardingStatus::Launching) {
+            return;
+        }
+
+        $alreadyRunning = PipelineRun::acrossProjects()
+            ->where('project_id', $project->getKey())
+            ->exists();
+
+        if ($alreadyRunning) {
+            return;
+        }
+
+        // Under the project, because everything `begin()` starts is
+        // tenant-scoped and this runs from a webhook with no current project at
+        // all — the scope would otherwise fail closed on the first write.
+        app(CurrentProject::class)->run(
+            $project,
+            fn () => app(ProjectLaunch::class)->begin($project),
+        );
     }
 
     private function rolled(Project $project, Carbon $periodStart, Carbon $periodEnd): string

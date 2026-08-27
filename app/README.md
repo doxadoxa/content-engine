@@ -147,8 +147,22 @@ project's ULID.
 
 Plans live in [`config/billing.php`](config/billing.php), versioned the way
 model prices are: re-pricing publishes a new version and never edits a
-published one, so a project keeps what it was sold. The trial is a plan in that
-same list, for the same reason.
+published one, so a project keeps what it was sold.
+
+**The card is taken at the end of the wizard.** Somebody registers, watches the
+engine read their site, confirms the brief — and only then is asked for a card,
+which is the strongest moment to ask and the reason it is not asked at signup.
+The checkout creates a Stripe subscription with `trial_period_days`: nothing is
+charged that day, and the first invoice falls due when the free days run out. A
+customer who stays does nothing to convert; one who leaves cancels before the
+date.
+
+Nothing runs until Stripe confirms it. Research is spend, and spend before a
+subscription exists is what every gate here refuses — so the wizard's last step
+marks the project `Launching` and starts nothing, and
+`customer.subscription.created` is what begins the engine. A checkout somebody
+abandons leaves a legible state rather than a stuck one: the banner says there
+is no card and links to the same checkout.
 
 There are **two layers of limit**, and they fail differently:
 

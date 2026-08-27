@@ -27,6 +27,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | What a new project starts on
+    |--------------------------------------------------------------------------
+    |
+    | The wizard's last step sends somebody to a checkout, and a checkout needs
+    | a price. This is the plan it names — the free days are the same whichever
+    | one it is, so this only decides what happens on day three.
+    |
+    | Medium, because that is the plan the engine's own default cadence fits: a
+    | project written at seven a week does not fit Small, and starting somebody
+    | on a plan their first month would overflow is a bad first invoice.
+    |
+    */
+
+    'default_plan' => env('BILLING_DEFAULT_PLAN', 'medium'),
+
+    /*
+    |--------------------------------------------------------------------------
     | The price list version
     |--------------------------------------------------------------------------
     |

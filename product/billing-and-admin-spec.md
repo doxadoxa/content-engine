@@ -388,6 +388,42 @@ money attached.
 
 ---
 
+## The trial takes a card after all
+
+Decided during implementation, reversing the choice recorded above.
+
+The argument for no card was conversion: a card wall in front of a product whose
+whole claim is "it runs itself" asks for trust before it has earned any. That
+argument is about *when* the card is asked for, and it turns out there is a
+third position between "at signup" and "never" — **after the wizard**. By then
+somebody has watched the engine read their own site and agreed to what it found.
+That is the strongest moment to ask, and asking there costs almost none of what
+asking at signup would.
+
+What it buys:
+
+- **It converts itself.** Stripe's `trial_period_days` charges nothing on the
+  day and invoices when the free days run out. There is no "choose a plan" step
+  at the end of the trial — the moment the product would have to re-sell itself
+  to somebody who has stopped paying attention.
+- **Abuse stops being load-bearing.** A second free run costs a second card
+  rather than a second email address. The domain check and the $5 ceiling stay,
+  demoted to belt-and-braces: they cost nothing to keep and still catch the
+  retry storm and the mispriced model, which a card does nothing about.
+- **One trial shape, not two.** The local `startTrial()` survives only for
+  comping a plan from the terminal.
+
+What it costs: some proportion of people will stop at the card. That is the
+trade, made with eyes open — the alternative was a free window that ends in a
+re-sell.
+
+The engine starts on `customer.subscription.created` rather than at the end of
+the wizard, because research is spend and spend before a subscription exists is
+what every gate in this subsystem refuses. A checkout somebody abandons leaves
+the project `Launching` with no subscription, which is a legible state rather
+than a stuck one: the banner says there is no card and links to the same
+checkout.
+
 ## What changed while building it
 
 The plan above survived contact largely intact. Six things did not, and each is

@@ -31,6 +31,8 @@ use Stripe\Subscription as StripeSubscription;
  */
 class StripeBillingProvider implements BillingProvider
 {
+    public function __construct(private readonly PlanCatalog $plans) {}
+
     public function checkoutUrl(User $payer, Project $project, Plan $plan, string $returnUrl): string
     {
         $price = $plan->stripePrice;
@@ -44,11 +46,17 @@ class StripeBillingProvider implements BillingProvider
 
         $checkout = $payer
             ->newSubscription($project->getKey(), $price)
-            // Never Cashier's own trial. Ours has already run by the time
-            // anybody reaches a checkout — it started when the engine did — and
-            // stacking a second free window on top would give away a fortnight
-            // to whoever noticed.
-            ->skipTrial()
+            // Stripe's own trial, which is what makes the card-up-front flow
+            // work: the subscription is created now and charges nothing, and
+            // the first invoice falls due when the free days run out. Somebody
+            // who stays does nothing to convert; somebody who leaves cancels
+            // before the date.
+            //
+            // Stripe requires a trial end at least 48 hours out and Cashier
+            // pads to that, so a trial shorter than two days silently becomes
+            // two — which is worth knowing before anybody sets
+            // `BILLING_TRIAL_DAYS=1`.
+            ->trialDays($this->plans->trialDays())
             ->checkout([
                 'success_url' => $returnUrl.'?checkout=done',
                 'cancel_url' => $returnUrl,
