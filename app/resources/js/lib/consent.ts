@@ -14,6 +14,8 @@
  * To add analytics later, do not reach for the layout. Call
  * `whenGranted('analytics', () => { ...inject the tag... })` and it will run
  * when consent already exists, the moment it is given, and never otherwise.
+ * Return a teardown from it and that runs the moment consent is taken away
+ * again — see the gate below for why that half is not optional.
  */
 
 export const OPTIONAL_CATEGORIES = ['analytics', 'marketing'] as const;
@@ -150,7 +152,7 @@ refresh();
 function emit(): void {
     refresh();
     listeners.forEach((listener) => listener());
-    grantWaiters();
+    reconcile();
 }
 
 export function subscribe(listener: Listener): () => void {
@@ -198,48 +200,93 @@ export function saveConsent(consent: Consent): void {
  * The gate
  * ------------------------------------------------------------------ */
 
-const waiting = new Map<OptionalCategory, Set<() => void>>();
+/*
+ * Consent runs in both directions.
+ *
+ * The first version of this fired each callback once and then forgot it, which
+ * made withdrawal a lie. Somebody who accepted analytics, then reopened the
+ * panel and switched it off, got a rewritten cookie and a tracker that carried
+ * on collecting until they happened to reload — while three pages of ours told
+ * them withdrawing was as easy as giving. A gate that only opens is not a gate.
+ *
+ * So an integration is a pair, not a callback: the `setup` that starts it and
+ * the teardown `setup` returns. This reconciles the pair against the current
+ * answer every time the answer changes — starting what has become allowed,
+ * stopping what has become forbidden, and doing neither twice.
+ *
+ * A vendor whose script cannot truly be unloaded is not an excuse to skip the
+ * teardown; it is a reason for that teardown to remove what it can and then
+ * reload the page, which is the only honest way to stop code somebody has
+ * withdrawn permission for.
+ */
 
-function grantWaiters(): void {
-    for (const category of OPTIONAL_CATEGORIES) {
-        if (!hasConsent(category)) {
+type Teardown = (() => void) | void;
+
+type Integration = {
+    category: OptionalCategory;
+    setup: () => Teardown;
+    /* Non-null exactly while this integration is running, which is also how a
+     * second grant is stopped from starting a second copy of it. */
+    stop: (() => void) | null;
+};
+
+const NOTHING_TO_UNDO = (): void => {};
+
+const integrations = new Set<Integration>();
+
+function reconcile(): void {
+    for (const integration of integrations) {
+        const allowed = hasConsent(integration.category);
+
+        if (allowed && integration.stop === null) {
+            const stop = integration.setup();
+            integration.stop =
+                typeof stop === 'function' ? stop : NOTHING_TO_UNDO;
+
             continue;
         }
 
-        const callbacks = waiting.get(category);
-
-        if (!callbacks) {
-            continue;
+        if (!allowed && integration.stop !== null) {
+            const stop = integration.stop;
+            /* Cleared first, so a teardown that throws cannot leave the
+             * integration looking like it is still running. */
+            integration.stop = null;
+            stop();
         }
-
-        /* Cleared before running: each callback loads a script or sets up a
-         * tracker, and doing that twice because consent was re-saved is a
-         * duplicate pageview at best. */
-        waiting.delete(category);
-        callbacks.forEach((callback) => callback());
     }
 }
 
 /**
- * Run `callback` once, as soon as this category is allowed — immediately if it
- * already is, on the click if it is not yet, and never if it is refused.
+ * Start something when this category is allowed, and stop it when it is not.
+ *
+ * `setup` runs immediately if consent already exists, on the click if it is
+ * given later, and never if it is refused. Whatever it returns is treated as
+ * the way to undo it and is called if consent is withdrawn; returning nothing
+ * is a promise that there is nothing to undo.
  *
  * This is the only correct place to put a tag. Anything that injects a script
- * outside it is a script that runs before consent.
+ * outside it is a script that runs before consent — or after it is taken back.
+ *
+ * Returns an unregister function, which also stops the integration.
  */
 export function whenGranted(
     category: OptionalCategory,
-    callback: () => void,
-): void {
-    if (hasConsent(category)) {
-        callback();
+    setup: () => Teardown,
+): () => void {
+    const integration: Integration = { category, setup, stop: null };
 
-        return;
-    }
+    integrations.add(integration);
+    reconcile();
 
-    const callbacks = waiting.get(category) ?? new Set<() => void>();
-    callbacks.add(callback);
-    waiting.set(category, callbacks);
+    return () => {
+        integrations.delete(integration);
+
+        if (integration.stop !== null) {
+            const stop = integration.stop;
+            integration.stop = null;
+            stop();
+        }
+    };
 }
 
 /* ------------------------------------------------------------------ *
