@@ -16,6 +16,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
+import { useDebouncedSearch } from '@/hooks/use-debounced-search';
 import { projects as projectsRoute } from '@/routes/admin';
 import type { Paginated } from '@/types';
 
@@ -46,6 +47,14 @@ export default function AdminProjects({ q, currency, projects }: Props) {
             maximumFractionDigits: 0,
         }).format(cents / 100);
 
+    const [query, setQuery] = useDebouncedSearch(q, (value) =>
+        router.get(
+            projectsRoute().url,
+            { q: value },
+            { preserveState: true, preserveScroll: true, replace: true },
+        ),
+    );
+
     return (
         <>
             <Head title="Projects" />
@@ -60,17 +69,11 @@ export default function AdminProjects({ q, currency, projects }: Props) {
 
                 <Input
                     type="search"
-                    defaultValue={q}
                     placeholder="Search by name, slug or website"
                     aria-label="Search projects"
                     className="max-w-md"
-                    onChange={(event) =>
-                        router.get(
-                            projectsRoute().url,
-                            { q: event.target.value },
-                            { preserveState: true, replace: true },
-                        )
-                    }
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
                 />
 
                 <Card

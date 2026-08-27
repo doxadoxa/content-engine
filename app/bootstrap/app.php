@@ -9,6 +9,7 @@ use App\Http\Middleware\RequireAdministrator;
 use App\Http\Middleware\RequireEntitlement;
 use App\Http\Middleware\RequireProjectOwner;
 use App\Http\Middleware\SecurityHeaders;
+use App\Http\Middleware\ThrottleRegistration;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -56,6 +57,10 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->web(append: [
             SecurityHeaders::class,
+            // Fortify owns the registration route and will not throttle it —
+            // see the middleware for why this is a group entry rather than a
+            // route change.
+            ThrottleRegistration::class,
             HandleAppearance::class,
             // Before Inertia, deliberately: Inertia\Middleware::handle
             // registers its shared data on the way *in*, so a project resolved

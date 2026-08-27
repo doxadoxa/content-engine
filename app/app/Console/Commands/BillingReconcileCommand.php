@@ -124,7 +124,17 @@ class BillingReconcileCommand extends Command
             match ($theirs->status) {
                 BillingStatus::PastDue => $subscriptions->markPastDue($project),
                 BillingStatus::Canceled => $subscriptions->cancel($project, $theirs->canceledAt),
-                default => null,
+                // Healthy again — and this arm is the single most important
+                // repair the command makes. When the *payment finally
+                // succeeded* webhook is the one that got lost, the row sits at
+                // past due: generation refused, and the grace quietly
+                // cancelling a customer who has paid. Without this the command
+                // counted that as drift, logged that it had corrected it,
+                // printed the row, and changed nothing.
+                default => $subscription->fill([
+                    'status' => $theirs->status,
+                    'grace_ends_at' => null,
+                ])->save(),
             };
 
             // Loudly. A projection that drifted is evidence a webhook was lost,

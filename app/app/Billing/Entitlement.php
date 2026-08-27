@@ -70,12 +70,17 @@ final readonly class Entitlement
             return false;
         }
 
-        // Read from the dates, not from the column — the same rule the trial is
-        // held to. `billing:sweep` is what makes the *record* say a grace ran
+        // Read from the dates rather than from the column, and from *both* sets
+        // of dates. `billing:sweep` is what makes the record say a window ran
         // out; if delivery waited for that, a stopped scheduler would keep
-        // publishing for a customer whose dunning ended a week ago, which is
+        // publishing for somebody whose trial or dunning ended a week ago —
         // precisely the failure the sweep's own docblock warns about.
-        if ($this->subscription?->graceHasExpired() === true) {
+        //
+        // The first version of this closed the hole for dunning and left it
+        // open for trials, which is the larger of the two: every project starts
+        // on a trial and only some ever reach dunning.
+        if ($this->subscription?->graceHasExpired() === true
+            || $this->subscription?->trialHasExpired() === true) {
             return false;
         }
 

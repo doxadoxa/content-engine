@@ -1,4 +1,4 @@
-import { Form, Head } from '@inertiajs/react';
+import { Form, Head, Link } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { logout } from '@/routes';
@@ -36,8 +36,16 @@ export default function VerifyEmail({ status }: Props) {
                         </Button>
 
                         <div>
+                            {/*
+                             * A POST, like every other logout in this
+                             * application. `/logout` is POST-only, so an
+                             * anchor here answered 405 — on the one screen a
+                             * brand-new account is guaranteed to see.
+                             */}
                             <Button asChild variant="ghost" size="sm">
-                                <a href={logout().url}>Log out</a>
+                                <Link href={logout()} as="button">
+                                    Log out
+                                </Link>
                             </Button>
                         </div>
                     </>

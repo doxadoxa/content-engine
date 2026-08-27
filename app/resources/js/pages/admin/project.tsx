@@ -309,7 +309,12 @@ export default function AdminProject({
                                 label="At Stripe"
                                 value={
                                     subscription.stripe_id
-                                        ? `${subscription.stripe_id} · ${subscription.stripe_status}`
+                                        ? [
+                                              subscription.stripe_id,
+                                              subscription.stripe_status,
+                                          ]
+                                              .filter(Boolean)
+                                              .join(' · ')
                                         : 'nothing behind it'
                                 }
                             />

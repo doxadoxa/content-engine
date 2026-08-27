@@ -267,6 +267,55 @@ final class StripeWebhookTest extends TestCase
     }
 
     #[Test]
+    public function an_update_carrying_no_period_does_not_reset_the_month(): void
+    {
+        $this->send($this->subscriptionPayload('active'));
+        app(Entitlements::class)->record($this->project, Metric::Articles, 6);
+
+        // A metadata-only edit, or a payload shape the `items` fallback misses.
+        // Falling back to "now" here never equals the stored period start, so
+        // it read as a renewal: the customer's month moved and their counters
+        // were wiped — a fresh month's quota for one month's money.
+        $payload = $this->subscriptionPayload('active', eventId: 'evt_touch');
+        unset(
+            $payload['data']['object']['current_period_start'],
+            $payload['data']['object']['current_period_end'],
+        );
+
+        $this->send($payload);
+
+        $this->assertSame(6, $this->entitlement()->used(Metric::Articles));
+        $this->assertSame('synced', StripeEvent::query()->whereKey('evt_touch')->sole()->outcome);
+    }
+
+    #[Test]
+    public function a_trialing_subscription_is_stored_as_trialing(): void
+    {
+        // Stored as `active`, it disagreed with Stripe for ever: the panel
+        // flagged it and `billing:reconcile` "corrected" the same drift every
+        // night without it going away.
+        $this->send($this->subscriptionPayload('trialing'));
+
+        $this->assertSame(BillingStatus::Trialing, ProjectSubscription::query()->sole()->status);
+    }
+
+    #[Test]
+    public function a_subscription_set_to_cancel_at_period_end_keeps_that_date(): void
+    {
+        $payload = $this->subscriptionPayload('active');
+        $payload['data']['object']['canceled_at'] = Carbon::now()->getTimestamp();
+
+        $this->send($payload);
+
+        // Still active, and still carrying the date it will end on — which
+        // clearing `canceled_at` on the healthy path threw away.
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame(BillingStatus::Active, $subscription->status);
+        $this->assertNotNull($subscription->canceled_at);
+    }
+
+    #[Test]
     public function a_subscription_with_no_period_on_it_is_still_created(): void
     {
         // The event id is claimed the moment it arrives, so an event that fell

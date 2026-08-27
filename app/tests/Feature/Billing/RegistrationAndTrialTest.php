@@ -85,6 +85,32 @@ final class RegistrationAndTrialTest extends TestCase
     }
 
     #[Test]
+    public function signing_up_is_throttled(): void
+    {
+        // Fortify reads `fortify.limiters` for login, two-factor, passkeys and
+        // verification — and not for registration, whose route carries only
+        // `guest:`. A limiter defined and never referenced is worse than none,
+        // because it reads as a control that exists.
+        for ($i = 0; $i < 5; $i++) {
+            $this->post('/register', [
+                'name' => 'Alex Moreira',
+                'email' => "alex{$i}@example.test",
+                'password' => 'a-strong-enough-password',
+                'password_confirmation' => 'a-strong-enough-password',
+            ]);
+        }
+
+        $this->post('/register', [
+            'name' => 'One Too Many',
+            'email' => 'sixth@example.test',
+            'password' => 'a-strong-enough-password',
+            'password_confirmation' => 'a-strong-enough-password',
+        ])->assertStatus(429);
+
+        $this->assertNull(User::query()->where('email', 'sixth@example.test')->first());
+    }
+
+    #[Test]
     public function an_unverified_account_cannot_reach_the_wizard(): void
     {
         // The earliest honest place for this. The wizard's first step fetches

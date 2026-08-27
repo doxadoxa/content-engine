@@ -65,20 +65,23 @@ function noticeFor(billing: Billing): Notice | null {
     if (billing.refusal) {
         // Each reason gets its own button, because they are not the same
         // problem: a card that failed is a payment method, an ended trial is a
-        // price, and a quota that ran out is neither.
-        const upgrade =
-            billing.refusal.code === 'past_due'
-                ? undefined
-                : { href: billingIndex().url, label: 'Choose a plan' };
+        // price, and a quota that ran out is neither. The first version of this
+        // reasoned its way to giving `past_due` no button at all, which left a
+        // customer whose card bounced looking at a stopped engine with no route
+        // to the portal — the exact case that most needs one.
+        const failed = billing.refusal.code === 'past_due';
 
         return {
-            icon:
-                billing.refusal.code === 'past_due'
-                    ? CreditCard
-                    : AlertTriangle,
+            icon: failed ? CreditCard : AlertTriangle,
             tone: 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200',
             message: billing.refusal.message,
-            action: billing.refusal.code === 'quota' ? undefined : upgrade,
+            action:
+                billing.refusal.code === 'quota'
+                    ? undefined
+                    : {
+                          href: billingIndex().url,
+                          label: failed ? 'Fix payment' : 'Choose a plan',
+                      },
         };
     }
 

@@ -64,9 +64,19 @@ final class StripeCheckoutTest extends TestCase
     #[Test]
     public function choosing_a_plan_sends_the_owner_to_a_checkout_for_it(): void
     {
+        // Asserted as Inertia sees it. Both buttons are Inertia forms, so the
+        // request is an XHR — and a plain 302 to another origin is followed by
+        // the fetch rather than by the browser, blocked by CORS, and dead-ends
+        // on an Inertia error. 409 with `X-Inertia-Location` is the one answer
+        // the client understands as "leave this application".
         $this->actingAs($this->owner)
+            ->withHeaders(['X-Inertia' => 'true'])
             ->post(route('billing.checkout'), ['plan' => 'medium'])
-            ->assertRedirect('https://checkout.stripe.test/medium/'.$this->project->getKey());
+            ->assertStatus(409)
+            ->assertHeader(
+                'X-Inertia-Location',
+                'https://checkout.stripe.test/medium/'.$this->project->getKey(),
+            );
 
         // The recorded call, not only the redirect: a stub returning a fixed
         // URL would pass while sending everybody to the wrong plan.
@@ -146,8 +156,13 @@ final class StripeCheckoutTest extends TestCase
     public function the_portal_is_where_a_card_is_changed(): void
     {
         $this->actingAs($this->owner)
+            ->withHeaders(['X-Inertia' => 'true'])
             ->post(route('billing.portal'))
-            ->assertRedirect('https://portal.stripe.test/'.$this->owner->getKey());
+            ->assertStatus(409)
+            ->assertHeader(
+                'X-Inertia-Location',
+                'https://portal.stripe.test/'.$this->owner->getKey(),
+            );
     }
 
     #[Test]

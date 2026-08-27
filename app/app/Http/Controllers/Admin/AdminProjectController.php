@@ -186,7 +186,23 @@ class AdminProjectController extends Controller
         /** @var array<string, int|null> $overrides */
         $overrides = $validated['overrides'] ?? [];
 
-        $this->subscriptions->assign($project, (string) $validated['plan'], overrides: $overrides);
+        // Where Stripe is behind the subscription, its window is kept.
+        //
+        // Assigning with no dates rewrites the period to now/+1 month and wipes
+        // the counters — and then `billing:reconcile` sees a period that
+        // disagrees with Stripe's that night and rolls it back, resetting them
+        // a second time. The plan is ours to change from here; the billing
+        // period belongs to whatever is charging for it.
+        $current = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
+        $keepWindow = $current !== null && $current->stripe_id !== null;
+
+        $this->subscriptions->assign(
+            $project,
+            (string) $validated['plan'],
+            at: $keepWindow ? $current->period_started_at : null,
+            until: $keepWindow ? $current->period_ends_at : null,
+            overrides: $overrides,
+        );
 
         return $this->recorded($request, 'plan.assigned', $project, $before);
     }
@@ -214,8 +230,18 @@ class AdminProjectController extends Controller
             'status' => BillingStatus::Trialing,
             'trial_ends_at' => $ends,
             'period_ends_at' => $ends,
+            'grace_ends_at' => null,
             'canceled_at' => null,
         ])->save();
+
+        // And start the engine again, because `billing:sweep` is what paused
+        // it. Extending a lapsed trial and leaving the project paused gives
+        // somebody their days back and no engine to spend them on — the
+        // administrator would have to notice and press a second control, and
+        // the one they pressed would appear to have done nothing.
+        if ($project->status !== ProjectStatus::Active) {
+            $project->forceFill(['status' => ProjectStatus::Active])->save();
+        }
 
         $this->entitlements->forget($project);
 

@@ -9,10 +9,11 @@ use App\Billing\PlanCatalog;
 use App\Models\Project;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
 use InvalidArgumentException;
+use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 /**
@@ -36,7 +37,7 @@ class BillingCheckoutController extends Controller
     ) {}
 
     /** Start paying for this project. */
-    public function checkout(Request $request): RedirectResponse
+    public function checkout(Request $request): Response
     {
         $project = $this->projectOrFail();
         $user = $this->userOrFail($request);
@@ -74,13 +75,20 @@ class BillingCheckoutController extends Controller
             ]);
         }
 
-        // `away()`, because the destination is Stripe's and not a route of
-        // ours — an Inertia redirect would try to fetch it as a page.
-        return redirect()->away($url);
+        // `Inertia::location()`, not `redirect()->away()`.
+        //
+        // Both buttons that reach this are Inertia forms, so the request is an
+        // XHR. A plain 302 to `checkout.stripe.com` is followed by the fetch
+        // rather than by the browser, CORS blocks the cross-origin response,
+        // and the button dead-ends on an Inertia error instead of reaching
+        // Stripe. `Inertia::location()` answers 409 with `X-Inertia-Location`,
+        // which is the one thing the client understands as "leave this
+        // application".
+        return Inertia::location($url);
     }
 
     /** Change the card, the plan, or their mind. */
-    public function portal(Request $request): RedirectResponse
+    public function portal(Request $request): Response
     {
         $user = $this->userOrFail($request);
         $this->projectOrFail();
@@ -97,7 +105,7 @@ class BillingCheckoutController extends Controller
             ]);
         }
 
-        return redirect()->away($url);
+        return Inertia::location($url);
     }
 
     private function projectOrFail(): Project

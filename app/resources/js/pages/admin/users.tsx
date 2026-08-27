@@ -16,6 +16,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
+import { useDebouncedSearch } from '@/hooks/use-debounced-search';
 import { projects as projectsRoute, users as usersRoute } from '@/routes/admin';
 import type { Paginated } from '@/types';
 
@@ -44,6 +45,14 @@ type Props = {
  * line item in a billing change.
  */
 export default function AdminUsers({ q, users }: Props) {
+    const [query, setQuery] = useDebouncedSearch(q, (value) =>
+        router.get(
+            usersRoute().url,
+            { q: value },
+            { preserveState: true, preserveScroll: true, replace: true },
+        ),
+    );
+
     return (
         <>
             <Head title="Accounts" />
@@ -58,17 +67,11 @@ export default function AdminUsers({ q, users }: Props) {
 
                 <Input
                     type="search"
-                    defaultValue={q}
                     placeholder="Search by name or email"
                     aria-label="Search accounts"
                     className="max-w-md"
-                    onChange={(event) =>
-                        router.get(
-                            usersRoute().url,
-                            { q: event.target.value },
-                            { preserveState: true, replace: true },
-                        )
-                    }
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
                 />
 
                 <Card

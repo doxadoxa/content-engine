@@ -80,5 +80,6 @@ class FortifyServiceProvider extends ServiceProvider
         // a trial that costs us real money at a provider. By IP alone, because
         // there is no address to key on yet that an abuser does not choose.
         RateLimiter::for('register', fn (Request $request): Limit => Limit::perHour(5)->by((string) $request->ip()));
+
     }
 }

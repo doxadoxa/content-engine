@@ -151,21 +151,36 @@ class StripeWebhook
         $status = StripeBillingProvider::statusFrom($rawStatus);
         $existing = $this->existing($project);
 
-        // Falls back to now when Stripe sends no window we can read. A missing
-        // period used to mean a subscription with no local row was never
-        // created at all — the event was already claimed, so Stripe's week of
-        // retries went to a no-op and a completed checkout produced no
-        // entitlement whatsoever.
-        $periodStart = $this->at($object, 'current_period_start') ?? Carbon::now();
-        $periodEnd = $this->at($object, 'current_period_end') ?? $periodStart->copy()->addMonth();
+        // Read, and left null when Stripe sends no window we can recognise —
+        // a metadata-only edit, or a payload shape the `items` fallback misses.
+        //
+        // The fallback to "now" belongs only to a subscription being *created*.
+        // Applied to an existing one it is a bug with a bill attached: "now"
+        // never equals the stored period start, so an update carrying no window
+        // read as a renewal, moved the customer's month and wiped their
+        // counters — handing them a fresh month's quota for one month's money,
+        // which is the thing `stripe_events` exists to prevent.
+        $periodStart = $this->at($object, 'current_period_start');
+        $periodEnd = $this->at($object, 'current_period_end');
 
         $outcome = match (true) {
             $existing === null, $existing->plan !== $plan => $this->arrange(
-                $project, $plan, $object, $periodStart, $periodEnd, $existing === null,
+                $project,
+                $plan,
+                $object,
+                $periodStart ?? Carbon::now(),
+                $periodEnd ?? ($periodStart ?? Carbon::now())->copy()->addMonth(),
+                $existing === null,
             ),
-            $existing->period_started_at === null,
-            ! $existing->period_started_at->equalTo($periodStart) => $this->rolled(
-                $project, $periodStart, $periodEnd,
+            // A renewal needs a window Stripe actually named. No window is not
+            // a new period; it is an update about something else.
+            $periodStart !== null && (
+                $existing->period_started_at === null
+                || ! $existing->period_started_at->equalTo($periodStart)
+            ) => $this->rolled(
+                $project,
+                $periodStart,
+                $periodEnd ?? $periodStart->copy()->addMonth(),
             ),
             default => 'synced',
         };
@@ -245,14 +260,24 @@ class StripeWebhook
         match ($status) {
             BillingStatus::PastDue => $this->subscriptions->markPastDue($project),
             BillingStatus::Canceled => $this->subscriptions->cancel($project),
-            default => $this->clearDunning($project),
+            default => $this->healthy($project, $status),
         };
     }
 
     /**
      * Back to healthy: a card that worked, or a subscription reactivated.
+     *
+     * The status Stripe reported, not `Active` flatly. A `trialing`
+     * subscription stored as active is a row that disagrees with Stripe for
+     * ever — the panel flags it, and `billing:reconcile` "corrects" the same
+     * drift every night without it ever going away.
+     *
+     * And `canceled_at` is left alone. `sync()` writes it from the payload a
+     * few lines earlier: a subscription set to cancel at period end is still
+     * active and still carries the date it will end on, so clearing it here
+     * threw away the only record of that.
      */
-    private function clearDunning(Project $project): void
+    private function healthy(Project $project, BillingStatus $status): void
     {
         $subscription = $this->existing($project);
 
@@ -261,9 +286,8 @@ class StripeWebhook
         }
 
         $subscription->fill([
-            'status' => BillingStatus::Active,
+            'status' => $status,
             'grace_ends_at' => null,
-            'canceled_at' => null,
         ])->save();
     }
 

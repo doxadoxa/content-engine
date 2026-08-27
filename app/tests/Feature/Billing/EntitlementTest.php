@@ -380,6 +380,27 @@ final class EntitlementTest extends TestCase
     }
 
     #[Test]
+    public function publishing_stops_when_a_trial_runs_out_too(): void
+    {
+        // The grace hole was closed first and this one left open, which is the
+        // larger of the two: every project starts on a trial and only some ever
+        // reach dunning.
+        ProjectSubscription::factory()->forProject($this->project)->trialExpired()->create();
+
+        $this->assertFalse($this->entitlement()->mayGenerate());
+        $this->assertFalse($this->entitlement()->mayPublish());
+    }
+
+    #[Test]
+    public function publishing_continues_while_a_trial_still_has_time(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->trialing()->create();
+
+        $this->assertTrue($this->entitlement()->mayGenerate());
+        $this->assertTrue($this->entitlement()->mayPublish());
+    }
+
+    #[Test]
     public function publishing_continues_while_the_grace_still_has_time(): void
     {
         ProjectSubscription::factory()->forProject($this->project)->pastDue()->create();
