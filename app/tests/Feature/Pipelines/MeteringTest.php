@@ -274,6 +274,21 @@ final class MeteringTest extends TestCase
     }
 
     #[Test]
+    public function an_empty_pipeline_option_is_no_filter_at_all(): void
+    {
+        $this->start();
+        $this->talk();
+
+        // `when($pipeline, ...)` treats an empty string as "no filter" and a
+        // `!== null` guard treats it as one, so `--pipeline=` used to print a
+        // full unfiltered engine breakdown with the whole-project total
+        // silently missing from underneath it.
+        $this->cost('metering-test', ['--pipeline' => ''])
+            ->assertSuccessful()
+            ->expectsOutputToContain('Everything this project cost');
+    }
+
+    #[Test]
     public function narrowing_to_one_pipeline_leaves_the_conversation_out_of_the_total(): void
     {
         $this->start();

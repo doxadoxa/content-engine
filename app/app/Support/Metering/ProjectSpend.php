@@ -6,6 +6,7 @@ namespace App\Support\Metering;
 
 use App\Models\AssistantMessage;
 use App\Models\PipelineRun;
+use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Support\Tenancy\ProjectScope;
 use DateTimeInterface;
@@ -72,9 +73,25 @@ final readonly class ProjectSpend
         ];
     }
 
+    /**
+     * Steps, not runs — and the difference is the whole usefulness of this
+     * class.
+     *
+     * `pipeline_runs.cost_micros` is written once, by
+     * {@see PipelineRun::rollUpTotals()}, when a run settles. It
+     * is the sum of that run's steps, so for anything finished the two agree
+     * exactly. For anything *running* they do not: a `content_studio` run that
+     * has already bought twenty pictures reports zero at the run level until it
+     * finishes, and a run whose worker died reports zero for ever.
+     *
+     * A cost ceiling reading the run level would therefore be blind to precisely
+     * the case it exists for — the runaway that is still running — and would
+     * disagree with the metering screen, which reads steps. So this reads
+     * steps, which are written as each one settles.
+     */
     private static function pipelines(Project $project, DateTimeInterface $since, ?DateTimeInterface $until): int
     {
-        return (int) PipelineRun::acrossProjects()
+        return (int) PipelineStep::acrossProjects()
             ->where('project_id', $project->getKey())
             ->where('created_at', '>=', $since)
             ->when($until !== null, fn ($query) => $query->where('created_at', '<', $until))

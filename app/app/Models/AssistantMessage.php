@@ -37,7 +37,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $output_tokens
  * @property int $cost_micros
  * @property int|null $latency_ms
- * @property int $price_list_version
+ * @property int|null $price_list_version
  */
 class AssistantMessage extends Model
 {
@@ -70,7 +70,6 @@ class AssistantMessage extends Model
         'input_tokens' => 0,
         'output_tokens' => 0,
         'cost_micros' => 0,
-        'price_list_version' => 1,
     ];
 
     /** @return BelongsTo<AssistantThread, $this> */

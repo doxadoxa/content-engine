@@ -11,9 +11,11 @@ use App\Ai\ConversationRequest;
 use App\Ai\ConversationResponse;
 use App\Ai\ConversationUsage;
 use App\Ai\FakeConversationGateway;
+use App\Enums\PipelineRunStatus;
 use App\Models\AssistantMessage;
 use App\Models\AssistantThread;
 use App\Models\PipelineRun;
+use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Support\Metering\ProjectSpend;
 use App\Support\Tenancy\CurrentProject;
@@ -137,9 +139,68 @@ final class AssistantSpendTest extends TestCase
     }
 
     #[Test]
+    public function every_leg_of_a_turn_is_priced_and_not_only_the_last(): void
+    {
+        // A turn is a loop: the model is asked, it reaches for a tool, it is
+        // asked again. Each leg is a separate bill, and the earlier ones are
+        // the *expensive* ones — each carries the whole conversation plus every
+        // tool result so far, where the final leg is the leanest of them.
+        // Pricing the last record alone drops the costly majority.
+        $this->gateway->willReply('Both done.', [
+            ['name' => 'read_content_state'],
+            ['name' => 'read_content_state'],
+        ]);
+
+        $said = app(Assistant::class)->reply($this->project, $this->thread(), 'How are we doing?');
+
+        // Two tools plus the answer is three calls: 36 in, 102 out.
+        $this->assertSame(36, $said->input_tokens);
+        $this->assertSame(102, $said->output_tokens);
+        $this->assertSame(240, $said->cost_micros);
+    }
+
+    #[Test]
+    public function an_unpriced_row_does_not_claim_a_price_list(): void
+    {
+        $this->gateway->willReply('Noted.', [['name' => 'read_content_state']]);
+
+        app(Assistant::class)->reply($this->project, $this->thread(), 'How are we doing?');
+
+        $asked = AssistantMessage::query()->where('role', AssistantMessage::USER)->sole();
+
+        // "Priced under list 1" is a false claim about a row nothing priced,
+        // and it is the claim a re-pricing pass would select on.
+        $this->assertNull($asked->price_list_version);
+        $this->assertNotNull(
+            AssistantMessage::query()->where('role', AssistantMessage::ASSISTANT)->sole()->price_list_version,
+        );
+    }
+
+    #[Test]
+    public function spend_is_counted_while_a_run_is_still_running(): void
+    {
+        // The case a cost ceiling exists for. `pipeline_runs.cost_micros` is
+        // written once, when a run settles, so a run that has already bought
+        // twenty pictures reports zero at the run level — and a run whose
+        // worker died reports zero for ever.
+        $run = PipelineRun::factory()->for($this->project)->create([
+            'status' => PipelineRunStatus::Running,
+            'cost_micros' => 0,
+        ]);
+
+        PipelineStep::factory()->for($run, 'pipelineRun')->create([
+            'step_key' => 'illustrate_draft',
+            'cost_micros' => 7_500,
+        ]);
+
+        $this->assertSame(7_500, ProjectSpend::for($this->project, now()->subDay())->pipelineMicros);
+    }
+
+    #[Test]
     public function what_a_project_cost_is_both_doors_and_not_only_the_engine(): void
     {
-        PipelineRun::factory()->for($this->project)->create(['cost_micros' => 4_000]);
+        $run = PipelineRun::factory()->for($this->project)->create(['cost_micros' => 4_000]);
+        PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => 4_000]);
 
         $this->gateway->willReply('Understood.');
         app(Assistant::class)->reply($this->project, $this->thread(), 'Hello.');
@@ -158,7 +219,8 @@ final class AssistantSpendTest extends TestCase
         app(Assistant::class)->reply($this->project, $this->thread(), 'Hello.');
 
         AssistantMessage::query()->update(['created_at' => now()->subDays(40)]);
-        PipelineRun::factory()->for($this->project)->create([
+        $run = PipelineRun::factory()->for($this->project)->create(['created_at' => now()->subDays(40)]);
+        PipelineStep::factory()->for($run, 'pipelineRun')->create([
             'cost_micros' => 9_000,
             'created_at' => now()->subDays(40),
         ]);

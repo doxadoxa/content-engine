@@ -89,14 +89,25 @@ class FakeConversationGateway implements ConversationGateway
             ];
         }
 
+        // One model call per tool, plus the one that says what they found.
+        //
+        // The fake already runs the tools for real; this makes it honest about
+        // what that *costs*, which is the half that was missing. A turn is a
+        // loop — the provider is asked, it reaches for something, it is asked
+        // again — and each leg is a separate bill carrying the whole
+        // conversation so far. A fake reporting one flat figure however many
+        // tools ran would let a gateway that prices only the final leg pass
+        // every test in this suite, which is exactly what happened.
+        $legs = count($calls) + 1;
+
         return new ConversationResponse(
             text: $turn['text'],
             toolCalls: $calls,
             provider: 'fake',
             model: 'fake-conversation',
-            inputTokens: 12,
-            outputTokens: 34,
-            latencyMs: 1,
+            inputTokens: 12 * $legs,
+            outputTokens: 34 * $legs,
+            latencyMs: $legs,
         );
     }
 

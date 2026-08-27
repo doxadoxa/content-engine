@@ -37,7 +37,14 @@ return new class extends Migration
             // Which price list priced this turn, for the reason
             // `pipeline_runs` carries the same column: re-pricing publishes a
             // new answer knowingly rather than quietly restating the past.
-            $table->unsignedInteger('price_list_version')->default(1)->after('latency_ms');
+            //
+            // Nullable, unlike the run's, because most rows here were never
+            // priced at all — the person's message and the tool receipts call
+            // no model. A default would stamp them all with a version number,
+            // and "priced under list 1" is a false claim about a row that was
+            // never priced under anything. It is also the claim a re-pricing
+            // pass would select on.
+            $table->unsignedInteger('price_list_version')->nullable()->after('latency_ms');
         });
 
         Schema::table('assistant_messages', function (Blueprint $table): void {

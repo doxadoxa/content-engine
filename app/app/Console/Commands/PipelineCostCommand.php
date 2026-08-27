@@ -49,7 +49,12 @@ class PipelineCostCommand extends Command
         $days = max(1, (int) $this->option('days'));
         $since = now()->subDays($days);
         $pipelineOption = $this->option('pipeline');
-        $pipeline = is_string($pipelineOption) ? $pipelineOption : null;
+
+        // Normalised once, here. `when($pipeline, ...)` below treats an empty
+        // string as "no filter" while a `!== null` guard treats it as a filter,
+        // so `--pipeline=` used to print an unfiltered engine breakdown with
+        // the per-unit and whole-project figures silently missing from it.
+        $pipeline = is_string($pipelineOption) && $pipelineOption !== '' ? $pipelineOption : null;
 
         // acrossProjects and an explicit where: a console command runs outside
         // a request and has no current tenant, so the scope would otherwise

@@ -6,6 +6,7 @@ namespace App\Ai;
 
 use App\Ai\Agents\EngineAgent;
 use App\Ai\Contracts\ConversationGateway;
+use App\Pipelines\Core\PipelineRunner;
 use Illuminate\Support\Str;
 use LarAgent\Context\SessionIdentity;
 use LarAgent\History\InMemoryChatHistory;
@@ -108,6 +109,19 @@ class LaragentConversationGateway implements ConversationGateway
     /**
      * What the turn spent, read off the agent's usage storage.
      *
+     * **Every round-trip, not the last one.** A turn is a loop: LarAgent calls
+     * the model, runs whatever it reached for, and calls again — appending one
+     * `UsageRecord` per call — so a turn that used three tools made four
+     * requests. Pricing `getLastUsage()` alone would record the fourth and drop
+     * the three before it, which are the *expensive* ones: each carries the
+     * whole conversation plus every tool result so far, and the final leg is
+     * the leanest of the four. {@see PipelineRunner::meter()}
+     * sums a step's model calls for exactly this reason.
+     *
+     * The storage is safe to aggregate whole because its identity is minted per
+     * turn — see the random `chat-` key above — so there is nothing in it but
+     * this turn.
+     *
      * Null where the provider reported nothing at all, because a failure before
      * the first request really did cost nothing and a zero-cost row next to a
      * zero token count is a claim that a call was made. Where usage *is*
@@ -117,17 +131,23 @@ class LaragentConversationGateway implements ConversationGateway
      */
     private function usage(EngineAgent $agent, ModelChoice $choice, float|int $startedAt): ?ConversationUsage
     {
-        $usage = $agent->usageStorage()?->getLastUsage();
+        $storage = $agent->usageStorage();
+        $last = $storage?->getLastUsage();
 
-        if ($usage === null) {
+        if ($storage === null || $last === null) {
             return null;
         }
 
+        $totals = $storage->aggregate();
+
         return new ConversationUsage(
             provider: $choice->provider,
-            model: $usage->modelName ?: $choice->model,
-            inputTokens: (int) $usage->promptTokens,
-            outputTokens: (int) $usage->completionTokens,
+            // The last record's, because every call of one turn is the same
+            // model — the agent is built with one — and the last is the one
+            // that answered.
+            model: $last->modelName ?: $choice->model,
+            inputTokens: (int) ($totals['total_prompt_tokens'] ?? 0),
+            outputTokens: (int) ($totals['total_completion_tokens'] ?? 0),
             latencyMs: (int) ((hrtime(true) - $startedAt) / 1_000_000),
         );
     }

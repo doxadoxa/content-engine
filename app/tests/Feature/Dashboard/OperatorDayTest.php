@@ -765,7 +765,10 @@ final class OperatorDayTest extends TestCase
     #[Test]
     public function the_screen_totals_both_doors_rather_than_only_the_engine(): void
     {
-        PipelineRun::factory()->create(['cost_micros' => 250_000]);
+        // The step carries the money, and the run's own column is only a
+        // roll-up written when it settles — so the spend figures read steps.
+        $run = PipelineRun::factory()->create(['cost_micros' => 250_000]);
+        PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => 250_000]);
 
         $gateway = app(ConversationGateway::class);
         $this->assertInstanceOf(FakeConversationGateway::class, $gateway);
