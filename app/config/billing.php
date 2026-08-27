@@ -65,22 +65,6 @@ return [
 
     'trial' => [
         'days' => (int) env('BILLING_TRIAL_DAYS', 3),
-        'limits' => [
-            'articles' => 3,
-            'social_posts' => 5,
-            'site_audits' => 1,
-            'content_plans' => 1,
-            'assistant_turns' => 20,
-            'locales' => 1,
-            'seats' => 2,
-            'channels' => 1,
-            'weekly_target' => 7,
-            'audit_refresh_days' => 7,
-            // $5. Measured, the caps above cost about $2.83, so this is
-            // headroom rather than a limit anybody reaches — it is here for the
-            // retry storm and the creative visitor, not for the customer.
-            'cost_micros' => 5_000_000,
-        ],
     ],
 
     /*
@@ -125,6 +109,45 @@ return [
     'plans' => [
 
         1 => [
+
+            /*
+             * The free window is a plan like any other, and it lives in the
+             * versioned list for the same reason the paid ones do: a project
+             * keeps what it was opened under. Held outside this list it was the
+             * one entitlement re-pricing could still change under somebody
+             * mid-trial, which is the exact thing the versioning exists to
+             * prevent.
+             *
+             * Every consumer — the tick, the middleware, the banner — asks a
+             * trial the same questions it asks Medium, so it arrives in the
+             * same shape.
+             */
+            'trial' => [
+                'name' => 'Trial',
+                'price_cents' => 0,
+                'self_serve' => false,
+                'stripe_price' => null,
+                'limits' => [
+                    'articles' => 3,
+                    'social_posts' => 5,
+                    'site_audits' => 1,
+                    'content_plans' => 1,
+                    'assistant_turns' => 20,
+                    'locales' => 1,
+                    'seats' => 2,
+                    'channels' => 1,
+                    // Seven, so three days really do deliver one a day — what
+                    // Medium sells is a daily article, and a trial that cannot
+                    // demonstrate the cadence demonstrates something else.
+                    'weekly_target' => 7,
+                    'audit_refresh_days' => 7,
+                    // $5. Measured, the caps above cost about $2.83, so this is
+                    // headroom rather than a limit anybody reaches — it is here
+                    // for the retry storm and the creative visitor, not for the
+                    // customer.
+                    'cost_micros' => 5_000_000,
+                ],
+            ],
 
             'small' => [
                 'name' => 'Small',

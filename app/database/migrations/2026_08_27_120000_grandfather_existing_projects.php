@@ -51,11 +51,16 @@ return new class extends Migration
             'status' => BillingStatus::Active->value,
             'limit_overrides' => '{}',
             'period_started_at' => $now,
-            // A year, not a month. Nothing renews these — there is no provider
-            // behind them — and a month would quietly expire the grandfathered
-            // projects thirty days after the deploy, which is the same outage
-            // this migration exists to prevent, merely postponed.
-            'period_ends_at' => $now->copy()->addYear(),
+            // A month, like every other period, and `billing:sweep` rolls it
+            // over. A longer window was the first instinct — nothing renews
+            // these, so why expire them — and it was wrong twice over: a period
+            // is also the window the *cost ceiling* sums spend across, so a
+            // year-long one accumulates a year of spend against a fuse sized
+            // for a month and trips it about ninety days in, with a refusal
+            // that deliberately says nothing diagnostic. That is the same
+            // outage this migration exists to prevent, merely postponed and
+            // made harder to read.
+            'period_ends_at' => $now->copy()->addMonth(),
             'trial_ends_at' => null,
             'grace_ends_at' => null,
             'canceled_at' => null,
@@ -67,14 +72,22 @@ return new class extends Migration
         ])->all());
     }
 
+    /**
+     * Deliberately nothing.
+     *
+     * There is no predicate that distinguishes a row this migration wrote from
+     * one `billing:assign <project> medium` wrote — no provider id, no payer,
+     * the same plan — which is exactly how somebody's comped subscription would
+     * be deleted by a rollback. And the cost of leaving a row is small and
+     * visible: a project stays entitled, which is the state it was in before
+     * this migration ran. The cost of deleting the wrong one is a customer
+     * whose engine stops for a reason nobody can reconstruct.
+     *
+     * The table itself is dropped by `create_billing_tables`, so rolling the
+     * batch back does clean up; this only refuses to guess halfway.
+     */
     public function down(): void
     {
-        // Only the rows this made: a subscription somebody has since bought
-        // must survive a rollback of the grandfathering.
-        DB::table('project_subscriptions')
-            ->whereNull('stripe_id')
-            ->where('plan', 'medium')
-            ->whereNull('billing_user_id')
-            ->delete();
+        //
     }
 };

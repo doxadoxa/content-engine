@@ -7,6 +7,7 @@ namespace Tests\Feature\Billing;
 use App\Billing\Entitlement;
 use App\Billing\Entitlements;
 use App\Billing\Metric;
+use App\Billing\Plan;
 use App\Billing\PlanCatalog;
 use App\Billing\Subscriptions;
 use App\Enums\BillingStatus;
@@ -16,6 +17,7 @@ use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Testing\PendingCommand;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -301,6 +303,156 @@ final class EntitlementTest extends TestCase
         // not make every unnamed limit unlimited.
         $this->assertSame(10, $this->entitlement()->limit('social_posts'));
         $this->assertSame(10, app(PlanCatalog::class)->get('small')->limit('articles'));
+    }
+
+    #[Test]
+    public function a_month_that_ended_rolls_over_rather_than_running_for_ever(): void
+    {
+        // Nothing advanced a period before this, and the omission was silent in
+        // the worst way. A period is what the unit counters are keyed to *and*
+        // the window the cost ceiling sums spend across — so a subscription
+        // whose month never turns exhausts its quotas once and never resets,
+        // and accumulates spend against a one-month fuse indefinitely.
+        $subscription = ProjectSubscription::factory()->forProject($this->project)->create([
+            'period_started_at' => now()->subMonths(2),
+            'period_ends_at' => now()->subMonth(),
+        ]);
+
+        app(Entitlements::class)->record($this->project, Metric::Articles, 30);
+        $this->assertSame(0, $this->entitlement()->remaining(Metric::Articles));
+
+        $this->sweep()->assertSuccessful();
+
+        $this->assertSame(30, $this->entitlement()->remaining(Metric::Articles));
+        $this->assertTrue($subscription->fresh()?->period_ends_at?->isFuture());
+    }
+
+    #[Test]
+    public function a_rolled_period_starts_where_the_last_one_ended(): void
+    {
+        $ended = now()->subDays(2)->startOfDay();
+
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'period_started_at' => $ended->copy()->subMonth(),
+            'period_ends_at' => $ended,
+        ]);
+
+        $this->sweep()->assertSuccessful();
+
+        // From the end of the last period, not from now — a sweep that did not
+        // run for two days must not shorten the month it is catching up on.
+        $this->assertTrue(
+            ProjectSubscription::query()->sole()->period_started_at?->equalTo($ended),
+        );
+    }
+
+    #[Test]
+    public function a_provider_backed_period_is_left_for_the_provider_to_move(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+            'period_started_at' => now()->subMonths(2),
+            'period_ends_at' => now()->subMonth(),
+        ]);
+
+        $this->sweep()->assertSuccessful();
+
+        // Where Stripe is the source of truth, the new window arrives on
+        // `customer.subscription.updated` with real dates on it. Inventing one
+        // here would put us out of step with the thing being paid.
+        $this->assertTrue(ProjectSubscription::query()->sole()->period_ends_at?->isPast());
+    }
+
+    #[Test]
+    public function publishing_stops_when_the_grace_runs_out_and_not_when_the_sweep_notices(): void
+    {
+        // Read from the dates, like the trial is. If delivery waited for
+        // `billing:sweep` to flip the column, a stopped scheduler would keep
+        // publishing for somebody whose dunning ended a week ago.
+        ProjectSubscription::factory()->forProject($this->project)->pastDue()->create([
+            'grace_ends_at' => now()->subDay(),
+        ]);
+
+        $entitlement = $this->entitlement();
+
+        $this->assertFalse($entitlement->mayGenerate());
+        $this->assertFalse($entitlement->mayPublish());
+    }
+
+    #[Test]
+    public function publishing_continues_while_the_grace_still_has_time(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->pastDue()->create();
+
+        $this->assertFalse($this->entitlement()->mayGenerate());
+        $this->assertTrue($this->entitlement()->mayPublish());
+    }
+
+    #[Test]
+    public function moving_to_another_plan_does_not_keep_the_last_ones_bespoke_limits(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create([
+            'limit_overrides' => ['articles' => 5_000],
+        ]);
+
+        app(Subscriptions::class)->assign($this->project, 'small');
+
+        // Overrides belong to an arrangement, not to a project, and a plan
+        // change ends the arrangement. Kept, they silently overrode the plan
+        // the customer had just been moved on to.
+        $this->assertSame(10, $this->entitlement()->limit('articles'));
+        $this->assertSame([], ProjectSubscription::query()->sole()->limit_overrides);
+    }
+
+    #[Test]
+    public function an_arrangement_can_still_name_its_own_limits(): void
+    {
+        app(Subscriptions::class)->assign(
+            $this->project,
+            'enterprise',
+            overrides: ['articles' => 5_000],
+        );
+
+        $this->assertSame(5_000, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
+    public function a_trial_keeps_the_limits_it_was_opened_under(): void
+    {
+        // The trial used to be read out of an unversioned corner of the config,
+        // which made it the one entitlement a re-pricing could still change
+        // under somebody mid-trial — and the hardest to catch, because a trial
+        // lasts three days and the drift would show in one of them.
+        app(Subscriptions::class)->startTrial($this->project);
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame('trial', $subscription->plan);
+        $this->assertSame(config('billing.version'), $subscription->plan_version);
+        $this->assertSame(3, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
+    public function the_trial_is_not_something_anybody_can_buy(): void
+    {
+        $keys = array_map(
+            static fn (Plan $plan): string => $plan->key,
+            app(PlanCatalog::class)->selfServe(),
+        );
+
+        $this->assertSame(['small', 'medium'], $keys);
+    }
+
+    /**
+     * `artisan()` is declared as returning `PendingCommand|int`, so without
+     * this every call site would repeat the same annotation.
+     */
+    private function sweep(): PendingCommand
+    {
+        /** @var PendingCommand $pending */
+        $pending = $this->artisan('billing:sweep');
+
+        return $pending;
     }
 
     private function entitlement(): Entitlement

@@ -88,12 +88,16 @@ class Subscriptions
      * the trial's usage into it would sell them twenty-seven articles for the
      * price of thirty.
      */
+    /**
+     * @param  array<string, int|null>  $overrides  limits that differ from the plan's, for this customer
+     */
     public function assign(
         Project $project,
         string $planKey,
         ?User $payer = null,
         ?Carbon $at = null,
         ?Carbon $until = null,
+        array $overrides = [],
     ): ProjectSubscription {
         // Resolved before anything is written, so an unknown plan is a refusal
         // rather than a half-made subscription.
@@ -102,7 +106,7 @@ class Subscriptions
         $at ??= Carbon::now();
         $until ??= $at->copy()->addMonth();
 
-        return DB::transaction(function () use ($project, $plan, $payer, $at, $until): ProjectSubscription {
+        return DB::transaction(function () use ($project, $plan, $payer, $at, $until, $overrides): ProjectSubscription {
             $subscription = $this->find($project);
 
             $attributes = [
@@ -116,6 +120,18 @@ class Subscriptions
                 'trial_ends_at' => null,
                 'grace_ends_at' => null,
                 'canceled_at' => null,
+
+                // Cleared unless this assignment names its own.
+                //
+                // Overrides belong to an *arrangement*, not to a project: they
+                // are how one Enterprise customer's bespoke numbers are held,
+                // and a plan change is the end of that arrangement. Leaving
+                // them was the create path and the update path disagreeing —
+                // create wrote `[]`, update left them standing — so moving an
+                // Enterprise customer down to Small kept every Enterprise
+                // limit and silently ignored the plan they had just been put
+                // on.
+                'limit_overrides' => $overrides,
             ];
 
             if ($payer !== null) {
@@ -126,7 +142,6 @@ class Subscriptions
                 $subscription = ProjectSubscription::query()->create([
                     'project_id' => $project->getKey(),
                     'billing_user_id' => $payer?->getKey(),
-                    'limit_overrides' => [],
                     ...$attributes,
                 ]);
             } else {

@@ -46,6 +46,15 @@ export type Billing = {
     may_generate: boolean;
     refusal: BillingRefusal | null;
     usage: Partial<Record<BillingMetric, BillingUsage>>;
+    /**
+     * The quotas with nothing left in them.
+     *
+     * Separate from `refusal` because running out of articles is not a global
+     * refusal — the engine keeps cutting social posts — but it is still
+     * something the operator has to be told, and `may_generate` alone cannot
+     * say it.
+     */
+    exhausted: BillingMetric[];
     trial_ends_at: string | null;
     period_ends_at: string | null;
 };

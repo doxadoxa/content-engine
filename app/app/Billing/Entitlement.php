@@ -66,7 +66,20 @@ final readonly class Entitlement
      */
     public function mayPublish(): bool
     {
-        return $this->status?->mayPublish() ?? false;
+        if ($this->status === null) {
+            return false;
+        }
+
+        // Read from the dates, not from the column — the same rule the trial is
+        // held to. `billing:sweep` is what makes the *record* say a grace ran
+        // out; if delivery waited for that, a stopped scheduler would keep
+        // publishing for a customer whose dunning ended a week ago, which is
+        // precisely the failure the sweep's own docblock warns about.
+        if ($this->subscription?->graceHasExpired() === true) {
+            return false;
+        }
+
+        return $this->status->mayPublish();
     }
 
     /**
@@ -88,6 +101,10 @@ final readonly class Entitlement
         }
 
         if ($this->status === BillingStatus::PastDue) {
+            // The same sentence either way. Somebody whose grace has also run
+            // out does not need a second, sterner message about the card that
+            // is already the problem — what changes at that point is that
+            // publishing stops too, and that is {@see mayPublish()}'s business.
             return Refusal::pastDue();
         }
 
@@ -164,6 +181,24 @@ final readonly class Entitlement
     }
 
     /**
+     * The quotas with nothing left in them.
+     *
+     * @return list<string>
+     */
+    public function exhausted(): array
+    {
+        $out = [];
+
+        foreach (Metric::cases() as $metric) {
+            if ($this->remaining($metric) === 0) {
+                $out[] = $metric->value;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * What the banner and the paywall render.
      *
      * The cost ceiling is not in here and must not be. It is the one limit a
@@ -181,6 +216,7 @@ final readonly class Entitlement
                 'may_generate' => false,
                 'refusal' => Refusal::noSubscription()->toArray(),
                 'usage' => [],
+                'exhausted' => [],
                 'trial_ends_at' => null,
                 'period_ends_at' => null,
             ];
@@ -206,6 +242,18 @@ final readonly class Entitlement
             'may_generate' => $this->mayGenerate(),
             'refusal' => $this->refusal()?->toArray(),
             'usage' => $usage,
+            // Which quotas are used up, as a list rather than folded into
+            // `refusal`.
+            //
+            // A quota is not a global refusal and must not be reported as one:
+            // a project out of articles can still cut a social post, so
+            // `may_generate` stays true and the engine keeps working. But the
+            // page had no way to say so either — `refusal()` skips the quota
+            // branch when it is asked without a metric, which is how it is
+            // asked here — and the result was that running out of articles was
+            // invisible everywhere except a usage bar on a screen nobody had a
+            // reason to open.
+            'exhausted' => $this->exhausted(),
             'trial_ends_at' => $this->trialEndsAt?->toIso8601String(),
             'period_ends_at' => $this->periodEndsAt?->toIso8601String(),
         ];

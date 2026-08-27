@@ -90,14 +90,25 @@ final class BillingGateTest extends TestCase
     }
 
     #[Test]
-    public function a_spending_route_is_refused_with_the_reason_on_it(): void
+    public function a_spending_route_is_refused_where_a_person_can_see_it(): void
     {
         ProjectSubscription::factory()->forProject($this->project)->trialExpired()->create();
 
         $this->actingAs($this->owner)
+            ->from(route('content.index'))
             ->post(route('content.articles.store'), ['topic' => 'wooden doors'])
-            ->assertRedirect()
-            ->assertSessionHas('billing.code', 'trial_ended');
+            ->assertRedirect();
+
+        // Asserted on the next render rather than on a session key, because a
+        // session key is what the first version of this used and nothing read
+        // it: the operator pressed the button, the page came back unchanged,
+        // and the reason went somewhere no screen looks. The toast hook listens
+        // for Inertia's own flash event, so this is the only assertion that
+        // proves anybody was told.
+        $this->actingAs($this->owner)
+            ->get(route('content.index'))
+            ->assertOk()
+            ->assertSee('trial has ended', escape: false);
     }
 
     #[Test]
@@ -107,10 +118,34 @@ final class BillingGateTest extends TestCase
         app(Entitlements::class)->record($this->project, Metric::Articles, 10);
 
         $this->actingAs($this->owner)
+            ->from(route('content.index'))
             ->post(route('content.articles.store'), ['topic' => 'wooden doors'])
-            ->assertRedirect()
-            ->assertSessionHas('billing.code', 'quota')
-            ->assertSessionHas('billing.metric', 'articles');
+            ->assertRedirect();
+
+        $this->actingAs($this->owner)
+            ->get(route('content.index'))
+            ->assertOk()
+            ->assertSee('articles are used up', escape: false);
+    }
+
+    #[Test]
+    public function a_used_up_quota_is_visible_before_anybody_presses_anything(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+
+        // Running out of articles is not a global refusal — the engine keeps
+        // cutting social posts — so `may_generate` stays true. Which is exactly
+        // why it needs its own prop: without one, the only surface saying
+        // anything was a progress bar on a page nobody had a reason to open.
+        $this->actingAs($this->owner)
+            ->get(route('content.index'))
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('billing.may_generate', true)
+                ->where('billing.refusal', null)
+                ->where('billing.exhausted', ['articles'])
+            );
     }
 
     #[Test]
@@ -124,7 +159,7 @@ final class BillingGateTest extends TestCase
         $this->actingAs($this->owner)
             ->post(route('audit.recheck'))
             ->assertRedirect()
-            ->assertSessionMissing('billing');
+            ->assertSessionMissing('errors');
     }
 
     #[Test]

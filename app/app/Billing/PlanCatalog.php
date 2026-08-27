@@ -79,8 +79,15 @@ class PlanCatalog
         return $plans;
     }
 
-    /** The plans somebody can buy without talking to us. */
-    /** @return list<Plan> */
+    /**
+     * The plans somebody can buy without talking to us.
+     *
+     * Excludes the trial and Enterprise by the same flag, which is right: one
+     * cannot be bought and the other is a conversation, and a "Choose" button
+     * under either would promise a checkout that does not exist.
+     *
+     * @return list<Plan>
+     */
     public function selfServe(?int $version = null): array
     {
         return array_values(array_filter(
@@ -90,25 +97,18 @@ class PlanCatalog
     }
 
     /**
-     * The free window, as a plan.
+     * The free window, which is a plan like any other.
      *
-     * A trial is not a discount on a plan and is not one of the plans with a
-     * flag on it: its limits are its own, and every consumer of an entitlement
-     * — the tick, the middleware, the banner — should be able to ask the same
-     * questions of it that it asks of Medium. So it arrives here in the same
-     * shape as everything else.
+     * Read out of the versioned list under the version it is asked for, not out
+     * of a corner of the config that never moves. Held outside the list it was
+     * the one entitlement a re-pricing could still change under somebody who
+     * was mid-trial — the precise thing versioning exists to prevent — and it
+     * was the easiest to miss, because a trial lasts three days and the drift
+     * would only ever show up in one.
      */
-    public function trial(): Plan
+    public function trial(?int $version = null): Plan
     {
-        /** @var array<string, mixed> $row */
-        $row = config('billing.trial', []);
-
-        return Plan::fromConfig('trial', $this->currentVersion(), [
-            'name' => 'Trial',
-            'price_cents' => 0,
-            'self_serve' => false,
-            'limits' => $row['limits'] ?? [],
-        ]);
+        return $this->get('trial', $version);
     }
 
     public function trialDays(): int

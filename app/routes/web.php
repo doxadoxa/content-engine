@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\PullContentController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\ArticleController;
 use App\Http\Controllers\AssistantController;
+use App\Http\Controllers\BillingCheckoutController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\BrandBriefController;
 use App\Http\Controllers\CalendarController;
@@ -113,6 +114,14 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // Never behind `project.entitled`, which would be the funniest bug in this
     // subsystem — the page you go to *because* you are not entitled.
     Route::get('billing', BillingController::class)->name('billing.index');
+
+    // Out to Stripe. Owner-only, unlike the screen above: reading which quotas
+    // are left is an operator's business, committing the account holder's card
+    // is not. Throttled because each press opens a session at a provider.
+    Route::post('billing/checkout', [BillingCheckoutController::class, 'checkout'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('billing.checkout');
+    Route::post('billing/portal', [BillingCheckoutController::class, 'portal'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('billing.portal');
 
     Route::get('projects', [ProjectController::class, 'index'])->name('projects.index');
     Route::get('projects/{project}/edit', [ProjectController::class, 'edit'])

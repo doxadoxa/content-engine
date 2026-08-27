@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Support\Tenancy\CurrentProject;
 use Closure;
 use Illuminate\Http\Request;
+use Inertia\Inertia;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -59,10 +60,18 @@ final class RequireEntitlement
         // and throwing them onto a paywall page would take away the work they
         // were looking at to tell them about the work they cannot start.
         //
-        // The banner on that screen is already saying the same thing from the
-        // shared props; this is what happens when somebody presses the button
-        // anyway, which they will, because the button is still there for the
-        // one case that matters — the plan that got upgraded in another tab.
-        return back()->with('billing', $refusal->toArray());
+        // `Inertia::flash('toast')`, because that is the only flash this
+        // application actually renders — `resources/js/hooks/use-flash-toast.ts`
+        // reads exactly that key and nothing else. A plain `with('billing', …)`
+        // put the refusal in the session where the shared `billing` prop, which
+        // is computed independently, overrode nothing and read nothing: the
+        // operator pressed the button, the page came back unchanged, and the
+        // reason went to a key nobody looks at.
+        Inertia::flash('toast', [
+            'type' => 'error',
+            'message' => $refusal->message,
+        ]);
+
+        return back();
     }
 }

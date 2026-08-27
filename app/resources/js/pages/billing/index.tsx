@@ -1,6 +1,7 @@
-import { Head } from '@inertiajs/react';
+import { Form, Head } from '@inertiajs/react';
 import { Check, Infinity as InfinityIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
     Card,
     CardContent,
@@ -13,7 +14,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
-import { index } from '@/routes/billing';
+import { checkout, index, portal } from '@/routes/billing';
 import type { Billing, BillingMetric, BillingUsage } from '@/types/billing';
 
 type PlanLimit = { key: string; label: string; value: number | null };
@@ -31,6 +32,13 @@ type Props = {
     plans: PlanCard[];
     currency: string;
     trial_days: number;
+    /**
+     * Whether the viewer may commit the account holder's card. Reading which
+     * quotas are left is an operator's business; spending is not.
+     */
+    can_pay: boolean;
+    /** False until a subscription exists at the provider to manage. */
+    has_provider: boolean;
 };
 
 /**
@@ -46,6 +54,8 @@ export default function BillingPage({
     plans,
     currency,
     trial_days,
+    can_pay,
+    has_provider,
 }: Props) {
     const money = (cents: number) =>
         new Intl.NumberFormat(undefined, {
@@ -64,14 +74,23 @@ export default function BillingPage({
                     title="Plan & usage"
                     description="What this project is allowed to make this period, and what it has made."
                     actions={
-                        entitlement.plan && (
-                            <Badge
-                                variant="outline"
-                                className="rounded-full px-3 py-2"
-                            >
-                                {entitlement.plan.name}
-                            </Badge>
-                        )
+                        <div className="flex items-center gap-2">
+                            {entitlement.plan && (
+                                <Badge
+                                    variant="outline"
+                                    className="rounded-full px-3 py-2"
+                                >
+                                    {entitlement.plan.name}
+                                </Badge>
+                            )}
+                            {can_pay && has_provider && (
+                                <Form action={portal()} method="post">
+                                    <Button type="submit" variant="outline">
+                                        Manage billing
+                                    </Button>
+                                </Form>
+                            )}
+                        </div>
                     }
                 />
 
@@ -87,6 +106,25 @@ export default function BillingPage({
                                 {entitlement.refusal.message} Everything this
                                 project has already made stays here, and
                                 anything approved is still being published.
+                            </CardDescription>
+                        </CardHeader>
+                    </Card>
+                )}
+
+                {entitlement.exhausted.length > 0 && !entitlement.refusal && (
+                    <Card
+                        className={`${workspacePanelClass} border-amber-500/30 bg-amber-500/5`}
+                    >
+                        <CardHeader>
+                            <CardTitle className="text-base">
+                                {entitlement.exhausted.length === 1
+                                    ? 'One allowance is used up'
+                                    : 'Some allowances are used up'}
+                            </CardTitle>
+                            <CardDescription>
+                                The engine is still running everything else. A
+                                larger plan raises these for the rest of the
+                                period.
                             </CardDescription>
                         </CardHeader>
                     </Card>
@@ -143,6 +181,26 @@ export default function BillingPage({
                                         </li>
                                     ))}
                                 </ul>
+
+                                {can_pay && !plan.current && (
+                                    <Form
+                                        action={checkout()}
+                                        method="post"
+                                        className="mt-5"
+                                    >
+                                        <input
+                                            type="hidden"
+                                            name="plan"
+                                            value={plan.key}
+                                        />
+                                        <Button
+                                            type="submit"
+                                            className="w-full"
+                                        >
+                                            Choose {plan.name}
+                                        </Button>
+                                    </Form>
+                                )}
                             </CardContent>
                         </Card>
                     ))}

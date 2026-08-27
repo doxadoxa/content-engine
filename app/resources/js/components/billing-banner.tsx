@@ -82,6 +82,23 @@ function noticeFor(billing: Billing): Notice | null {
         };
     }
 
+    // A quota that ran out, when nothing worse is wrong. Not a refusal — the
+    // engine is still running and still making everything else — but the
+    // operator has to hear it somewhere, and until this existed the only
+    // surface was a progress bar on a page they had no reason to open.
+    if (billing.exhausted.length > 0) {
+        const names = billing.exhausted
+            .map((metric) => metric.replaceAll('_', ' '))
+            .join(' and ');
+
+        return {
+            icon: AlertTriangle,
+            tone: 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200',
+            message: `You have used this period's ${names}. Everything else is still running.`,
+            action: { href: billingIndex().url, label: 'See plans' },
+        };
+    }
+
     if (billing.status === 'trialing' && billing.trial_ends_at) {
         const left = daysUntil(billing.trial_ends_at);
 

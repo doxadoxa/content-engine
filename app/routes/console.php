@@ -45,6 +45,23 @@ Schedule::command('billing:sweep')
     ->withoutOverlapping()
     ->runInBackground();
 
+/*
+| And the repair for the other half, which is not optional.
+|
+| Entitlement is read from a local projection of what Stripe told us, so a
+| webhook lost to a deploy, a timeout or a signature mismatch leaves a project
+| silently entitled or silently stopped. Neither raises anything: both look
+| exactly like normal operation, which is what makes them worse than an outage.
+|
+| Daily rather than hourly. It is a net under the webhooks rather than the
+| mechanism, every run is an API call per paying project, and the failure it
+| catches is measured in hours of wrong rather than seconds.
+*/
+Schedule::command('billing:reconcile')
+    ->dailyAt('04:10')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Anything approved goes out. Separate from the tick because publishing is the
 // one step with an outside effect, and it should be readable on its own line.
 Schedule::command('publish:approved')

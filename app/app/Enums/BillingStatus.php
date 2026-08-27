@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
-use App\Billing\ProjectSubscriptionStatus;
-
 /**
  * Where a project stands with us.
  *
@@ -16,9 +14,9 @@ use App\Billing\ProjectSubscriptionStatus;
  * same way. A state nothing branches on is a state that will eventually be
  * branched on wrongly.
  *
- * {@see ProjectSubscriptionStatus} maps the provider's vocabulary
- * onto this one, in one place, so a status Stripe adds next year lands
- * somewhere deliberate rather than as an unrecognised string that reads as
+ * When a provider is put behind these, its vocabulary must be mapped onto this
+ * one in a single place — so a status Stripe adds next year lands somewhere
+ * deliberate rather than arriving as an unrecognised string that reads as
  * entitled.
  */
 enum BillingStatus: string

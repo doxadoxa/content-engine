@@ -9,6 +9,7 @@ use App\Billing\Metric;
 use App\Billing\Plan;
 use App\Billing\PlanCatalog;
 use App\Models\Project;
+use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -47,6 +48,18 @@ class BillingController extends Controller
             'currency' => (string) config('billing.currency', 'eur'),
             'trial_days' => $this->plans->trialDays(),
 
+            // Whether to draw the buttons at all. The routes behind them are
+            // owner-only, so an operator shown a "Choose Medium" button would
+            // be shown a 403 for pressing it — a control that is not allowed to
+            // work should not be drawn rather than drawn and refused.
+            'can_pay' => $this->isOwner($project),
+
+            // Nothing to manage until there is something at the provider. A
+            // trial, a comped plan and a hand-assigned Enterprise deal have no
+            // portal behind them, and sending somebody to one would land them
+            // on a Stripe error.
+            'has_provider' => $entitlement->subscription?->stripe_id !== null,
+
             // Only what somebody can buy without talking to us. Enterprise is a
             // conversation and a custom price; putting a "Choose" button under
             // it would promise a checkout that does not exist.
@@ -59,6 +72,19 @@ class BillingController extends Controller
                 $this->plans->selfServe(),
             ),
         ]);
+    }
+
+    private function isOwner(Project $project): bool
+    {
+        $user = request()->user();
+
+        if (! $user instanceof User) {
+            return false;
+        }
+
+        $membership = $user->projects()->whereKey($project->getKey())->first();
+
+        return $membership?->getAttribute('pivot')?->getAttribute('role') === 'owner';
     }
 
     /**

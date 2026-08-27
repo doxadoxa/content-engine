@@ -107,9 +107,8 @@ class ProjectSubscription extends Model
     {
         $catalog = app(PlanCatalog::class);
 
-        $plan = $this->plan === 'trial'
-            ? $catalog->trial()
-            : $catalog->get($this->plan, $this->plan_version);
+        // The trial goes through the same versioned lookup as everything else.
+        $plan = $catalog->get($this->plan, $this->plan_version);
 
         $overrides = $this->limit_overrides;
 
