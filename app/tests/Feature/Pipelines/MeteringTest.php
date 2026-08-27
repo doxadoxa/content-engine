@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Pipelines;
 
+use App\Ai\Assistant\Assistant;
+use App\Ai\Contracts\ConversationGateway;
 use App\Ai\Contracts\ModelGateway;
+use App\Ai\FakeConversationGateway;
 use App\Ai\FakeModelGateway;
 use App\Ai\ModelCatalog;
+use App\Models\AssistantThread;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
@@ -241,6 +245,49 @@ final class MeteringTest extends TestCase
     }
 
     #[Test]
+    public function the_cost_command_reports_the_conversation_beside_the_engine(): void
+    {
+        $this->start();
+        $this->talk();
+
+        // Both doors, and the sum. The engine's spend on its own was the whole
+        // report for as long as this command existed, which is how a project
+        // that had been talked to all month could read as costing what its
+        // pipelines cost.
+        $this->cost('metering-test')
+            ->assertSuccessful()
+            ->expectsOutputToContain('Assistant turns')
+            ->expectsOutputToContain('Everything this project cost');
+    }
+
+    #[Test]
+    public function a_project_that_was_only_ever_talked_to_is_not_reported_as_free(): void
+    {
+        $this->talk();
+
+        // No runs at all, so the command used to say "nothing here" and stop —
+        // over a project that had spent real money through the second door.
+        $this->cost('metering-test')
+            ->assertSuccessful()
+            ->expectsOutputToContain('No pipeline runs')
+            ->expectsOutputToContain('over 1 turns');
+    }
+
+    #[Test]
+    public function narrowing_to_one_pipeline_leaves_the_conversation_out_of_the_total(): void
+    {
+        $this->start();
+        $this->talk();
+
+        // A conversation belongs to no pipeline, so printing it under a filter
+        // that excludes it by construction would make the total wrong on
+        // purpose.
+        $this->cost('metering-test', ['--pipeline' => 'demo'])
+            ->assertSuccessful()
+            ->doesntExpectOutputToContain('Everything this project cost');
+    }
+
+    #[Test]
     public function the_cost_command_refuses_an_unknown_project(): void
     {
         $this->cost('no-such-project')
@@ -303,12 +350,21 @@ final class MeteringTest extends TestCase
         );
     }
 
+    /** One metered turn through the second door. */
+    private function talk(): void
+    {
+        $gateway = app(ConversationGateway::class);
+        $this->assertInstanceOf(FakeConversationGateway::class, $gateway);
+        $gateway->willReply('Noted.');
+
+        app(Assistant::class)->reply($this->project, AssistantThread::start('Costing'), 'Hello.');
+    }
+
     /**
      * `artisan()` is declared as returning `PendingCommand|int`, so without
      * this every call site would repeat the same annotation to chain
      * assertions onto it.
-     */
-    /**
+     *
      * @param  array<string, mixed>  $options
      */
     private function cost(string $project, array $options = []): PendingCommand

@@ -198,8 +198,12 @@ return [
                 'claude-sonnet-5' => ['input' => 3_000_000, 'output' => 15_000_000],
                 'claude-haiku-4-5-20251001' => ['input' => 1_000_000, 'output' => 5_000_000],
                 // The fake gateway's model, so tests exercise the same costing
-                // path as production instead of a branch that skips it.
+                // path as production instead of a branch that skips it. The
+                // conversation gateway has its own, because it is a second door
+                // (§3.3) and an unpriced model would let the assistant meter
+                // pass its tests by recording an honest-looking zero.
                 'fake-model' => ['input' => 1_000_000, 'output' => 2_000_000],
+                'fake-conversation' => ['input' => 1_000_000, 'output' => 2_000_000],
             ],
 
             // Version 2 — read from the providers' own pricing pages on
@@ -240,6 +244,7 @@ return [
                 'text-embedding-3-small' => ['input' => 20_000, 'output' => 0],
 
                 'fake-model' => ['input' => 1_000_000, 'output' => 2_000_000],
+                'fake-conversation' => ['input' => 1_000_000, 'output' => 2_000_000],
             ],
 
         ],

@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Dashboard;
 
+use App\Ai\Assistant\Assistant;
+use App\Ai\Contracts\ConversationGateway;
+use App\Ai\FakeConversationGateway;
 use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Enums\WebhookEvent;
+use App\Models\AssistantThread;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
@@ -749,6 +753,37 @@ final class OperatorDayTest extends TestCase
                 ->where('by_step.0.step_key', 'write_draft')
                 ->has('by_pipeline', 1)
                 ->has('trend', 1)
+                // The second door, which this screen described in its own
+                // subtitle — "assistant spend" — while never showing it.
+                ->where('assistant.turns', 0)
+                ->where('assistant.cost_micros', 0)
+                ->where('spend.pipeline_micros', 250_000)
+                ->where('spend.total_micros', 250_000)
+            );
+    }
+
+    #[Test]
+    public function the_screen_totals_both_doors_rather_than_only_the_engine(): void
+    {
+        PipelineRun::factory()->create(['cost_micros' => 250_000]);
+
+        $gateway = app(ConversationGateway::class);
+        $this->assertInstanceOf(FakeConversationGateway::class, $gateway);
+        $gateway->willReply('Noted.');
+
+        app(Assistant::class)->reply($this->project, AssistantThread::start('Costing'), 'Hello.');
+
+        $this->actingAs($this->operator)
+            ->get(route('metering.index'))
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('assistant.turns', 1)
+                // 12 in and 34 out on `fake-conversation`, at $1 and $2 per
+                // million: 12 + 68.
+                ->where('assistant.cost_micros', 80)
+                ->where('assistant.average_micros', 80)
+                ->where('spend.assistant_micros', 80)
+                ->where('spend.total_micros', 250_080)
             );
     }
 

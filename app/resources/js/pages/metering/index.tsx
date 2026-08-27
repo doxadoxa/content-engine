@@ -5,6 +5,7 @@ import {
     Gauge,
     Layers,
     ListTree,
+    MessagesSquare,
     TrendingUp,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -85,6 +86,20 @@ type Props = {
         cost_micros: number;
         average_micros: number | null;
     };
+    /** The second door (§3.3): what talking to the engine cost. */
+    assistant: {
+        turns: number;
+        input_tokens: number;
+        output_tokens: number;
+        cost_micros: number;
+        average_micros: number | null;
+    };
+    /** Both doors summed. The only figure that answers "what did this cost". */
+    spend: {
+        pipeline_micros: number;
+        assistant_micros: number;
+        total_micros: number;
+    } | null;
     social: SocialCost | null;
 };
 
@@ -97,6 +112,8 @@ export default function Metering({
     by_pipeline,
     trend,
     per_unit,
+    assistant,
+    spend,
     social,
 }: Props) {
     const peak = Math.max(1, ...trend.map((point) => point.cost_micros));
@@ -121,7 +138,20 @@ export default function Metering({
                     }
                 />
 
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <Stat
+                        icon={Coins}
+                        iconClassName="bg-amber-500/10 text-amber-600 dark:text-amber-300"
+                        label="Total spend"
+                        value={money(
+                            spend?.total_micros ??
+                                by_pipeline.reduce(
+                                    (sum, row) => sum + row.cost_micros,
+                                    0,
+                                ),
+                        )}
+                        hint="automated work and conversation together"
+                    />
                     <Stat
                         icon={CircleDollarSign}
                         iconClassName="bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
@@ -134,16 +164,19 @@ export default function Metering({
                         hint={`${per_unit.units} item${per_unit.units === 1 ? '' : 's'} with automated work`}
                     />
                     <Stat
-                        icon={Coins}
-                        iconClassName="bg-amber-500/10 text-amber-600 dark:text-amber-300"
-                        label="Total spend"
-                        value={money(
-                            by_pipeline.reduce(
-                                (sum, row) => sum + row.cost_micros,
-                                0,
-                            ),
-                        )}
-                        hint={`${by_pipeline.reduce((sum, row) => sum + row.runs, 0)} runs`}
+                        icon={MessagesSquare}
+                        iconClassName="bg-sky-500/10 text-sky-600 dark:text-sky-300"
+                        label="Assistant"
+                        value={money(assistant.cost_micros)}
+                        hint={
+                            assistant.turns === 0
+                                ? 'no conversation in this window'
+                                : `${assistant.turns} turn${assistant.turns === 1 ? '' : 's'}, ${
+                                      assistant.average_micros === null
+                                          ? '—'
+                                          : money(assistant.average_micros)
+                                  } each`
+                        }
                     />
                     <Stat
                         icon={ListTree}

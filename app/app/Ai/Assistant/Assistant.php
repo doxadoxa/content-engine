@@ -7,9 +7,12 @@ namespace App\Ai\Assistant;
 use App\Ai\Contracts\ConversationGateway;
 use App\Ai\ConversationFailed;
 use App\Ai\ConversationRequest;
+use App\Ai\ConversationUsage;
+use App\Ai\ModelCatalog;
 use App\Models\AssistantMessage;
 use App\Models\AssistantThread;
 use App\Models\Project;
+use App\Support\Metering\ProjectSpend;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -50,6 +53,7 @@ final class Assistant
     public function __construct(
         private readonly ConversationGateway $gateway,
         private readonly MarketingTools $tools,
+        private readonly ModelCatalog $catalog,
     ) {}
 
     public function reply(Project $project, AssistantThread $thread, string $message): AssistantMessage
@@ -83,7 +87,13 @@ final class Assistant
             // and the obvious response — ask again — starts it twice.
             $done = $e instanceof ConversationFailed ? $e->toolCalls : [];
 
-            return DB::transaction(function () use ($thread, $done, $e): AssistantMessage {
+            // What the broken turn had already spent, if anything. A turn that
+            // ran three tools and fell over on the fourth request bought those
+            // three, and the row that says so is the apology — there is no
+            // other row for this turn to hang its cost on.
+            $spent = $e instanceof ConversationFailed ? $e->usage : null;
+
+            return DB::transaction(function () use ($thread, $done, $e, $spent): AssistantMessage {
                 $this->recordTools($thread, $done);
 
                 return AssistantMessage::query()->create([
@@ -93,6 +103,7 @@ final class Assistant
                         ? 'I could not finish that just now — '.$e->getMessage()
                         : 'I started the work above, but could not finish writing back — '
                             .$e->getMessage().' Nothing needs doing twice.',
+                    ...$this->meter($spent),
                 ]);
             });
         }
@@ -109,10 +120,53 @@ final class Assistant
                 'assistant_thread_id' => $thread->getKey(),
                 'role' => AssistantMessage::ASSISTANT,
                 'body' => $response->text,
-                'input_tokens' => $response->inputTokens,
-                'output_tokens' => $response->outputTokens,
+                ...$this->meter($response->usage()),
             ]);
         });
+    }
+
+    /**
+     * What a turn cost, as columns.
+     *
+     * The same columns a pipeline step carries, under the same names, because
+     * the only reason to meter this at all is that one query can then ask what
+     * a project has spent — see {@see ProjectSpend} —
+     * and two shapes for one question is how such a query comes to sum half of
+     * it.
+     *
+     * An unmeasured turn writes nothing rather than zeroes. Zero tokens at zero
+     * cost is a claim that a call was made and was free; the absence of a
+     * provider is the claim that no call was made at all, which is what the
+     * columns already say by defaulting.
+     *
+     * Priced at today's list rather than at the thread's, and the version is
+     * stored beside the figure. A conversation is not a run: it has no start
+     * that a price could be pinned to, and its turns can be days apart.
+     *
+     * @return array<string, mixed>
+     */
+    private function meter(?ConversationUsage $usage): array
+    {
+        if ($usage === null) {
+            return [];
+        }
+
+        $version = $this->catalog->priceListVersion();
+
+        return [
+            'provider' => $usage->provider,
+            'model' => $usage->model,
+            'input_tokens' => $usage->inputTokens,
+            'output_tokens' => $usage->outputTokens,
+            'cost_micros' => $this->catalog->cost(
+                $usage->model,
+                $usage->inputTokens,
+                $usage->outputTokens,
+                $version,
+            ),
+            'latency_ms' => $usage->latencyMs,
+            'price_list_version' => $version,
+        ];
     }
 
     /**

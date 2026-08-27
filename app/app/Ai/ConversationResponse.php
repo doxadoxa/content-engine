@@ -26,4 +26,21 @@ final readonly class ConversationResponse
         public int $outputTokens,
         public int $latencyMs,
     ) {}
+
+    /**
+     * The spend half of this turn, in the shape a failed turn reports it too.
+     *
+     * {@see Assistant\Assistant} prices one of these rather than five loose
+     * arguments, so the succeeding and failing paths cannot drift apart.
+     */
+    public function usage(): ConversationUsage
+    {
+        return new ConversationUsage(
+            provider: $this->provider,
+            model: $this->model,
+            inputTokens: $this->inputTokens,
+            outputTokens: $this->outputTokens,
+            latencyMs: $this->latencyMs,
+        );
+    }
 }

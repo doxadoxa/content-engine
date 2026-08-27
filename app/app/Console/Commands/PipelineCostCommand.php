@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\AssistantMessage;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Support\Metering\PostCostReport;
+use App\Support\Metering\ProjectSpend;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -60,6 +62,11 @@ class PipelineCostCommand extends Command
         if (! $runs->clone()->exists()) {
             $this->components->info("No pipeline runs for {$project->name} in the last {$days} days.");
 
+            // Not a return, any more. A project that was only ever talked to
+            // has spent real money and used to be reported as free, which is
+            // the exact shape of the bug this whole phase exists to close.
+            $this->assistant($project, $since, $pipeline);
+
             return self::SUCCESS;
         }
 
@@ -69,9 +76,50 @@ class PipelineCostCommand extends Command
         $this->byStep($project->getKey(), $since, $pipeline);
         $this->perRun($runs->clone()->count(), (int) $runs->clone()->sum('cost_micros'));
         $this->perUnit($project->getKey(), $since, $pipeline);
+        $this->assistant($project, $since, $pipeline);
         $this->publishedPost($project, $since, $pipeline);
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The second door's bill, and then the sum of both.
+     *
+     * Skipped when `--pipeline` narrows the report, for the reason
+     * {@see publishedPost()} is: a conversation belongs to no pipeline, and
+     * printing it under a filter that excludes it by construction would make
+     * the total below wrong on purpose.
+     */
+    private function assistant(Project $project, \DateTimeInterface $since, ?string $pipeline): void
+    {
+        if ($pipeline !== null) {
+            return;
+        }
+
+        $turns = AssistantMessage::acrossProjects()
+            ->where('project_id', $project->getKey())
+            ->where('created_at', '>=', $since)
+            ->whereNotNull('provider');
+
+        $count = (int) $turns->clone()->count();
+        $spent = (int) $turns->clone()->sum('cost_micros');
+        $spend = ProjectSpend::for($project, $since);
+
+        $this->newLine();
+        $this->components->info('Both doors — the engine, and the conversation');
+
+        $this->components->twoColumnDetail(
+            'Assistant turns',
+            $count === 0
+                ? '— (nobody talked to it in this window)'
+                : $this->money($spent)." over {$count} turns, ".$this->money(intdiv($spent, $count)).' each',
+        );
+
+        $this->components->twoColumnDetail('Pipelines', $this->money($spend->pipelineMicros));
+        $this->components->twoColumnDetail(
+            '<options=bold>Everything this project cost</>',
+            '<options=bold>'.$this->money($spend->totalMicros()).'</>',
+        );
     }
 
     private function byStep(string $projectId, \DateTimeInterface $since, ?string $pipeline): void
