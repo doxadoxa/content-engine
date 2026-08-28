@@ -8,6 +8,7 @@ use App\Billing\Contracts\BillingProvider;
 use App\Billing\PlanCatalog;
 use App\Billing\TrialEligibility;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\Request;
@@ -67,23 +68,43 @@ class BillingCheckoutController extends Controller
         // existing subscriber through it would leave two of them at Stripe —
         // billed for both, while the one local row followed whichever webhook
         // arrived last.
-        try {
-            if ($this->provider->changePlan($user, $project, $plan)) {
-                Inertia::flash('toast', [
-                    'type' => 'success',
-                    'message' => "This project is on {$plan->name} now. Stripe will settle the difference on your next invoice.",
-                ]);
+        //
+        // Against the *recorded payer*, not whoever pressed the button. A
+        // project can have several owners and only one of them holds the
+        // Cashier subscription, so looking it up under the requester found
+        // nothing, reported "no subscription to change", and fell through to a
+        // checkout — billing a second owner for a project already being paid
+        // for. The requester's own customer record is only relevant when there
+        // is nothing to change.
+        $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
+        $payer = $subscription?->payer;
 
-                return back();
+        if ($subscription?->stripe_id !== null) {
+            // And no fallback from here. Whatever went wrong, opening a
+            // checkout for a project Stripe is already charging for is the one
+            // outcome worse than refusing.
+            try {
+                $changed = $payer instanceof User
+                    && $this->provider->changePlan($payer, $project, $plan);
+            } catch (Throwable $e) {
+                report($e);
+                $changed = false;
             }
-        } catch (Throwable $e) {
-            report($e);
 
-            return back()->with('billing', [
-                'code' => 'plan_change_failed',
-                'message' => 'We could not change the plan just now. Nothing has changed.',
-                'metric' => null,
+            if (! $changed) {
+                return back()->with('billing', [
+                    'code' => 'plan_change_failed',
+                    'message' => 'We could not change the plan just now. Nothing has changed.',
+                    'metric' => null,
+                ]);
+            }
+
+            Inertia::flash('toast', [
+                'type' => 'success',
+                'message' => "This project is on {$plan->name} now. Stripe will settle the difference on your next invoice.",
             ]);
+
+            return back();
         }
 
         try {

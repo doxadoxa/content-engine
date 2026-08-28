@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Entitlements;
 use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
 use App\Http\Requests\ChannelRequest;
 use App\Models\Channel;
+use App\Models\Project;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -25,6 +28,11 @@ use Inertia\Response;
  */
 class ChannelController extends Controller
 {
+    public function __construct(
+        private readonly CurrentProject $current,
+        private readonly Entitlements $entitlements,
+    ) {}
+
     public function index(): Response
     {
         $channels = Channel::query()
@@ -61,6 +69,26 @@ class ChannelController extends Controller
 
     public function store(ChannelRequest $request): RedirectResponse
     {
+        // The plan's channel limit, enforced where a channel is made.
+        //
+        // It was advertised on the pricing table and read by nothing, so a
+        // Small subscriber could connect as many as they liked — including
+        // after downgrading from a plan that allowed them. A shape limit needs
+        // a guard at the mutation that changes the shape; there is no counter
+        // that will notice later.
+        $project = $this->current->get();
+        $limit = $project instanceof Project
+            ? $this->entitlements->for($project)->limit('channels')
+            : null;
+
+        if ($limit !== null && Channel::query()->count() >= $limit) {
+            throw ValidationException::withMessages([
+                'name' => $limit === 1
+                    ? 'This plan connects one publishing channel. A larger plan connects more.'
+                    : "This plan connects {$limit} publishing channels. A larger plan connects more.",
+            ]);
+        }
+
         $channel = Channel::query()->create($request->safe()->all());
 
         Inertia::flash('toast', [

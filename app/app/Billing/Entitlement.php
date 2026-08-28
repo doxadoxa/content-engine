@@ -27,9 +27,17 @@ final readonly class Entitlement
     /**
      * @param  array<string, int>  $usage  counters for the current period
      */
+    /**
+     * @param  Plan|null  $plan  what they bought — the name and the price
+     * @param  Plan|null  $allowance  what bounds them right now, which during a
+     *                                free window is the trial's rather than the
+     *                                purchased plan's
+     * @param  array<string, int>  $usage  counters for the current period
+     */
     public function __construct(
         public ?ProjectSubscription $subscription,
         public ?Plan $plan,
+        public ?Plan $allowance,
         public ?BillingStatus $status,
         public array $usage,
         public int $spentMicros,
@@ -40,7 +48,7 @@ final readonly class Entitlement
     /** A project nobody has ever assigned a plan to. */
     public static function none(): self
     {
-        return new self(null, null, null, [], 0, null, null);
+        return new self(null, null, null, null, [], 0, null, null);
     }
 
     /**
@@ -97,7 +105,7 @@ final readonly class Entitlement
      */
     public function refusal(?Metric $metric = null, int $wanted = 1): ?Refusal
     {
-        if ($this->subscription === null || $this->plan === null || $this->status === null) {
+        if ($this->subscription === null || $this->allowance === null || $this->status === null) {
             return Refusal::noSubscription();
         }
 
@@ -122,7 +130,7 @@ final readonly class Entitlement
         // problem the article count cannot describe, and stopping it with
         // "you have used your articles" would send somebody to buy more of
         // exactly the thing that is going wrong.
-        $ceiling = $this->plan->limit('cost_micros');
+        $ceiling = $this->allowance->limit('cost_micros');
 
         if ($ceiling !== null && $this->spentMicros >= $ceiling) {
             return Refusal::costCeiling();
@@ -145,7 +153,7 @@ final readonly class Entitlement
     /** Null is unlimited, and is never the same answer as zero. */
     public function remaining(Metric $metric): ?int
     {
-        $limit = $this->plan?->limit($metric->value);
+        $limit = $this->allowance?->limit($metric->value);
 
         if ($limit === null) {
             return null;
@@ -174,7 +182,7 @@ final readonly class Entitlement
      */
     public function weeklyTarget(int $stored): int
     {
-        $ceiling = $this->plan?->weeklyTarget();
+        $ceiling = $this->allowance?->weeklyTarget();
 
         return $ceiling === null ? $stored : min($stored, $ceiling);
     }
@@ -182,7 +190,7 @@ final readonly class Entitlement
     /** Null is unlimited. */
     public function limit(string $key): ?int
     {
-        return $this->plan?->limit($key);
+        return $this->allowance?->limit($key);
     }
 
     /**
@@ -232,7 +240,7 @@ final readonly class Entitlement
         foreach (Metric::cases() as $metric) {
             $usage[$metric->value] = [
                 'used' => $this->used($metric),
-                'limit' => $this->plan->limit($metric->value),
+                'limit' => $this->allowance?->limit($metric->value),
                 'remaining' => $this->remaining($metric),
             ];
         }

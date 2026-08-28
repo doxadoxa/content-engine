@@ -121,6 +121,38 @@ class ProjectSubscription extends Model
     }
 
     /**
+     * The plan whose *limits* apply right now.
+     *
+     * Usually the plan they bought. During a free window it is the trial's,
+     * and the difference matters more than it looks: a public trial is a paid
+     * plan at Stripe with free days on the front, so the checkout stamps
+     * `medium` and the subscription arrives as `plan = medium, status =
+     * trialing`. Reading limits from the purchased plan therefore gave every
+     * trial Medium's thirty articles, five hundred assistant turns and — the
+     * one that costs us — a sixty-dollar ceiling in place of five.
+     *
+     * The trial's caps were measured against what three free days actually
+     * produce, so this is not a restriction on top of the trial: it *is* the
+     * trial, applied where it was always supposed to be.
+     *
+     * Bespoke limits still win. An arrangement somebody negotiated does not
+     * stop applying because the first three days are free.
+     */
+    public function entitledPlan(): Plan
+    {
+        $bought = $this->plan();
+
+        if ($this->status !== BillingStatus::Trialing || $this->plan === 'trial') {
+            return $bought;
+        }
+
+        $trial = app(PlanCatalog::class)->trial($this->plan_version);
+        $overrides = $this->limit_overrides;
+
+        return $overrides === [] ? $trial : $trial->with($overrides);
+    }
+
+    /**
      * Whether the free window has run out.
      *
      * Time only. The unit and money caps of a trial are limits like any other

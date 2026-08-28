@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Billing\Entitlements;
 use App\Enums\ProjectStatus;
 use App\Http\Requests\Concerns\ValidatesDutyHours;
 use App\Http\Requests\Concerns\ValidatesFeedUrls;
+use App\Models\Project;
+use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
@@ -47,7 +50,16 @@ class ProjectRequest extends FormRequest
             ...self::feedUrlRules('feed_urls'),
 
             'default_locale' => ['required', 'string', 'max:12', 'regex:/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/'],
-            'locales' => ['array'],
+            // Bounded by the plan, which is where the pricing table's
+            // "Languages" row stops being a claim and becomes a rule. It was
+            // advertised and read by nothing, so a Small subscriber could
+            // publish in as many languages as they typed — including after
+            // downgrading from a plan that allowed them.
+            //
+            // The default locale is always in this array (see
+            // `prepareForValidation()`), so a limit of one means the default
+            // and nothing else, which is exactly what one language is.
+            'locales' => ['array', ...($this->localeLimit() === null ? [] : ['max:'.$this->localeLimit()])],
             'locales.*' => ['string', 'max:12', 'regex:/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/'],
             'status' => ['required', new Enum(ProjectStatus::class)],
 
@@ -70,21 +82,15 @@ class ProjectRequest extends FormRequest
         return [
             'slug.regex' => 'The slug may contain lowercase letters, numbers and single hyphens.',
             'default_locale.regex' => 'Use a BCP 47 tag, for example en or pt-PT.',
+            'locales.max' => $this->localeLimit() === 1
+                ? 'This plan publishes in one language. A larger plan publishes in more.'
+                : 'This plan publishes in :max languages. A larger plan publishes in more.',
             'locales.*.regex' => 'Use BCP 47 tags, for example en or pt-PT.',
             'research_seeds.*.max' => 'A seed is a search term, not a sentence — keep it short.',
             'feed_urls.max' => 'Twenty feeds is the ceiling — this is a whitelist of sources worth reacting to, not a crawler.',
         ];
     }
 
-    /**
-     * The default locale is always published, whatever the operator typed in
-     * the additional-locales field.
-     *
-     * Before validation rather than after: `passedValidation()` merges into the
-     * request, while `safe()` and `validated()` read the validator's own copy —
-     * so a merge there never reaches the controller. Doing it here also means
-     * the locale we add is validated like every other one.
-     */
     protected function prepareForValidation(): void
     {
         $locales = $this->input('locales');
@@ -112,5 +118,29 @@ class ProjectRequest extends FormRequest
                 ))),
             ]);
         }
+    }
+
+    /**
+     * The default locale is always published, whatever the operator typed in
+     * the additional-locales field.
+     *
+     * Before validation rather than after: `passedValidation()` merges into the
+     * request, while `safe()` and `validated()` read the validator's own copy —
+     * so a merge there never reaches the controller. Doing it here also means
+     * the locale we add is validated like every other one.
+     */
+    /**
+     * How many languages this project's plan allows, or null for no bound.
+     *
+     * Read through the current project rather than the route's, because this
+     * request is only ever made about the one being worked in.
+     */
+    private function localeLimit(): ?int
+    {
+        $project = app(CurrentProject::class)->get();
+
+        return $project instanceof Project
+            ? app(Entitlements::class)->for($project)->limit('locales')
+            : null;
     }
 }

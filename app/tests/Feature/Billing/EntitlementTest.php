@@ -438,6 +438,58 @@ final class EntitlementTest extends TestCase
     }
 
     #[Test]
+    public function a_stripe_trial_is_bounded_by_the_trials_caps_and_not_the_plans(): void
+    {
+        // A public trial is a *paid plan with free days on the front*: the
+        // checkout stamps `medium` and the subscription arrives as
+        // `plan = medium, status = trialing`. Reading limits from the purchased
+        // plan gave every trial Medium's thirty articles, five hundred
+        // assistant turns and — the one that costs us — a sixty-dollar ceiling
+        // in place of five.
+        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create([
+            'status' => BillingStatus::Trialing,
+            'trial_ends_at' => now()->addDays(2),
+        ]);
+
+        $entitlement = $this->entitlement();
+
+        $this->assertSame(3, $entitlement->limit('articles'));
+        $this->assertSame(20, $entitlement->limit('assistant_turns'));
+        $this->assertSame(5_000_000, $entitlement->limit('cost_micros'));
+
+        // And the plan they bought is still what they are told they are on.
+        $this->assertSame('Medium', $entitlement->plan->name);
+        $this->assertSame(9_900, $entitlement->plan->priceCents);
+    }
+
+    #[Test]
+    public function the_purchased_plans_limits_apply_the_moment_the_trial_converts(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create([
+            'status' => BillingStatus::Active,
+            'trial_ends_at' => now()->subDay(),
+        ]);
+
+        $this->assertSame(30, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
+    public function a_bespoke_arrangement_survives_its_own_free_window(): void
+    {
+        // An arrangement somebody negotiated does not stop applying because
+        // the first three days are free.
+        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create([
+            'status' => BillingStatus::Trialing,
+            'trial_ends_at' => now()->addDays(2),
+            'limit_overrides' => ['articles' => 400],
+        ]);
+
+        $this->assertSame(400, $this->entitlement()->limit('articles'));
+        // Everything it did not name still comes from the trial.
+        $this->assertSame(5, $this->entitlement()->limit('social_posts'));
+    }
+
+    #[Test]
     public function a_trial_keeps_the_limits_it_was_opened_under(): void
     {
         // The trial used to be read out of an unversioned corner of the config,

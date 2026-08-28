@@ -149,6 +149,11 @@ Plans live in [`config/billing.php`](config/billing.php), versioned the way
 model prices are: re-pricing publishes a new version and never edits a
 published one, so a project keeps what it was sold.
 
+A trial is bounded by the *trial's* limits, not by the plan it will convert to.
+A public trial is a paid plan with free days on the front — the checkout stamps
+`medium` — so limits are read from the plan whose free window is running, and
+the plan somebody bought is still what the interface says they are on.
+
 **The card is taken at the end of the wizard.** Somebody registers, watches the
 engine read their site, confirms the brief — and only then is asked for a card,
 which is the strongest moment to ask and the reason it is not asked at signup.
@@ -168,6 +173,9 @@ There are **two layers of limit**, and they fail differently:
 
 - The **unit quota** — articles, social posts, audits, plans, assistant turns —
   is what the customer agreed to, and it is what a refusal names. It is
+  *reserved* rather than checked and then counted: the guard lives inside the
+  write, because two approvals racing for one remaining unit lock different
+  rows and would otherwise both win. It is
   consumed on *approval*, not on generation: the engine writes eight social
   posts to keep one, and charging for the seven it discarded would make the
   number on the screen meaningless.
@@ -175,6 +183,9 @@ There are **two layers of limit**, and they fail differently:
   cost of goods. It is invisible to the customer and exists for the retry storm
   and the mispriced model, not for legitimate use. The seven discarded drafts
   land here.
+
+The plan's *shape* limits — languages, publishing channels — are enforced where
+the shape changes, since no counter will notice them later.
 
 A plan's article allowance also clamps `weekly_target`, the dial `engine:tick`
 already reads. Clamped on read and never written back, so a downgrade does not

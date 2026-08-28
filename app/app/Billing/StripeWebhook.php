@@ -471,9 +471,15 @@ class StripeWebhook
         // the counters move on `customer.subscription.updated`, which carries
         // the new window — an invoice does not, and renewing from both events
         // would reset a customer's month twice for one renewal.
-        if ($subscription->status->value === 'past_due') {
+        if ($subscription->status === BillingStatus::PastDue) {
             $subscription->fill(['status' => BillingStatus::Active, 'grace_ends_at' => null])->save();
         }
+
+        // Stamped like every other path that changes state, and it was the one
+        // that did not. A newer success processed before an older failure left
+        // the watermark where it was, so the older failure passed `isStale()`
+        // and put the subscription straight back into dunning.
+        $this->stamp($subscription, $happenedAt);
 
         return 'paid';
     }

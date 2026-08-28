@@ -9,6 +9,7 @@ use App\Billing\Metric;
 use App\Enums\ContentItemState;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
+use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
@@ -282,6 +283,64 @@ final class BillingGateTest extends TestCase
         $this->actingAs($this->owner)
             ->postJson(route('studio.accept', $plan), ['version' => 1])
             ->assertStatus(409);
+    }
+
+    #[Test]
+    public function a_plans_channel_limit_is_enforced_where_a_channel_is_made(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        Channel::factory()->create();
+
+        // Advertised on the pricing table and read by nothing, so a Small
+        // subscriber could connect as many as they liked — including after
+        // downgrading from a plan that allowed them. A shape limit needs a
+        // guard at the mutation that changes the shape.
+        $this->actingAs($this->owner)
+            ->post(route('channels.store'), [
+                'name' => 'Second site',
+                'type' => 'webhook',
+                'config' => ['endpoint' => 'https://example.test/api/content'],
+                'secret' => 'a-secret-long-enough-to-sign-with',
+            ])
+            ->assertSessionHasErrors('name');
+
+        $this->assertSame(1, Channel::query()->count());
+    }
+
+    #[Test]
+    public function a_plan_with_unlimited_channels_connects_a_second_one(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create();
+        Channel::factory()->create();
+
+        $this->actingAs($this->owner)
+            ->post(route('channels.store'), [
+                'name' => 'Second site',
+                'type' => 'webhook',
+                'config' => ['endpoint' => 'https://example.test/api/content'],
+                'secret' => 'a-secret-long-enough-to-sign-with',
+            ])
+            ->assertRedirect();
+
+        $this->assertSame(2, Channel::query()->count());
+    }
+
+    #[Test]
+    public function a_plans_language_limit_is_enforced_where_languages_are_chosen(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+
+        $this->actingAs($this->owner)
+            ->patch(route('projects.update', $this->project), [
+                'name' => $this->project->name,
+                'timezone' => $this->project->timezone,
+                'default_locale' => 'en',
+                'locales' => ['pt', 'ru'],
+                'market' => $this->project->market,
+                'weekly_target' => 2,
+                'status' => 'active',
+            ])
+            ->assertSessionHasErrors('locales');
     }
 
     #[Test]

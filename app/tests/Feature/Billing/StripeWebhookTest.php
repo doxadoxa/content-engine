@@ -474,6 +474,31 @@ final class StripeWebhookTest extends TestCase
     }
 
     #[Test]
+    public function an_older_failure_cannot_undo_a_newer_payment(): void
+    {
+        $this->send($this->subscriptionPayload('active', at: Carbon::now()));
+
+        // The mirror of the case above, and the one `paid()` left open: it was
+        // the only state-changing path that did not move the watermark, so a
+        // newer success processed first left the older failure looking current
+        // and it put the subscription straight back into dunning.
+        $this->send($this->invoicePayload(
+            'invoice.payment_succeeded',
+            eventId: 'evt_paid',
+            at: Carbon::now()->addMinutes(2),
+        ));
+
+        $this->send($this->invoicePayload(
+            'invoice.payment_failed',
+            eventId: 'evt_old_failure',
+            at: Carbon::now()->addMinute(),
+        ));
+
+        $this->assertSame(BillingStatus::Active, ProjectSubscription::query()->sole()->status);
+        $this->assertSame('stale', StripeEvent::query()->whereKey('evt_old_failure')->sole()->outcome);
+    }
+
+    #[Test]
     public function a_payment_that_really_is_the_latest_still_clears_the_dunning(): void
     {
         $this->send($this->subscriptionPayload('active', at: Carbon::now()));

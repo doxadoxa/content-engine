@@ -95,6 +95,7 @@ final class StripeCheckoutTest extends TestCase
 
         ProjectSubscription::factory()->forProject($this->project)->create([
             'stripe_id' => 'sub_test',
+            'billing_user_id' => $this->owner->getKey(),
         ]);
 
         $this->actingAs($this->owner)
@@ -103,6 +104,53 @@ final class StripeCheckoutTest extends TestCase
             ->assertRedirect(route('billing.index'));
 
         $this->assertSame('small', $this->provider->planChanges[0]['plan']);
+        $this->assertSame([], $this->provider->checkouts);
+    }
+
+    #[Test]
+    public function a_second_owner_changes_the_plan_rather_than_starting_a_second_subscription(): void
+    {
+        // Only the recorded payer holds the Cashier subscription. Looking it up
+        // under whoever pressed the button found nothing, reported "nothing to
+        // change", and fell through to a checkout — billing a second owner for
+        // a project already being paid for.
+        $this->provider->canChangePlan = true;
+
+        $second = User::factory()->create();
+        $second->projects()->attach($this->project, ['role' => 'owner']);
+
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+            'billing_user_id' => $this->owner->getKey(),
+        ]);
+
+        $this->actingAs($second)
+            ->from(route('billing.index'))
+            ->post(route('billing.checkout'), ['plan' => 'small'])
+            ->assertRedirect(route('billing.index'));
+
+        $this->assertSame([], $this->provider->checkouts);
+        // Against the payer, not the person who pressed it.
+        $this->assertSame($this->owner->getKey(), $this->provider->planChanges[0]['payer']);
+    }
+
+    #[Test]
+    public function a_provider_backed_project_never_falls_back_to_a_second_checkout(): void
+    {
+        $this->provider->canChangePlan = false;
+
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+            'billing_user_id' => $this->owner->getKey(),
+        ]);
+
+        $this->actingAs($this->owner)
+            ->from(route('billing.index'))
+            ->post(route('billing.checkout'), ['plan' => 'small'])
+            ->assertRedirect(route('billing.index'));
+
+        // Whatever went wrong, opening a checkout for a project Stripe is
+        // already charging for is the one outcome worse than refusing.
         $this->assertSame([], $this->provider->checkouts);
     }
 

@@ -122,7 +122,7 @@ class Entitlements
     public function reserve(Project $project, Metric $metric, int $by = 1): bool
     {
         $entitlement = $this->for($project);
-        $limit = $entitlement->plan?->limit($metric->value);
+        $limit = $entitlement->allowance?->limit($metric->value);
 
         if ($limit === null) {
             $this->record($project, $metric, $by);
@@ -180,6 +180,8 @@ class Entitlements
         return new Entitlement(
             subscription: $subscription,
             plan: $subscription->plan(),
+            // What bounds them now, which during a free window is the trial's.
+            allowance: $subscription->entitledPlan(),
             status: $subscription->status,
             usage: $this->usage($project, $period),
             // Both doors. The pipelines' spend and the conversation's, which is
