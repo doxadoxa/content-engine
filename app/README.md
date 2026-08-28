@@ -216,10 +216,14 @@ the billing portal and the reconciler.
 
 ## Running the service
 
-`users.is_admin` is the permission for `/admin` and for Horizon. The
-`HORIZON_ALLOWED_EMAILS` allow-list is kept only to name the first
-administrator on a fresh deployment; it was never a permission model, since it
-cannot be revoked without a deploy and records nothing about who is on it.
+`users.is_admin` is the permission for `/admin` and for Horizon, and the only
+one — nothing else grants either. `HORIZON_ALLOWED_EMAILS` bootstraps the
+column and is no longer consulted when the question is asked: the migration
+grants the flag to the addresses on it, and `DatabaseSeeder` grants it to the
+seeded account when no administrator exists at all, so a fresh deployment still
+has a way in. Left as a second way in it would have kept every fault the column
+was introduced to fix — access surviving a revoked flag, and an account
+registered later with a listed address acquiring it unasked.
 
 Five screens: an overview with **margin per project** — the figure no payment
 provider can compute, because it needs what a customer pays *and* what they

@@ -10,6 +10,7 @@ use App\Billing\Plan;
 use App\Billing\Subscriptions;
 use App\Models\Project;
 use App\Models\User;
+use DateTimeInterface;
 
 /**
  * The only path this application takes to a payment provider.
@@ -57,6 +58,19 @@ interface BillingProvider
      * back to opening a checkout.
      */
     public function changePlan(User $payer, Project $project, Plan $plan): bool;
+
+    /**
+     * Move the provider's own trial end.
+     *
+     * Stripe owns the date it will invoice on. Extending only our copy of it
+     * produces a project that believes it is inside a free window while the
+     * card is charged on the original date — which is the worst possible
+     * version of "we gave you a few more days".
+     *
+     * Returns false when there is no provider-backed subscription to extend,
+     * so the caller can move its own dates instead.
+     */
+    public function extendTrial(User $payer, Project $project, DateTimeInterface $until): bool;
 
     /**
      * Where to send somebody to change their card, their plan, or their mind.

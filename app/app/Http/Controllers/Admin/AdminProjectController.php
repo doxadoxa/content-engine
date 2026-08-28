@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Admin;
 
+use App\Billing\Contracts\BillingProvider;
 use App\Billing\Entitlements;
 use App\Billing\PlanCatalog;
 use App\Billing\Subscriptions;
@@ -20,6 +21,7 @@ use App\Support\Tenancy\ProjectScope;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -42,6 +44,7 @@ class AdminProjectController extends Controller
         private readonly PlanCatalog $plans,
         private readonly Entitlements $entitlements,
         private readonly CurrentProject $current,
+        private readonly BillingProvider $provider,
     ) {}
 
     public function index(Request $request): Response
@@ -181,26 +184,44 @@ class AdminProjectController extends Controller
 
         abort_unless($this->plans->has((string) $validated['plan']), 422);
 
+        $plan = $this->plans->get((string) $validated['plan']);
         $before = $this->snapshot($project);
 
         /** @var array<string, int|null> $overrides */
         $overrides = $validated['overrides'] ?? [];
 
-        // Where Stripe is behind the subscription, its window is kept.
-        //
-        // Assigning with no dates rewrites the period to now/+1 month and wipes
-        // the counters — and then `billing:reconcile` sees a period that
-        // disagrees with Stripe's that night and rolls it back, resetting them
-        // a second time. The plan is ours to change from here; the billing
-        // period belongs to whatever is charging for it.
         $current = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
-        $keepWindow = $current !== null && $current->stripe_id !== null;
+        $atProvider = $current !== null && $current->stripe_id !== null;
 
+        // Where Stripe is charging for it, Stripe has to be told.
+        //
+        // Changing only `project_subscriptions` would leave the customer paying
+        // one tier and receiving another — and the next
+        // `customer.subscription.updated` would read the unchanged metadata and
+        // put the local entitlement back on the old plan, so the change would
+        // also quietly undo itself.
+        if ($atProvider) {
+            $payer = $current->payer;
+
+            if (! $payer instanceof User || ! $this->provider->changePlan($payer, $project, $plan)) {
+                // Refused rather than half-done. A local row that disagrees
+                // with what is being charged is worse than a button that says
+                // it could not do the thing.
+                throw ValidationException::withMessages([
+                    'plan' => 'This subscription is billed by Stripe and the change could not be made there. Nothing has changed.',
+                ]);
+            }
+        }
+
+        // The billing window belongs to whatever is charging for it, so a
+        // provider-backed subscription keeps the one Stripe named — otherwise
+        // `billing:reconcile` would roll it back that night and reset the
+        // counters a second time.
         $this->subscriptions->assign(
             $project,
-            (string) $validated['plan'],
-            at: $keepWindow ? $current->period_started_at : null,
-            until: $keepWindow ? $current->period_ends_at : null,
+            $plan->key,
+            at: $atProvider ? $current->period_started_at : null,
+            until: $atProvider ? $current->period_ends_at : null,
             overrides: $overrides,
         );
 
@@ -225,6 +246,21 @@ class AdminProjectController extends Controller
             : Carbon::now();
 
         $ends = $from->copy()->addDays((int) $validated['days']);
+
+        // Stripe owns the date it will invoice on. Extending only our copy
+        // gives somebody a free window we believe in and Stripe does not — they
+        // are charged on the original date, inside the days we just promised
+        // them, and the next webhook overwrites the local `trialing` state so
+        // the extension disappears as well.
+        if ($subscription->stripe_id !== null) {
+            $payer = $subscription->payer;
+
+            if (! $payer instanceof User || ! $this->provider->extendTrial($payer, $project, $ends)) {
+                throw ValidationException::withMessages([
+                    'days' => 'This trial is held by Stripe and could not be extended there. Nothing has changed.',
+                ]);
+            }
+        }
 
         $subscription->fill([
             'status' => BillingStatus::Trialing,

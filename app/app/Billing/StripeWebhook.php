@@ -104,6 +104,26 @@ class StripeWebhook
                 ? Carbon::createFromTimestamp($payload['created'])
                 : null;
 
+            // The subscription row is locked before that watermark is read, and
+            // the lock is held to commit.
+            //
+            // Claiming the event id serialises *the same* event against itself
+            // and nothing else. Two different events for one project run in
+            // parallel, both read the same `last_event_at`, and both decide
+            // they are the newer one — then the older commits second and
+            // overwrites the status, plan or period the newer just wrote. That
+            // is exactly the reordering the watermark exists to prevent, put
+            // back by the way it was being read.
+            //
+            // A project with no row yet needs no lock: `project_id` is unique
+            // on that table, so two concurrent creations collide on the index.
+            if ($project !== null) {
+                ProjectSubscription::query()
+                    ->where('project_id', $project->getKey())
+                    ->lockForUpdate()
+                    ->first();
+            }
+
             $outcome = match (true) {
                 $this->isStale($project, $type, $happenedAt) => 'stale',
                 $type === 'customer.subscription.created',

@@ -8,6 +8,7 @@ use App\Billing\Contracts\BillingProvider;
 use App\Billing\Contracts\ProviderSubscription;
 use App\Models\Project;
 use App\Models\User;
+use DateTimeInterface;
 
 /**
  * Stripe, without the network.
@@ -43,6 +44,9 @@ class FakeBillingProvider implements BillingProvider
      */
     public bool $canChangePlan = false;
 
+    /** @var list<array{project: string, until: string}> */
+    public array $trialExtensions = [];
+
     /** @var array<string, ProviderSubscription> */
     private array $subscriptions = [];
 
@@ -76,6 +80,20 @@ class FakeBillingProvider implements BillingProvider
             'payer' => (int) $payer->getKey(),
             'project' => $project->getKey(),
             'plan' => $plan->key,
+        ];
+
+        return true;
+    }
+
+    public function extendTrial(User $payer, Project $project, DateTimeInterface $until): bool
+    {
+        if (! $this->canChangePlan) {
+            return false;
+        }
+
+        $this->trialExtensions[] = [
+            'project' => $project->getKey(),
+            'until' => $until->format(DATE_ATOM),
         ];
 
         return true;

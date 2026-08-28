@@ -45,12 +45,35 @@ final class SecurityBoundariesTest extends TestCase
     }
 
     #[Test]
-    public function explicitly_allowed_system_administrator_can_view_horizon(): void
+    public function a_system_administrator_can_view_horizon(): void
     {
-        $user = User::factory()->create(['email' => 'ADMIN@example.test']);
+        $this->assertTrue(
+            Gate::forUser(User::factory()->create(['is_admin' => true]))->allows('viewHorizon'),
+        );
+    }
+
+    #[Test]
+    public function the_allow_list_is_not_a_second_way_in(): void
+    {
+        // It bootstraps the column and no longer answers the question. Left as
+        // an alternative it kept every fault the move to `is_admin` was meant to
+        // fix: an address on the list would still reach every tenant's failed
+        // payloads after the flag had been revoked, and — now that anybody can
+        // register — an account created later with such an address would
+        // acquire the access without anybody granting it.
+        $revoked = User::factory()->create([
+            'email' => 'admin@example.test',
+            'is_admin' => false,
+        ]);
 
         config()->set('horizon.allowed_emails', ['admin@example.test']);
 
-        $this->assertTrue(Gate::forUser($user)->allows('viewHorizon'));
+        $this->assertFalse(Gate::forUser($revoked)->allows('viewHorizon'));
+    }
+
+    #[Test]
+    public function a_guest_may_not_view_horizon(): void
+    {
+        $this->assertFalse(Gate::allows('viewHorizon'));
     }
 }

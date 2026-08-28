@@ -9,6 +9,7 @@ use App\Billing\Contracts\ProviderSubscription;
 use App\Enums\BillingStatus;
 use App\Models\Project;
 use App\Models\User;
+use DateTimeInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -110,6 +111,22 @@ class StripeBillingProvider implements BillingProvider
                 'plan_version' => (string) $plan->version,
             ],
         ]);
+
+        return true;
+    }
+
+    public function extendTrial(User $payer, Project $project, DateTimeInterface $until): bool
+    {
+        $subscription = $payer->subscription($project->getKey());
+
+        if ($subscription === null || ! $subscription->valid()) {
+            return false;
+        }
+
+        // Stripe's own trial end, which is the date it will invoice on. Moving
+        // only our copy would leave a customer being charged during a window we
+        // had told them was free.
+        $subscription->extendTrial(Carbon::instance($until));
 
         return true;
     }

@@ -143,7 +143,18 @@ class ContentStudioController extends Controller
             // are drafts of one, and counting each revision would charge
             // somebody for changing their mind about a month they have not
             // committed to.
-            $this->entitlements->record($updated->project, Metric::ContentPlans);
+            //
+            // Once per *transition*, not once per request. `accept()` allows
+            // re-accepting the version that is already current, so a retry or a
+            // double-submitted button re-ran this and spent another plan — and
+            // with an allowance of one or two, an ordinary duplicate request
+            // could exhaust a customer's period without a single new plan
+            // existing. `wasChanged()` reads the write the locked transaction
+            // actually made, so the second of two concurrent requests sees the
+            // version already equal and counts nothing.
+            if ($updated->wasChanged('assistant_accepted_version')) {
+                $this->entitlements->record($updated->project, Metric::ContentPlans);
+            }
 
             // The goal comes back too, because accepting confirmed it. Without
             // it the screen would show an accepted plan above a goal still

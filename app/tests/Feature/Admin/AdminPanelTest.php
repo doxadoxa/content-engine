@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Admin;
 
+use App\Billing\Contracts\BillingProvider;
 use App\Billing\Entitlements;
+use App\Billing\FakeBillingProvider;
 use App\Billing\Metric;
 use App\Enums\BillingStatus;
 use App\Enums\ProjectStatus;
@@ -254,6 +256,119 @@ final class AdminPanelTest extends TestCase
         $this->assertTrue(
             ProjectSubscription::query()->sole()->trial_ends_at->isSameDay(now()->addDays(7)),
         );
+    }
+
+    #[Test]
+    public function a_provider_backed_plan_change_goes_through_stripe(): void
+    {
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $provider->canChangePlan = true;
+
+        $payer = User::factory()->create();
+        ProjectSubscription::query()->sole()->update([
+            'stripe_id' => 'sub_test',
+            'billing_user_id' => $payer->getKey(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'small'])
+            ->assertRedirect();
+
+        // Changing only the local row would leave the customer paying one tier
+        // and receiving another — and the next `customer.subscription.updated`
+        // would read the unchanged metadata and put the entitlement back.
+        $this->assertSame('small', $provider->planChanges[0]['plan']);
+        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
+    }
+
+    #[Test]
+    public function a_plan_change_stripe_refuses_changes_nothing_here(): void
+    {
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $provider->canChangePlan = false;
+
+        $payer = User::factory()->create();
+        ProjectSubscription::query()->sole()->update([
+            'stripe_id' => 'sub_test',
+            'billing_user_id' => $payer->getKey(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'small'])
+            ->assertSessionHasErrors('plan');
+
+        // A local row that disagrees with what is being charged is worse than
+        // a button that says it could not do the thing.
+        $this->assertSame('medium', ProjectSubscription::query()->sole()->plan);
+    }
+
+    #[Test]
+    public function a_provider_backed_trial_is_extended_at_stripe_too(): void
+    {
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $provider->canChangePlan = true;
+
+        $payer = User::factory()->create();
+        ProjectSubscription::query()->sole()->update([
+            'plan' => 'trial',
+            'status' => BillingStatus::Trialing,
+            'trial_ends_at' => now()->addDay(),
+            'stripe_id' => 'sub_test',
+            'billing_user_id' => $payer->getKey(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/projects/{$this->project->getKey()}/trial", ['days' => 5])
+            ->assertRedirect();
+
+        // Stripe owns the date it invoices on. Moving only our copy gives
+        // somebody a free window we believe in and Stripe does not — charged
+        // during the days we just promised them.
+        $this->assertCount(1, $provider->trialExtensions);
+        $this->assertSame($this->project->getKey(), $provider->trialExtensions[0]['project']);
+    }
+
+    #[Test]
+    public function a_trial_extension_stripe_refuses_changes_nothing_here(): void
+    {
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $provider->canChangePlan = false;
+
+        $ends = now()->addDay();
+
+        ProjectSubscription::query()->sole()->update([
+            'plan' => 'trial',
+            'status' => BillingStatus::Trialing,
+            'trial_ends_at' => $ends,
+            'stripe_id' => 'sub_test',
+            'billing_user_id' => User::factory()->create()->getKey(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/projects/{$this->project->getKey()}/trial", ['days' => 5])
+            ->assertSessionHasErrors('days');
+
+        $this->assertTrue(ProjectSubscription::query()->sole()->trial_ends_at?->isSameDay($ends));
+    }
+
+    #[Test]
+    public function a_comped_trial_with_no_provider_is_still_extended_locally(): void
+    {
+        ProjectSubscription::query()->sole()->update([
+            'plan' => 'trial',
+            'status' => BillingStatus::Trialing,
+            'trial_ends_at' => now()->subWeek(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/projects/{$this->project->getKey()}/trial", ['days' => 5])
+            ->assertRedirect();
+
+        $this->assertTrue(ProjectSubscription::query()->sole()->trial_ends_at->isSameDay(now()->addDays(5)));
     }
 
     #[Test]

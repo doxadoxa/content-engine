@@ -17,22 +17,20 @@ class HorizonServiceProvider extends HorizonApplicationServiceProvider
      * project membership is not sufficient — this is the same question the
      * administrative panel asks, and it is now answered by the same column.
      *
-     * The environment allow-list is kept, and only for what it is good at:
-     * naming the first administrator on a fresh deployment, when there is
-     * nobody who could grant the flag to anybody. As a permission model it was
-     * never one — it cannot be revoked without a deploy, it records nothing
-     * about who is on it, and an address changing hands transfers access to
-     * every tenant's failed payloads silently.
+     * `HORIZON_ALLOWED_EMAILS` bootstraps the column and is not consulted
+     * here. Leaving it as a second way in would have kept every fault the move
+     * was meant to fix: an address on that list would still reach every
+     * tenant's failed payloads after its `is_admin` flag had been revoked, and
+     * an account registered later with such an address — now that anybody can
+     * register — would acquire the access without anybody granting it.
+     *
+     * The list still does the one job it is good at. The migration grants the
+     * flag to the addresses on it, and `DatabaseSeeder` grants it to the seeded
+     * account when no administrator exists at all, so a fresh deployment still
+     * has a way in. What it no longer does is answer this question.
      */
     protected function gate(): void
     {
-        Gate::define('viewHorizon', function (?User $user = null): bool {
-            if ($user === null) {
-                return false;
-            }
-
-            return $user->is_admin
-                || in_array(strtolower($user->email), config('horizon.allowed_emails', []), true);
-        });
+        Gate::define('viewHorizon', fn (?User $user = null): bool => $user?->is_admin === true);
     }
 }
