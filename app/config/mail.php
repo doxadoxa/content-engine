@@ -117,4 +117,24 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Global "Reply-To" Address
+    |--------------------------------------------------------------------------
+    |
+    | The address above is send-only: it lives on the domain verified with the
+    | provider and nobody watches it. Somebody who cannot get past a password
+    | reset will reply to the mail anyway, and without this that reply goes
+    | nowhere anyone reads.
+    |
+    | Optional. An unset address adds no header at all, because Laravel's
+    | `setGlobalAddress` skips a global whose `address` is null.
+    |
+    */
+
+    'reply_to' => [
+        'address' => env('MAIL_REPLY_TO_ADDRESS'),
+        'name' => env('MAIL_REPLY_TO_NAME', env('APP_NAME', 'Laravel')),
+    ],
+
 ];

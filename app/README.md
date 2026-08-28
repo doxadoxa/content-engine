@@ -30,11 +30,12 @@ that stack is reachable by anyone else.
 | <http://localhost:8091/dashboard> | Operator dashboard |
 | <http://localhost:8091/horizon> | Global queue dashboard; email allow-list only |
 | <http://localhost:8091/up> | Application health check |
+| <http://localhost:8026> | Mailpit — every mail the stack sends |
 | `127.0.0.1:5437` | PostgreSQL for host-side tools |
 | `127.0.0.1:6384` | Redis for host-side tools |
 
 All published Compose ports are loopback-only. Override their numbers with
-`CE_APP_PORT`, `CE_DB_PORT`, and `CE_REDIS_PORT`. This Compose file is a local
+`CE_APP_PORT`, `CE_DB_PORT`, `CE_REDIS_PORT`, and `CE_MAIL_PORT`. This Compose file is a local
 development stack: it contains documented local credentials, a shared local
 application key, source mounts, and `APP_DEBUG=true`. It is not a production
 deployment manifest.
@@ -214,6 +215,15 @@ php artisan billing:reconcile [--dry]  # compares local entitlement to Stripe
 projection of what Stripe told us, so a webhook lost to a deploy or a signature
 mismatch leaves a project silently entitled or silently stopped — and neither
 raises anything, because both look exactly like normal operation.
+
+Mail is the one outbound dependency whose failure is silent from the inside:
+an unverified sending domain or a wrong key looks exactly like a healthy
+application. After a deploy, or after changing anything under `MAIL_`, ask the
+provider rather than assume.
+
+```sh
+php artisan mail:probe you@example.com
+```
 
 Stripe sits behind `App\Billing\Contracts\BillingProvider`, held to the same
 two rules as the model and conversation gateways: it is the only door, and the
