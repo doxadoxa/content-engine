@@ -95,7 +95,21 @@ class StripeBillingProvider implements BillingProvider
         // Stripe prorates the difference, and a trial in progress survives the
         // change — where a second checkout would have started a second charge
         // and a second free window.
-        $subscription->swap($price);
+        //
+        // The metadata is rewritten with it, and that is not housekeeping.
+        // `StripeWebhook::planKey()` reads metadata *before* it falls back to
+        // the price, because metadata is what a checkout stamps and it survives
+        // a subscription being edited in the dashboard. So a swap that changed
+        // only the price would emit a `customer.subscription.updated` still
+        // naming the old plan — and the local entitlement would sit on the old
+        // tier indefinitely while Stripe charged the new amount.
+        $subscription->swap($price, [
+            'metadata' => [
+                'project_id' => $project->getKey(),
+                'plan' => $plan->key,
+                'plan_version' => (string) $plan->version,
+            ],
+        ]);
 
         return true;
     }

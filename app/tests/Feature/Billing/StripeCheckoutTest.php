@@ -107,6 +107,48 @@ final class StripeCheckoutTest extends TestCase
     }
 
     #[Test]
+    public function an_admin_resync_moves_the_month_as_well_as_the_status(): void
+    {
+        // The control exists for a missed renewal webhook, and writing only
+        // `period_ends_at` left the local month where it was: counters still
+        // exhausted from a month already paid past, while the button reported
+        // success.
+        $lastMonth = Carbon::now()->subMonth()->startOfDay();
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $subscription = ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+            'period_started_at' => $lastMonth,
+            'period_ends_at' => Carbon::now()->startOfDay(),
+        ]);
+
+        app(Entitlements::class)
+            ->record($this->project, Metric::Articles, 30);
+
+        $thisMonth = Carbon::now()->startOfDay();
+
+        $this->provider->willReport(new ProviderSubscription(
+            id: 'sub_test',
+            status: BillingStatus::Active,
+            rawStatus: 'active',
+            priceId: 'price_medium',
+            periodStart: $thisMonth,
+            periodEnd: $thisMonth->copy()->addMonth(),
+            trialEnd: null,
+            canceledAt: null,
+        ));
+
+        $this->actingAs($admin)
+            ->post("/admin/subscriptions/{$subscription->getKey()}/resync")
+            ->assertRedirect();
+
+        $this->assertTrue(ProjectSubscription::query()->sole()->period_started_at?->equalTo($thisMonth));
+        $this->assertSame(30, app(Entitlements::class)
+            ->for($this->project)
+            ->remaining(Metric::Articles));
+    }
+
+    #[Test]
     public function a_project_with_nothing_at_the_provider_still_goes_to_a_checkout(): void
     {
         // `changePlan` answers false when there is no subscription to change,

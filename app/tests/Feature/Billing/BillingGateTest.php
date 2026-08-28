@@ -6,8 +6,10 @@ namespace Tests\Feature\Billing;
 
 use App\Billing\Entitlements;
 use App\Billing\Metric;
+use App\Enums\ContentItemState;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
+use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
@@ -198,6 +200,41 @@ final class BillingGateTest extends TestCase
     }
 
     #[Test]
+    public function an_allowance_that_is_used_up_cannot_be_approved_past(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+
+        // Approval is the consumption point, so it is the only place the
+        // allowance can be enforced — and it used to increment blindly. A
+        // drafting batch leaves several candidates behind, so a project with
+        // one article left could approve five and publish all of them.
+        $draft = $this->publishableDraft();
+
+        $this->actingAs($this->owner)
+            ->post(route('content.approve', $draft))
+            ->assertStatus(409);
+
+        $this->assertSame(ContentItemState::Draft, $draft->fresh()?->state);
+    }
+
+    #[Test]
+    public function an_allowance_with_room_left_still_approves(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 9);
+
+        $draft = $this->publishableDraft();
+
+        $this->actingAs($this->owner)
+            ->post(route('content.approve', $draft))
+            ->assertRedirect();
+
+        $this->assertSame(ContentItemState::Approved, $draft->fresh()?->state);
+        $this->assertSame(10, app(Entitlements::class)->for($this->project)->used(Metric::Articles));
+    }
+
+    #[Test]
     public function reading_is_never_gated(): void
     {
         ProjectSubscription::factory()->forProject($this->project)->canceled()->create();
@@ -303,6 +340,26 @@ final class BillingGateTest extends TestCase
         ])->assertFailed();
 
         $this->assertSame(0, ProjectSubscription::query()->count());
+    }
+
+    /** A draft the score will pass, so approval is decided by billing alone. */
+    private function publishableDraft(): ContentItem
+    {
+        return ContentItem::factory()->draft()->create([
+            'title' => 'How to clean windows',
+            'body_markdown' => "## Where a weekly clean is the wrong call\n\n"
+                .'A deep clean takes about three hours. Bathrooms take longest. We bring our own '
+                .'cloths and sprays. If you have marble, say so first, because it needs a '
+                .'pH-neutral product and most supermarket sprays will etch the surface beyond '
+                ."repair.\n\n"
+                ."## What a visit covers\n\n"
+                ."Most flats need one visit a week. Ovens take 45 minutes on their own.\n",
+            'body_html' => '<h2>Where a weekly clean is the wrong call</h2>',
+            'summary' => 'A sentence.',
+            'entities' => ['Lisbon'],
+            'entity_coverage' => ['Lisbon' => true],
+            'factcheck' => ['passed' => true, 'findings' => [], 'required' => false],
+        ]);
     }
 
     /**

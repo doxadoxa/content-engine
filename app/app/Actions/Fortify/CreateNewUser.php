@@ -33,19 +33,25 @@ class CreateNewUser implements CreatesNewUsers
      */
     public function create(array $input): User
     {
-        Validator::make($input, [
+        // Normalised before it is validated, not after.
+        //
+        // `unique:users,email` compares with `=`, which on Postgres is
+        // case-sensitive — so `Alex@example.com` would pass the rule against an
+        // existing `alex@example.com`, be lower-cased on the way to the insert,
+        // and die on the unique index as a 500 rather than as the validation
+        // message this action already writes.
+        //
+        // Fortify happens to lower-case the username before it calls this
+        // (`fortify.lowercase_usernames`), so that sequence does not occur
+        // today through the registration route. It is done here anyway, because
+        // this action's correctness should not rest on what its caller happened
+        // to do first — it implements a contract, and the next caller may be a
+        // console command or an administrative screen.
+        $email = mb_strtolower(trim((string) ($input['email'] ?? '')));
+
+        Validator::make([...$input, 'email' => $email], [
             'name' => ['required', 'string', 'max:255'],
-            'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
-                // Case-insensitively, because `Alex@example.com` and
-                // `alex@example.com` are one mailbox everywhere that matters
-                // and the unique index would otherwise let them be two accounts
-                // — which is two free trials for the price of one shift key.
-                'unique:users,email',
-            ],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => $this->passwordRules(),
         ], [
             'email.unique' => 'An account already exists for that address.',
@@ -53,10 +59,9 @@ class CreateNewUser implements CreatesNewUsers
 
         return User::create([
             'name' => trim((string) $input['name']),
-            // Lower-cased on the way in for the same reason the rule above is
-            // case-insensitive: the address is an identity, and an identity
-            // that depends on how somebody typed it is not one.
-            'email' => mb_strtolower(trim((string) $input['email'])),
+            // The address is an identity, and an identity that depends on how
+            // somebody typed it is not one.
+            'email' => $email,
             'password' => Hash::make((string) $input['password']),
         ]);
     }

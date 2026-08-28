@@ -180,6 +180,25 @@ final class StripeWebhookTest extends TestCase
     }
 
     #[Test]
+    public function the_metadata_decides_the_plan_and_not_the_price(): void
+    {
+        // Metadata wins because it is what a checkout stamps and it survives a
+        // subscription being edited in the Stripe dashboard. Which is exactly
+        // why a *swap* has to rewrite it: change only the price and the update
+        // that follows still names the old plan, so the local entitlement sits
+        // on the old tier while Stripe charges the new amount.
+        $payload = $this->subscriptionPayload('active');
+        $payload['data']['object']['metadata']['plan'] = 'small';
+        // The price still says Medium. Metadata is the one that must win.
+        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_medium';
+
+        $this->send($payload);
+
+        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame(10, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
     public function a_subscription_naming_no_plan_we_know_is_refused_rather_than_guessed(): void
     {
         $payload = $this->subscriptionPayload('active');

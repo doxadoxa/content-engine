@@ -6,9 +6,11 @@ namespace App\Http\Controllers\Admin;
 
 use App\Billing\Contracts\BillingProvider;
 use App\Billing\StripeBillingProvider;
+use App\Billing\Subscriptions;
 use App\Enums\BillingStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AdminAction;
+use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
@@ -80,8 +82,12 @@ class AdminSubscriptionController extends Controller
      * the moment somebody is looking at a row that disagrees is the moment they
      * want it settled — not tomorrow at ten past four.
      */
-    public function resync(Request $request, ProjectSubscription $subscription, BillingProvider $provider): RedirectResponse
-    {
+    public function resync(
+        Request $request,
+        ProjectSubscription $subscription,
+        BillingProvider $provider,
+        Subscriptions $subscriptions,
+    ): RedirectResponse {
         abort_if($subscription->stripe_id === null, 422, 'This subscription has no provider behind it.');
 
         $theirs = $provider->subscription($subscription->stripe_id);
@@ -96,7 +102,33 @@ class AdminSubscriptionController extends Controller
         $before = [
             'status' => $subscription->status->value,
             'stripe_status' => $subscription->stripe_status,
+            'period_started_at' => $subscription->period_started_at?->toIso8601String(),
         ];
+
+        $project = $subscription->project;
+
+        // The period as well as the status, through the same transition
+        // `billing:reconcile` uses.
+        //
+        // This control exists for the case where a renewal webhook was missed,
+        // and writing only `period_ends_at` left the local month back where it
+        // was: counters still exhausted from a month the customer has already
+        // paid past, spend still accumulating across an over-long window — while
+        // the button reported success. The one thing somebody presses it to fix
+        // was the one thing it did not do.
+        $ourStart = $subscription->period_started_at;
+        $theirStart = $theirs->periodStart;
+        $movedOn = $theirStart !== null && ($ourStart === null || ! $ourStart->equalTo($theirStart));
+
+        if ($movedOn && $project instanceof Project) {
+            $subscriptions->renew(
+                $project,
+                $theirStart,
+                $theirs->periodEnd ?? $theirStart->copy()->addMonth(),
+            );
+
+            $subscription->refresh();
+        }
 
         $subscription->fill([
             'status' => $theirs->status,
@@ -108,6 +140,13 @@ class AdminSubscriptionController extends Controller
                 ? ($subscription->grace_ends_at ?? Carbon::now()->addDays((int) config('billing.grace_days', 7)))
                 : null,
         ])->save();
+
+        // And running again if billing is what stopped it, for the reason the
+        // webhook does the same: a subscription that reads healthy over a
+        // paused project is a customer paying for silence.
+        if ($project instanceof Project && $theirs->status->mayGenerate()) {
+            $subscriptions->resume($project);
+        }
 
         $user = $request->user();
 

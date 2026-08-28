@@ -155,10 +155,24 @@ class ApprovalController extends Controller
             // number on their screen mean nothing. The seven were not free —
             // they are what the cost ceiling is watching, which is the whole
             // reason there are two layers of limit.
-            $this->entitlements->record(
-                $draft->project,
-                $draft->isSocial() ? Metric::SocialPosts : Metric::Articles,
-            );
+            //
+            // Checked as well as counted, and inside the row lock. Approval is
+            // the consumption point, so it is also the only place the allowance
+            // can be enforced — and it was incrementing blindly: a drafting
+            // batch leaves several candidates behind, so a project with one
+            // article left could approve five and publish all of them. A
+            // counter nothing reads before writing is a report, not a quota.
+            $metric = $draft->isSocial() ? Metric::SocialPosts : Metric::Articles;
+            $entitlement = $this->entitlements->for($draft->project);
+
+            if (! $entitlement->hasRoomFor($metric)) {
+                // 409 rather than a redirect with a message, because this
+                // arrives from a queue screen that has to re-render: the draft
+                // stays exactly where it was, and the operator is told why.
+                abort(409, "This period’s {$metric->label()} are used up. This one can go out next period, or on a larger plan.");
+            }
+
+            $this->entitlements->record($draft->project, $metric);
 
             return $this->channels->publishAutomatically($draft);
         });
