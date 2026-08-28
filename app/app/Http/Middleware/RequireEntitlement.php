@@ -67,6 +67,15 @@ final class RequireEntitlement
         // is computed independently, overrode nothing and read nothing: the
         // operator pressed the button, the page came back unchanged, and the
         // reason went to a key nobody looks at.
+        // In the shape the caller asked in. Several guarded routes are `fetch`
+        // endpoints the Studio calls with `Accept: application/json` — a
+        // redirect there is read as a page and reported as nothing at all, so
+        // the refusal would be invisible on exactly the screens that spend the
+        // most.
+        if ($request->expectsJson()) {
+            abort(409, $refusal->message);
+        }
+
         Inertia::flash('toast', [
             'type' => 'error',
             'message' => $refusal->message,

@@ -26,7 +26,7 @@ use DateTimeInterface;
  */
 class FakeBillingProvider implements BillingProvider
 {
-    /** @var list<array{payer: int, project: string, plan: string, return_url: string}> */
+    /** @var list<array{payer: int, project: string, plan: string, return_url: string, with_trial: bool}> */
     public array $checkouts = [];
 
     /** @var list<array{payer: int, return_url: string}> */
@@ -58,13 +58,19 @@ class FakeBillingProvider implements BillingProvider
         return $this;
     }
 
-    public function checkoutUrl(User $payer, Project $project, Plan $plan, string $returnUrl): string
-    {
+    public function checkoutUrl(
+        User $payer,
+        Project $project,
+        Plan $plan,
+        string $returnUrl,
+        bool $withTrial = false,
+    ): string {
         $this->checkouts[] = [
             'payer' => (int) $payer->getKey(),
             'project' => $project->getKey(),
             'plan' => $plan->key,
             'return_url' => $returnUrl,
+            'with_trial' => $withTrial,
         ];
 
         return 'https://checkout.stripe.test/'.$plan->key.'/'.$project->getKey();

@@ -10,6 +10,7 @@ use App\Enums\ContentItemState;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
 use App\Models\ContentItem;
+use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
@@ -232,6 +233,55 @@ final class BillingGateTest extends TestCase
 
         $this->assertSame(ContentItemState::Approved, $draft->fresh()?->state);
         $this->assertSame(10, app(Entitlements::class)->for($this->project)->used(Metric::Articles));
+    }
+
+    #[Test]
+    public function two_approvals_racing_for_one_unit_do_not_both_win(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 9);
+
+        // The row lock on a draft serialises that draft against itself and
+        // nothing else — the counter two different drafts contend for is a
+        // different row entirely, so a check-then-count let both through.
+        $entitlements = app(Entitlements::class);
+
+        $first = $entitlements->reserve($this->project, Metric::Articles);
+        $second = $entitlements->reserve($this->project, Metric::Articles);
+
+        $this->assertTrue($first);
+        $this->assertFalse($second);
+        $this->assertSame(10, $entitlements->for($this->project)->used(Metric::Articles));
+    }
+
+    #[Test]
+    public function an_unlimited_allowance_reserves_without_a_ceiling(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create();
+
+        $entitlements = app(Entitlements::class);
+
+        foreach (range(1, 3) as $ignored) {
+            $this->assertTrue($entitlements->reserve($this->project, Metric::Articles));
+        }
+
+        $this->assertSame(3, $entitlements->for($this->project)->used(Metric::Articles));
+    }
+
+    #[Test]
+    public function accepting_a_month_is_refused_once_the_plans_are_used_up(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::ContentPlans, 1);
+
+        $plan = ContentPlan::factory()->create();
+
+        // Accepting is where a plan is spent. Proposing was gated and accepting
+        // was not, so a project could propose a month at a time all year and
+        // then commit every one of them.
+        $this->actingAs($this->owner)
+            ->postJson(route('studio.accept', $plan), ['version' => 1])
+            ->assertStatus(409);
     }
 
     #[Test]

@@ -74,6 +74,30 @@ class TrialEligibility
     }
 
     /**
+     * Whether a checkout for this project should carry free days at all.
+     *
+     * Asked at the checkout as well as at onboarding, because the checkout is
+     * the other door to a trial and it used to hand one out unconditionally: a
+     * customer who cancels and resubscribes came back through it, `changePlan()`
+     * declined an invalid subscription, and the fallback granted the full free
+     * window again. Repeatable, on the same site, for as long as somebody cared
+     * to keep doing it — which is the spend bound the domain check exists to
+     * hold, walked around by a different route.
+     *
+     * The project's own history counts as well as the site's: a project that
+     * has had a trial has had its trial, whatever the domain says.
+     */
+    public function mayHaveATrial(Project $project): bool
+    {
+        $used = ProjectSubscription::query()
+            ->where('project_id', $project->getKey())
+            ->whereNotNull('trial_ends_at')
+            ->exists();
+
+        return ! $used && ! $this->siteHasHadATrial($project);
+    }
+
+    /**
      * One free window at a time per account, rather than one ever.
      *
      * "Ever" would be the wrong rule: somebody who trialled a site last year,

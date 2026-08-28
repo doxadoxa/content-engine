@@ -34,8 +34,13 @@ class StripeBillingProvider implements BillingProvider
 {
     public function __construct(private readonly PlanCatalog $plans) {}
 
-    public function checkoutUrl(User $payer, Project $project, Plan $plan, string $returnUrl): string
-    {
+    public function checkoutUrl(
+        User $payer,
+        Project $project,
+        Plan $plan,
+        string $returnUrl,
+        bool $withTrial = false,
+    ): string {
         $price = $plan->stripePrice;
 
         if ($price === null) {
@@ -45,19 +50,24 @@ class StripeBillingProvider implements BillingProvider
             throw new RuntimeException("Plan `{$plan->key}` has no Stripe price configured.");
         }
 
-        $checkout = $payer
-            ->newSubscription($project->getKey(), $price)
-            // Stripe's own trial, which is what makes the card-up-front flow
-            // work: the subscription is created now and charges nothing, and
-            // the first invoice falls due when the free days run out. Somebody
-            // who stays does nothing to convert; somebody who leaves cancels
-            // before the date.
-            //
-            // Stripe requires a trial end at least 48 hours out and Cashier
-            // pads to that, so a trial shorter than two days silently becomes
-            // two — which is worth knowing before anybody sets
-            // `BILLING_TRIAL_DAYS=1`.
-            ->trialDays($this->plans->trialDays())
+        $builder = $payer->newSubscription($project->getKey(), $price);
+
+        // Stripe's own trial is what makes the card-up-front flow work: the
+        // subscription is created now and charges nothing, and the first
+        // invoice falls due when the free days run out. Somebody who stays does
+        // nothing to convert; somebody who leaves cancels before the date.
+        //
+        // Only when the caller says so. Carrying free days unconditionally gave
+        // a fresh window to every customer who cancelled and came back.
+        //
+        // Stripe requires a trial end at least 48 hours out and Cashier pads to
+        // that, so a trial shorter than two days silently becomes two — worth
+        // knowing before anybody sets `BILLING_TRIAL_DAYS=1`.
+        $builder = $withTrial
+            ? $builder->trialDays($this->plans->trialDays())
+            : $builder->skipTrial();
+
+        $checkout = $builder
             ->checkout([
                 'success_url' => $returnUrl.'?checkout=done',
                 'cancel_url' => $returnUrl,

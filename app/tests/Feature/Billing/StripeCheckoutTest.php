@@ -163,6 +163,70 @@ final class StripeCheckoutTest extends TestCase
     }
 
     #[Test]
+    public function a_first_checkout_carries_the_free_days(): void
+    {
+        $this->actingAs($this->owner)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->assertStatus(409);
+
+        $this->assertTrue($this->provider->checkouts[0]['with_trial']);
+    }
+
+    #[Test]
+    public function a_customer_who_cancelled_does_not_get_the_free_days_again(): void
+    {
+        // They arrive back here because `changePlan()` declines an invalid
+        // subscription. Carrying free days unconditionally handed them the
+        // whole window again — repeatably, on the same site, which is the spend
+        // bound the domain check exists to hold walked around by another route.
+        ProjectSubscription::factory()->forProject($this->project)->canceled()->create([
+            'trial_ends_at' => now()->subMonth(),
+        ]);
+
+        $this->actingAs($this->owner)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->assertStatus(409);
+
+        $this->assertFalse($this->provider->checkouts[0]['with_trial']);
+    }
+
+    #[Test]
+    public function a_price_swapped_at_stripe_and_missed_here_is_reconciled(): void
+    {
+        // Stripe reports the same status and the same period after a plan
+        // change, so comparing only those declared the projection healthy while
+        // the customer was charged for one tier and served another.
+        // No price ids are configured in the test environment, so the ones
+        // this comparison turns on have to be said out loud.
+        config()->set('billing.plans.1.small.stripe_price', 'price_small');
+        config()->set('billing.plans.1.medium.stripe_price', 'price_medium');
+
+        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create([
+            'stripe_id' => 'sub_test',
+            'stripe_price' => 'price_medium',
+        ]);
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->provider->willReport(new ProviderSubscription(
+            id: 'sub_test',
+            status: BillingStatus::Active,
+            rawStatus: 'active',
+            priceId: 'price_small',
+            periodStart: $subscription->period_started_at,
+            periodEnd: $subscription->period_ends_at,
+            trialEnd: null,
+            canceledAt: null,
+        ));
+
+        $this->reconcile()->assertSuccessful();
+
+        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
+    }
+
+    #[Test]
     public function a_plan_that_is_arranged_rather_than_bought_has_no_checkout(): void
     {
         // Enterprise is a conversation and a custom price. A checkout for it
@@ -248,8 +312,13 @@ final class StripeCheckoutTest extends TestCase
     {
         $this->app->instance(BillingProvider::class, new class extends FakeBillingProvider
         {
-            public function checkoutUrl(User $payer, Project $project, Plan $plan, string $returnUrl): string
-            {
+            public function checkoutUrl(
+                User $payer,
+                Project $project,
+                Plan $plan,
+                string $returnUrl,
+                bool $withTrial = false,
+            ): string {
                 throw new RuntimeException('stripe is unwell');
             }
         });

@@ -163,16 +163,19 @@ class ApprovalController extends Controller
             // article left could approve five and publish all of them. A
             // counter nothing reads before writing is a report, not a quota.
             $metric = $draft->isSocial() ? Metric::SocialPosts : Metric::Articles;
-            $entitlement = $this->entitlements->for($draft->project);
 
-            if (! $entitlement->hasRoomFor($metric)) {
+            // Reserved, not checked-then-counted. The lock above serialises
+            // *this* draft against itself and nothing else — two different
+            // drafts approved at the same instant contend for a counter that is
+            // a different row entirely, so both would read the same remaining
+            // allowance and both increment past it. `reserve()` puts the guard
+            // inside the write.
+            if (! $this->entitlements->reserve($draft->project, $metric)) {
                 // 409 rather than a redirect with a message, because this
                 // arrives from a queue screen that has to re-render: the draft
                 // stays exactly where it was, and the operator is told why.
                 abort(409, "This period’s {$metric->label()} are used up. This one can go out next period, or on a larger plan.");
             }
-
-            $this->entitlements->record($draft->project, $metric);
 
             return $this->channels->publishAutomatically($draft);
         });

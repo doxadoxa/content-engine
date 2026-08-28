@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Billing\Contracts\BillingProvider;
+use App\Billing\Plan;
+use App\Billing\PlanCatalog;
 use App\Billing\Subscriptions;
 use App\Enums\BillingStatus;
 use App\Models\Project;
@@ -36,8 +38,10 @@ class BillingReconcileCommand extends Command
 
     protected $description = 'Compare local entitlement against what Stripe actually says';
 
-    public function handle(BillingProvider $provider, Subscriptions $subscriptions): int
+    public function handle(BillingProvider $provider, Subscriptions $subscriptions, PlanCatalog $catalog): int
     {
+        $plans = $catalog->all();
+
         $dry = (bool) $this->option('dry');
 
         $rows = ProjectSubscription::query()
@@ -80,7 +84,16 @@ class BillingReconcileCommand extends Command
             $ourStart = $subscription->period_started_at;
             $movedOn = $theirStart !== null && ($ourStart === null || ! $ourStart->equalTo($theirStart));
 
-            if ($theirs->status === $subscription->status && ! $movedOn) {
+            // And the price, which is what a missed *swap* looks like from
+            // here. Stripe reports the same status and the same period start
+            // after a plan change, so comparing only those declared the
+            // projection healthy while the customer was being charged for one
+            // tier and served another — until some later subscription webhook
+            // happened along.
+            $theirPlan = $theirs->priceId === null ? null : $this->planFor($plans, $theirs->priceId);
+            $planMoved = $theirPlan !== null && $theirPlan !== $subscription->plan;
+
+            if ($theirs->status === $subscription->status && ! $movedOn && ! $planMoved) {
                 continue;
             }
 
@@ -88,7 +101,11 @@ class BillingReconcileCommand extends Command
 
             $was = $subscription->status->value;
             $now = $theirs->status->value;
-            $what = $movedOn && $was === $now ? 'period' : "{$was} → {$now}";
+            $what = match (true) {
+                $planMoved => "{$subscription->plan} → {$theirPlan}",
+                $movedOn && $was === $now => 'period',
+                default => "{$was} → {$now}",
+            };
 
             if ($dry) {
                 $this->line("  would correct {$slug}: {$what}");
@@ -115,7 +132,12 @@ class BillingReconcileCommand extends Command
                 // into a column documented as holding the provider's would
                 // destroy the only record of what we were actually told.
                 'stripe_status' => $theirs->rawStatus,
+                'stripe_price' => $theirs->priceId ?? $subscription->stripe_price,
                 'trial_ends_at' => $theirs->trialEnd,
+                // The plan follows the price Stripe is actually charging. The
+                // overrides go with the old arrangement, exactly as they do
+                // when a plan changes through any other door.
+                ...($planMoved ? ['plan' => $theirPlan, 'limit_overrides' => []] : []),
             ])->save();
 
             // And the status through the transitions rather than as a column,
@@ -153,6 +175,26 @@ class BillingReconcileCommand extends Command
             : ($dry ? "{$drifted} would be corrected." : "{$drifted} corrected."));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Which of our plans a Stripe price is.
+     *
+     * By price rather than by metadata, because this is the path for when the
+     * metadata-carrying webhook never arrived — the price is the only thing
+     * Stripe will tell us on demand.
+     *
+     * @param  list<Plan>  $plans
+     */
+    private function planFor(array $plans, string $priceId): ?string
+    {
+        foreach ($plans as $plan) {
+            if ($plan->stripePrice === $priceId) {
+                return $plan->key;
+            }
+        }
+
+        return null;
     }
 
     /**

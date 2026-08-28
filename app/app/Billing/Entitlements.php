@@ -101,6 +101,72 @@ class Entitlements
         $this->forget($project);
     }
 
+    /**
+     * Take one unit of an allowance, or refuse — in a single statement.
+     *
+     * Checking `hasRoomFor()` and then calling `record()` is two statements
+     * with a window between them, and two drafts approved at the same instant
+     * both read the same remaining allowance and both increment: the row lock
+     * on a `content_items` row serialises that draft against itself and nothing
+     * else, because the counter they contend for is a different row entirely.
+     *
+     * So the guard lives in the write. Postgres evaluates the `where` on the
+     * conflicting row *after* taking its lock, which is what makes this a
+     * reservation rather than a check: the second of two concurrent callers
+     * blocks, re-reads the incremented value, fails the predicate, and affects
+     * no rows.
+     *
+     * Returns false when the allowance is gone. An unlimited allowance takes
+     * the ordinary path — there is nothing to guard against.
+     */
+    public function reserve(Project $project, Metric $metric, int $by = 1): bool
+    {
+        $entitlement = $this->for($project);
+        $limit = $entitlement->plan?->limit($metric->value);
+
+        if ($limit === null) {
+            $this->record($project, $metric, $by);
+
+            return true;
+        }
+
+        $subscription = $this->subscriptionFor($project);
+
+        if ($subscription === null) {
+            return false;
+        }
+
+        $period = $subscription->periodStart();
+        $now = Carbon::now();
+
+        // `insertOrIgnore` first so the row exists to be conflicted with, and
+        // so a first reservation against a limit of zero cannot create one that
+        // already exceeds it.
+        DB::table('project_usage_periods')->insertOrIgnore([
+            'id' => (string) Str::ulid(),
+            'project_id' => $project->getKey(),
+            'period_started_at' => $period,
+            'metric' => $metric->value,
+            'used' => 0,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $taken = DB::table('project_usage_periods')
+            ->where('project_id', $project->getKey())
+            ->where('period_started_at', $period)
+            ->where('metric', $metric->value)
+            ->where('used', '<=', $limit - $by)
+            // `increment` builds the same `used = used + n` with the value
+            // bound rather than interpolated, which keeps it a literal as far
+            // as analysis is concerned and out of the SQL string entirely.
+            ->increment('used', $by, ['updated_at' => $now]);
+
+        $this->forget($project);
+
+        return $taken > 0;
+    }
+
     private function resolve(Project $project): Entitlement
     {
         $subscription = $this->subscriptionFor($project);

@@ -303,8 +303,12 @@ Route::middleware(['auth'])->group(function () use ($social): void {
         ->middleware(['throttle:10,1', 'project.entitled:content_plans'])->name('studio.propose');
     Route::post('studio/plans/{plan}/refine', [ContentStudioController::class, 'refine'])
         ->middleware(['throttle:20,1', 'project.entitled'])->name('studio.refine');
+    // Accepting is where a content plan is *spent*, so it is where the
+    // allowance is enforced. Proposing was gated and accepting was not, which
+    // let a project propose a month at a time all year and then commit every
+    // one of them — the counter moved on each, and nothing ever read it.
     Route::post('studio/plans/{plan}/accept', [ContentStudioController::class, 'accept'])
-        ->name('studio.accept');
+        ->middleware('project.entitled:content_plans')->name('studio.accept');
     Route::post('studio/plans/{plan}/generate', [ContentStudioController::class, 'generate'])
         ->middleware(['throttle:10,1', 'project.entitled:social_posts'])->name('studio.generate');
     // One idea, on demand. Throttled like the batch above rather than like the

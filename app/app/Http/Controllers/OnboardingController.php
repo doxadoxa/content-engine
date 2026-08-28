@@ -228,9 +228,18 @@ class OnboardingController extends Controller
         $plan = $this->plans->get((string) config('billing.default_plan', 'medium'));
 
         try {
-            return Inertia::location(
-                $this->provider->checkoutUrl($user, $project, $plan, route('home.index')),
-            );
+            return Inertia::location($this->provider->checkoutUrl(
+                $user,
+                $project,
+                $plan,
+                route('home.index'),
+                // Free days only if this site has not had them. The eligibility
+                // check above already refused a *second concurrent* trial; this
+                // is the same question asked of the checkout, so relaunching a
+                // project whose trial has been and gone buys a plan rather than
+                // starting the window again.
+                withTrial: $this->trials->mayHaveATrial($project),
+            ));
         } catch (Throwable $e) {
             // The engine has not started and no card was taken, so nothing is
             // half-done — but the operator is looking at a wizard that appears

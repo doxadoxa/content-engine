@@ -8,6 +8,7 @@ use App\Ai\Contracts\ConversationGateway;
 use App\Ai\Contracts\ModelGateway;
 use App\Billing\Plan;
 use App\Billing\Subscriptions;
+use App\Billing\TrialEligibility;
 use App\Models\Project;
 use App\Models\User;
 use DateTimeInterface;
@@ -42,8 +43,20 @@ interface BillingProvider
      * Returns an absolute URL. Hosted Checkout rather than a card form on our
      * side: no card data touches this application, tax and promotion codes come
      * free, and the three-D-secure dance is somebody else's problem.
+     *
+     * `$withTrial` is decided by the caller and defaults to *off*. A checkout
+     * that always carried free days handed a fresh window to every customer who
+     * cancelled and came back — see
+     * {@see TrialEligibility::mayHaveATrial()}. Defaulting off
+     * means the way to give away a trial is to say so.
      */
-    public function checkoutUrl(User $payer, Project $project, Plan $plan, string $returnUrl): string;
+    public function checkoutUrl(
+        User $payer,
+        Project $project,
+        Plan $plan,
+        string $returnUrl,
+        bool $withTrial = false,
+    ): string;
 
     /**
      * Move a subscription that already exists onto another plan.

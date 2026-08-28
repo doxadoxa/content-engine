@@ -445,6 +445,53 @@ final class StripeWebhookTest extends TestCase
         $this->assertSame(ProjectStatus::Paused, $this->project->fresh()?->status);
     }
 
+    #[Test]
+    public function an_older_paid_invoice_does_not_clear_a_newer_failure(): void
+    {
+        $this->send($this->subscriptionPayload('active', at: Carbon::now()));
+        $this->send($this->invoicePayload(
+            'invoice.payment_failed',
+            eventId: 'evt_failed',
+            at: Carbon::now()->addMinutes(2),
+        ));
+
+        // Invoice events were excluded from the watermark on the grounds that
+        // they "do one narrow thing" and are self-correcting. They are not:
+        // `paid()` clears past_due and its deadline unconditionally, so an
+        // older success delivered after a newer failure re-enabled generation
+        // for a customer whose current invoice is still unpaid.
+        $this->send($this->invoicePayload(
+            'invoice.payment_succeeded',
+            eventId: 'evt_old_paid',
+            at: Carbon::now()->subMinutes(5),
+        ));
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame(BillingStatus::PastDue, $subscription->status);
+        $this->assertNotNull($subscription->grace_ends_at);
+        $this->assertSame('stale', StripeEvent::query()->whereKey('evt_old_paid')->sole()->outcome);
+    }
+
+    #[Test]
+    public function a_payment_that_really_is_the_latest_still_clears_the_dunning(): void
+    {
+        $this->send($this->subscriptionPayload('active', at: Carbon::now()));
+        $this->send($this->invoicePayload(
+            'invoice.payment_failed',
+            eventId: 'evt_failed',
+            at: Carbon::now()->addMinute(),
+        ));
+
+        $this->send($this->invoicePayload(
+            'invoice.payment_succeeded',
+            eventId: 'evt_paid',
+            at: Carbon::now()->addMinutes(2),
+        ));
+
+        $this->assertSame(BillingStatus::Active, ProjectSubscription::query()->sole()->status);
+    }
+
     /** @param array<string, mixed> $payload */
     private function send(array $payload): void
     {

@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\Billing\Contracts\BillingProvider;
 use App\Billing\PlanCatalog;
+use App\Billing\TrialEligibility;
 use App\Models\Project;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
@@ -34,6 +35,7 @@ class BillingCheckoutController extends Controller
         private readonly CurrentProject $current,
         private readonly BillingProvider $provider,
         private readonly PlanCatalog $plans,
+        private readonly TrialEligibility $trials,
     ) {}
 
     /** Start paying for this project. */
@@ -85,7 +87,17 @@ class BillingCheckoutController extends Controller
         }
 
         try {
-            $url = $this->provider->checkoutUrl($user, $project, $plan, route('billing.index'));
+            $url = $this->provider->checkoutUrl(
+                $user,
+                $project,
+                $plan,
+                route('billing.index'),
+                // A customer who cancelled and came back arrives here, because
+                // `changePlan()` declines an invalid subscription. Carrying
+                // free days unconditionally handed them the whole window again,
+                // repeatably, on the same site.
+                withTrial: $this->trials->mayHaveATrial($project),
+            );
         } catch (Throwable $e) {
             // Reported and turned into a sentence, never a stack trace. The
             // person on the other end of this is trying to give us money, and

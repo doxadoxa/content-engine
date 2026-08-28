@@ -129,8 +129,8 @@ class StripeWebhook
                 $type === 'customer.subscription.created',
                 $type === 'customer.subscription.updated' => $this->sync($object, $project, $happenedAt),
                 $type === 'customer.subscription.deleted' => $this->ended($project, $happenedAt),
-                $type === 'invoice.payment_failed' => $this->failed($project),
-                $type === 'invoice.payment_succeeded', $type === 'invoice.paid' => $this->paid($project),
+                $type === 'invoice.payment_failed' => $this->failed($project, $happenedAt),
+                $type === 'invoice.payment_succeeded', $type === 'invoice.paid' => $this->paid($project, $happenedAt),
                 default => 'ignored',
             };
 
@@ -400,17 +400,22 @@ class StripeWebhook
     /**
      * Whether this event describes a state older than the one we already hold.
      *
-     * Only the `customer.subscription.*` family, and that narrowing is
-     * deliberate. Those events each carry a *complete* picture of the
-     * subscription, so applying an older one overwrites a newer truth. An
-     * invoice event does one narrow thing — start dunning, or clear it — and
-     * both are idempotent and self-correcting, so holding them to a shared
-     * watermark would only risk dropping a legitimate one whose second-
-     * granularity timestamp happened to tie.
+     * Invoice events are held to the watermark too, and the first version of
+     * this excluded them on the grounds that they "do one narrow thing" and are
+     * "idempotent and self-correcting". They are not. `paid()` clears
+     * `past_due` and its grace deadline unconditionally, so an older
+     * `invoice.payment_succeeded` delivered after a newer
+     * `invoice.payment_failed` would re-enable generation for a customer whose
+     * current invoice is still unpaid — until the nightly reconciler noticed.
+     *
+     * The comparison is strict, so two events Stripe stamped in the same second
+     * both apply. Second granularity is why it has to be: a tie is far more
+     * likely than a genuine reordering inside one second, and dropping a
+     * legitimate event is the more expensive mistake of the two.
      */
     private function isStale(?Project $project, string $type, ?Carbon $happenedAt): bool
     {
-        if ($project === null || $happenedAt === null || ! str_starts_with($type, 'customer.subscription.')) {
+        if ($project === null || $happenedAt === null) {
             return false;
         }
 
@@ -429,7 +434,7 @@ class StripeWebhook
         $subscription->forceFill(['last_event_at' => $happenedAt])->save();
     }
 
-    private function failed(?Project $project): string
+    private function failed(?Project $project, ?Carbon $happenedAt = null): string
     {
         if ($project === null) {
             return 'unmatched';
@@ -441,10 +446,16 @@ class StripeWebhook
         // date each time would make dunning last as long as Stripe kept trying.
         $this->subscriptions->markPastDue($project);
 
+        $subscription = $this->existing($project);
+
+        if ($subscription !== null) {
+            $this->stamp($subscription, $happenedAt);
+        }
+
         return 'past_due';
     }
 
-    private function paid(?Project $project): string
+    private function paid(?Project $project, ?Carbon $happenedAt = null): string
     {
         if ($project === null) {
             return 'unmatched';
