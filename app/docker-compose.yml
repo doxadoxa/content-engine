@@ -5,6 +5,7 @@
 #
 #   http://localhost:8091          the operator dashboard (sign in at /login)
 #   http://localhost:8091/horizon  queue dashboard
+#   http://localhost:8026          every mail this stack sends
 #
 # app / horizon / scheduler are the SAME image differing only by CONTAINER_MODE,
 # which is how it runs in production too.
@@ -80,6 +81,30 @@ services:
       SESSION_DRIVER: redis
       BROADCAST_CONNECTION: log
 
+      # Mail goes to Mailpit and no further. Set here rather than left to .env
+      # because `environment:` wins over `env_file:`, which is what makes this
+      # a guarantee: a real RESEND_API_KEY in your .env cannot send from this
+      # stack even if MAIL_MAILER there says `resend`. Development runs on
+      # invented addresses, and some of them belong to real people.
+      MAIL_MAILER: smtp
+      MAIL_SCHEME: smtp
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+      # Pinned too, and this one is the whole guarantee rather than a detail.
+      # A single MAIL_URL overrides host, port, username and password at once
+      # (`MailManager::getConfig` merges the parsed URL over the config), so a
+      # `.env` carrying MAIL_URL=smtps://resend:re_live_...@smtp.resend.com
+      # would reach a container through `env_file:` and send real mail past
+      # every other line here. It is set to Mailpit's own URL rather than
+      # blanked: `isset('')` is true, and the parser would then leave the
+      # transport null and break mail entirely.
+      MAIL_URL: "smtp://mailpit:1025"
+      # Mailpit accepts anything. Blanked so credentials left in .env for a
+      # real provider do not make the container try to authenticate against a
+      # server that never asked.
+      MAIL_USERNAME: ""
+      MAIL_PASSWORD: ""
+
       # Seeded on boot so the stack is immediately usable. Change these in your
       # .env; they are local-only credentials.
       SEED_ADMIN_EMAIL: "${SEED_ADMIN_EMAIL:-admin@content-engine.test}"
@@ -92,6 +117,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Named here and not only in `compose up`, because `compose up app`
+      # starts exactly what is listed. Without this the SMTP host does not
+      # exist in the network and the mail a flow depends on fails to send —
+      # which is a queued job retrying against nothing, and a verification
+      # link that never arrives.
+      #
+      # `service_started` and not `service_healthy`: healthy would make a
+      # development mail viewer a boot blocker for the whole stack, so an
+      # image that will not pull takes the engine down with it. Laravel opens
+      # the SMTP connection at send time and the notification carrying it is
+      # queued and retried, so being merely started is enough.
+      mailpit:
+        condition: service_started
     volumes: &app-volumes
       # The checkout, mounted over the image's copy of it. Without this the code
       # is whatever `COPY . .` baked in at build time, so every change needs a
@@ -135,6 +173,35 @@ services:
       retries: 12
       # Bundling happens once at boot and takes a while on a cold image.
       start_period: 120s
+
+  # Every mail the stack sends, held and displayed instead of delivered.
+  #
+  # Registration and password reset are the flows this exists for: both are
+  # behind a link that only arrives by mail, and before this the link only
+  # existed in `docker compose logs`. A flow you can only verify by reading
+  # stderr is one nobody verifies.
+  #
+  # The SMTP port stays inside the compose network. Only the web UI is
+  # published, and only to 127.0.0.1 — this is an open relay that shows
+  # everything it receives to anyone who asks.
+  mailpit:
+    image: axllent/mailpit:v1.31
+    restart: unless-stopped
+    environment:
+      # Messages live in the container and go when it does. A mailbox that
+      # survives `compose down` would mostly serve to confuse the next test
+      # with last week's verification links.
+      MP_SMTP_BIND_ADDR: 0.0.0.0:1025
+      MP_UI_BIND_ADDR: 0.0.0.0:8025
+      MP_MAX_MESSAGES: 500
+    ports:
+      - "127.0.0.1:${CE_MAIL_PORT:-8026}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   horizon:
     build:

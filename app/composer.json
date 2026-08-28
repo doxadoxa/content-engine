@@ -18,7 +18,8 @@
         "laravel/tinker": "^3.0",
         "laravel/wayfinder": "^0.1.14",
         "maestroerror/laragent": "^1.4",
-        "predis/predis": "^3.0"
+        "predis/predis": "^3.0",
+        "resend/resend-php": "^1.12"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

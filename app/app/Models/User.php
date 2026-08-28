@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Billing\TrialEligibility;
+use App\Notifications\ResetPassword;
+use App\Notifications\VerifyEmail;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -68,6 +70,33 @@ class User extends Authenticatable implements MustVerifyEmail
     public function belongsToAnyProject(): bool
     {
         return $this->projects()->exists();
+    }
+
+    /**
+     * Both of these exist only to swap the framework's notification for the
+     * queued subclass. Everything else about them — the signed URL, the token,
+     * the throttling on the routes that trigger them — is unchanged.
+     *
+     * Overridden here rather than in a service provider because this is where
+     * the framework looks: `MustVerifyEmail` and `CanResetPassword` are traits
+     * on the model, and a listener or a `toMailUsing` callback could change the
+     * mail's contents but not the fact that it is sent inline.
+     */
+    public function sendEmailVerificationNotification(): void
+    {
+        $this->notify(new VerifyEmail);
+    }
+
+    /**
+     * Untyped `$token` on purpose: `Illuminate\Contracts\Auth\CanResetPassword`
+     * declares it without a type, and narrowing a parameter in an override is
+     * a fatal error rather than a stricter signature.
+     *
+     * @param  string  $token
+     */
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $this->notify(new ResetPassword($token));
     }
 
     /**
