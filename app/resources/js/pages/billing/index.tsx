@@ -151,7 +151,9 @@ export default function BillingPage({
                                 <CardDescription>
                                     {plan.current
                                         ? 'This project is on this plan.'
-                                        : `Per project. ${trial_days} days free to start.`}
+                                        : has_provider
+                                          ? 'Switch to this plan. Stripe settles the difference on your next invoice.'
+                                          : `Per project. ${trial_days} days free, then this.`}
                                 </CardDescription>
                             </CardHeader>
                             <CardContent>
@@ -197,7 +199,9 @@ export default function BillingPage({
                                             type="submit"
                                             className="w-full"
                                         >
-                                            Choose {plan.name}
+                                            {has_provider
+                                                ? `Switch to ${plan.name}`
+                                                : `Choose ${plan.name}`}
                                         </Button>
                                     </Form>
                                 )}

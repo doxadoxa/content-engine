@@ -47,6 +47,8 @@ use Illuminate\Support\Carbon;
  * @property string|null $stripe_id
  * @property string|null $stripe_status
  * @property string|null $stripe_price
+ * @property Carbon|null $last_event_at
+ * @property bool $paused_by_billing
  */
 class ProjectSubscription extends Model
 {
@@ -70,6 +72,8 @@ class ProjectSubscription extends Model
         'stripe_id',
         'stripe_status',
         'stripe_price',
+        'last_event_at',
+        'paused_by_billing',
     ];
 
     /**
@@ -82,6 +86,7 @@ class ProjectSubscription extends Model
     protected $attributes = [
         'limit_overrides' => '{}',
         'plan_version' => 1,
+        'paused_by_billing' => false,
     ];
 
     /** @return BelongsTo<Project, $this> */
@@ -162,6 +167,8 @@ class ProjectSubscription extends Model
             'trial_ends_at' => 'datetime',
             'grace_ends_at' => 'datetime',
             'canceled_at' => 'datetime',
+            'last_event_at' => 'datetime',
+            'paused_by_billing' => 'boolean',
         ];
     }
 }

@@ -68,7 +68,7 @@ class StripeWebhook
         // Inside a transaction the rollback takes the claim with it, so a retry
         // is a fresh attempt. A concurrent duplicate still loses: it blocks on
         // the primary key until this commits, then reads zero inserted rows.
-        DB::transaction(function () use ($id, $type, $object): void {
+        DB::transaction(function () use ($id, $type, $object, $payload): void {
             $claimed = DB::table('stripe_events')->insertOrIgnore([
                 'id' => $id,
                 'type' => $type,
@@ -91,12 +91,26 @@ class StripeWebhook
                 ? $this->projectFromInvoice($object)
                 : $this->project($object);
 
-            $outcome = match ($type) {
-                'customer.subscription.created',
-                'customer.subscription.updated' => $this->sync($object, $project),
-                'customer.subscription.deleted' => $this->ended($project),
-                'invoice.payment_failed' => $this->failed($project),
-                'invoice.payment_succeeded', 'invoice.paid' => $this->paid($project),
+            // When Stripe says this happened, not when it reached us.
+            //
+            // Deduplication by event id stops the same event being applied
+            // twice and says nothing about two *different* events arriving out
+            // of order — which Stripe does not promise. A
+            // `customer.subscription.deleted` followed by an older `updated`
+            // carrying `active` would re-entitle a cancelled project; an older
+            // period would roll a customer's month backwards and reset their
+            // counters on the way past.
+            $happenedAt = is_int($payload['created'] ?? null)
+                ? Carbon::createFromTimestamp($payload['created'])
+                : null;
+
+            $outcome = match (true) {
+                $this->isStale($project, $type, $happenedAt) => 'stale',
+                $type === 'customer.subscription.created',
+                $type === 'customer.subscription.updated' => $this->sync($object, $project, $happenedAt),
+                $type === 'customer.subscription.deleted' => $this->ended($project, $happenedAt),
+                $type === 'invoice.payment_failed' => $this->failed($project),
+                $type === 'invoice.payment_succeeded', $type === 'invoice.paid' => $this->paid($project),
                 default => 'ignored',
             };
 
@@ -131,7 +145,7 @@ class StripeWebhook
      *
      * @param  array<string, mixed>  $object
      */
-    private function sync(array $object, ?Project $project): string
+    private function sync(array $object, ?Project $project, ?Carbon $happenedAt = null): string
     {
         if ($project === null) {
             return 'unmatched';
@@ -205,6 +219,8 @@ class StripeWebhook
             'trial_ends_at' => $this->at($object, 'trial_end'),
             'canceled_at' => $this->at($object, 'canceled_at'),
         ])->save();
+
+        $this->stamp($subscription, $happenedAt);
 
         // Status last, and through the transitions rather than as a column.
         //
@@ -335,9 +351,16 @@ class StripeWebhook
             'status' => $status,
             'grace_ends_at' => null,
         ])->save();
+
+        // And start the engine again if billing is what stopped it. A trial
+        // that converts an hour after the sweep cancelled it would otherwise
+        // leave a paying customer permanently silent: the subscription reads
+        // healthy, the project is still paused, and `engine:tick` only
+        // considers active projects.
+        $this->subscriptions->resume($project);
     }
 
-    private function ended(?Project $project): string
+    private function ended(?Project $project, ?Carbon $happenedAt = null): string
     {
         if ($project === null) {
             return 'unmatched';
@@ -345,7 +368,45 @@ class StripeWebhook
 
         $this->subscriptions->cancel($project);
 
+        $subscription = $this->existing($project);
+
+        if ($subscription !== null) {
+            $this->stamp($subscription, $happenedAt);
+        }
+
         return 'canceled';
+    }
+
+    /**
+     * Whether this event describes a state older than the one we already hold.
+     *
+     * Only the `customer.subscription.*` family, and that narrowing is
+     * deliberate. Those events each carry a *complete* picture of the
+     * subscription, so applying an older one overwrites a newer truth. An
+     * invoice event does one narrow thing — start dunning, or clear it — and
+     * both are idempotent and self-correcting, so holding them to a shared
+     * watermark would only risk dropping a legitimate one whose second-
+     * granularity timestamp happened to tie.
+     */
+    private function isStale(?Project $project, string $type, ?Carbon $happenedAt): bool
+    {
+        if ($project === null || $happenedAt === null || ! str_starts_with($type, 'customer.subscription.')) {
+            return false;
+        }
+
+        $last = $this->existing($project)?->last_event_at;
+
+        return $last !== null && $happenedAt->lessThan($last);
+    }
+
+    /** Remember how far along Stripe's own timeline we have got. */
+    private function stamp(ProjectSubscription $subscription, ?Carbon $happenedAt): void
+    {
+        if ($happenedAt === null) {
+            return;
+        }
+
+        $subscription->forceFill(['last_event_at' => $happenedAt])->save();
     }
 
     private function failed(?Project $project): string

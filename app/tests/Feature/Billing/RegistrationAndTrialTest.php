@@ -189,6 +189,51 @@ final class RegistrationAndTrialTest extends TestCase
     }
 
     #[Test]
+    public function a_site_whose_stripe_trial_has_since_converted_still_counts_as_used(): void
+    {
+        // The check that bounds the cost of free trials, and it used to look
+        // for `plan = 'trial'` — which the public flow never writes. A real
+        // trial is a *paid plan at Stripe with free days on the front of it*,
+        // so it arrives as `plan = medium, status = trialing`. The predicate
+        // matched almost nothing and the bound quietly stopped existing.
+        $first = User::factory()->create();
+        $firstProject = $this->draftFor($first, 'https://shop.example.test');
+
+        ProjectSubscription::factory()->forProject($firstProject)->plan('medium')->create([
+            // Converted since: paying, and the end date of the free window it
+            // came through survives, which is what makes this still findable.
+            'trial_ends_at' => now()->subWeek(),
+        ]);
+
+        $second = User::factory()->create();
+        $secondProject = $this->draftFor($second, 'https://shop.example.test');
+
+        $this->actingAs($second)
+            ->post("/onboarding/{$secondProject->getKey()}/launch")
+            ->assertRedirect();
+
+        $this->assertNoCheckoutWasOpened();
+    }
+
+    #[Test]
+    public function a_site_nobody_has_trialled_is_not_blocked_by_a_hand_assigned_plan(): void
+    {
+        // A comped or hand-assigned plan has no trial end on it, so it must not
+        // read as a free run somebody has already had.
+        $first = User::factory()->create();
+        $firstProject = $this->draftFor($first, 'https://shop.example.test');
+        ProjectSubscription::factory()->forProject($firstProject)->plan('medium')->create();
+
+        $second = User::factory()->create();
+        $secondProject = $this->draftFor($second, 'https://shop.example.test');
+
+        $this->actingAs($second)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$secondProject->getKey()}/launch")
+            ->assertStatus(409);
+    }
+
+    #[Test]
     public function a_different_site_on_the_same_account_is_fine_once_the_first_one_pays(): void
     {
         $user = User::factory()->create();

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Billing;
 
 use App\Enums\BillingStatus;
+use App\Enums\ProjectStatus;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\ProjectUsagePeriod;
@@ -255,6 +256,38 @@ class Subscriptions
         $this->entitlements->forget($project);
 
         return $subscription;
+    }
+
+    /**
+     * Money is coming in again, so the engine starts again.
+     *
+     * Called from every path back to health: a trial that converted, a card
+     * that finally worked, a subscription reactivated at Stripe. Without it a
+     * customer who has just started paying stays stopped — `billing:sweep`
+     * paused the project when their trial ran out, `engine:tick` only considers
+     * active projects, and nothing else was ever going to undo that. They would
+     * be paying for silence until somebody noticed.
+     *
+     * Only a pause *we* made. An operator who paused a project deliberately has
+     * a reason, and a payment succeeding is not an argument against it — which
+     * is why the sweep records that the pause was billing's doing rather than
+     * this having to guess from the status alone.
+     */
+    public function resume(Project $project): void
+    {
+        $subscription = $this->find($project);
+
+        if ($subscription === null || ! $subscription->paused_by_billing) {
+            return;
+        }
+
+        if ($project->status === ProjectStatus::Paused) {
+            $project->forceFill(['status' => ProjectStatus::Active])->save();
+        }
+
+        $subscription->forceFill(['paused_by_billing' => false])->save();
+
+        $this->entitlements->forget($project);
     }
 
     private function find(Project $project): ?ProjectSubscription

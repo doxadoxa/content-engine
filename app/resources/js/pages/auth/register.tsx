@@ -107,8 +107,20 @@ export default function Register({ passwordRules, trialDays }: Props) {
                             Create account
                         </Button>
 
+                        {/*
+                         * Precise about the card rather than quiet about it.
+                         * This said "no card needed", which was true of the
+                         * design it was written for and false of this one —
+                         * the card is asked for at the end of the wizard, once
+                         * we have read their site. Somebody who finds that out
+                         * after signing up has been misled, and the whole
+                         * reason to ask late rather than never is that it is
+                         * the honest version.
+                         */}
                         <p className="text-center text-sm text-muted-foreground">
-                            {trialDays} days free. No card needed.
+                            {trialDays} days free. We ask for a card once your
+                            site is set up, and charge nothing until the{' '}
+                            {trialDays} days are up.
                         </p>
 
                         <div className="text-center text-sm text-muted-foreground">

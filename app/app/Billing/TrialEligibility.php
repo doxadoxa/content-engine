@@ -85,7 +85,6 @@ class TrialEligibility
     {
         return ProjectSubscription::query()
             ->where('status', BillingStatus::Trialing)
-            ->whereKeyNot($project->getKey())
             ->where('project_id', '!=', $project->getKey())
             ->whereIn('project_id', $user->projects()->select('projects.id'))
             ->exists();
@@ -94,14 +93,27 @@ class TrialEligibility
     /**
      * Has anybody already had a free run at this site?
      *
-     * Across accounts, deliberately, and this is the check that does the work.
-     * Email addresses are free and unlimited, so a per-account rule alone is a
-     * rule about how much typing somebody is willing to do. A domain is a thing
-     * that had to be bought.
+     * Across accounts, deliberately. Email addresses are free and unlimited, so
+     * a per-account rule alone is a rule about how much typing somebody is
+     * willing to do; a domain had to be bought.
      *
-     * A *trial* rather than any subscription: a site that has been paid for
-     * before may of course be paid for again, and the site of a customer who
-     * cancelled should not be locked out of coming back.
+     * **Found by `trial_ends_at`, not by `plan = 'trial'`.** A public trial is
+     * a *paid plan* at Stripe with free days on the front of it — the checkout
+     * sends `medium`, and the subscription arrives as `plan = medium, status =
+     * trialing`. Nothing in the normal flow ever writes `plan = 'trial'`; only
+     * `billing:assign <project> trial` does, which is a comp. So the first
+     * version of this predicate matched almost nothing, and the check that was
+     * supposed to bound the whole cost of free trials quietly stopped
+     * bounding anything.
+     *
+     * The end date survives conversion — `renew()` does not clear it — so this
+     * keeps recognising a site that trialled and then paid, which is right: the
+     * question is whether the site has had its free run, not whether it is
+     * having one now.
+     *
+     * A trial rather than any subscription, still: a site paid for before may
+     * be paid for again, and a customer who cancelled should not be locked out
+     * of coming back.
      */
     private function siteHasHadATrial(Project $project): bool
     {
@@ -114,7 +126,9 @@ class TrialEligibility
         return DB::table('project_subscriptions')
             ->join('projects', 'projects.id', '=', 'project_subscriptions.project_id')
             ->where('project_subscriptions.project_id', '!=', $project->getKey())
-            ->where('project_subscriptions.plan', 'trial')
+            ->where(fn ($query) => $query
+                ->whereNotNull('project_subscriptions.trial_ends_at')
+                ->orWhere('project_subscriptions.plan', 'trial'))
             ->whereNotNull('projects.website_url')
             ->pluck('projects.website_url')
             ->contains(fn (mixed $url): bool => is_string($url) && self::hostOf($url) === $host);

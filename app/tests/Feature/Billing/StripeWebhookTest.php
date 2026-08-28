@@ -9,6 +9,7 @@ use App\Billing\Entitlements;
 use App\Billing\Metric;
 use App\Billing\StripeWebhook;
 use App\Enums\BillingStatus;
+use App\Enums\ProjectStatus;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\StripeEvent;
@@ -349,6 +350,82 @@ final class StripeWebhookTest extends TestCase
         $this->assertSame(1, ProjectSubscription::query()->sole()->plan_version);
     }
 
+    #[Test]
+    public function an_older_event_arriving_late_does_not_undo_a_newer_one(): void
+    {
+        $this->send($this->subscriptionPayload('active', at: Carbon::now()));
+
+        // Stripe does not promise order. A cancellation followed by an older
+        // update carrying `active` would re-entitle a cancelled project.
+        $this->send($this->subscriptionPayload(
+            'canceled',
+            type: 'customer.subscription.deleted',
+            eventId: 'evt_gone',
+            at: Carbon::now()->addMinute(),
+        ));
+
+        $this->send($this->subscriptionPayload(
+            'active',
+            eventId: 'evt_late',
+            at: Carbon::now()->subMinutes(5),
+        ));
+
+        $this->assertSame('stale', StripeEvent::query()->whereKey('evt_late')->sole()->outcome);
+        $this->assertSame(BillingStatus::Canceled, ProjectSubscription::query()->sole()->status);
+        $this->assertFalse($this->entitlement()->mayGenerate());
+    }
+
+    #[Test]
+    public function an_older_period_cannot_roll_the_counters_backwards(): void
+    {
+        $now = Carbon::now()->startOfDay();
+
+        $this->send($this->subscriptionPayload('active', periodStart: $now, at: $now));
+        app(Entitlements::class)->record($this->project, Metric::Articles, 9);
+
+        // An update describing last month's window, delivered late.
+        $this->send($this->subscriptionPayload(
+            'active',
+            eventId: 'evt_old_period',
+            periodStart: $now->copy()->subMonth(),
+            at: $now->copy()->subHour(),
+        ));
+
+        $this->assertSame(9, $this->entitlement()->used(Metric::Articles));
+    }
+
+    #[Test]
+    public function a_healthy_subscription_starts_an_engine_billing_stopped(): void
+    {
+        // The trial-conversion webhook arriving an hour after the sweep
+        // cancelled it. Restoring only the subscription fields would leave a
+        // now-paying customer permanently silent: `engine:tick` considers
+        // active projects only, and nothing else was going to undo the pause.
+        $this->send($this->subscriptionPayload('active'));
+
+        $this->project->forceFill(['status' => ProjectStatus::Paused])->save();
+        ProjectSubscription::query()->sole()->forceFill(['paused_by_billing' => true])->save();
+
+        $this->send($this->subscriptionPayload('active', eventId: 'evt_back', at: Carbon::now()->addMinute()));
+
+        $this->assertSame(ProjectStatus::Active, $this->project->fresh()?->status);
+        $this->assertFalse(ProjectSubscription::query()->sole()->paused_by_billing);
+    }
+
+    #[Test]
+    public function a_pause_somebody_chose_is_not_undone_by_a_payment(): void
+    {
+        $this->send($this->subscriptionPayload('active'));
+
+        // An operator paused this deliberately. A payment succeeding is not an
+        // argument against their reason.
+        $this->project->forceFill(['status' => ProjectStatus::Paused])->save();
+
+        $this->send($this->subscriptionPayload('active', eventId: 'evt_paid', at: Carbon::now()->addMinute()));
+
+        $this->assertSame(ProjectStatus::Paused, $this->project->fresh()?->status);
+    }
+
     /** @param array<string, mixed> $payload */
     private function send(array $payload): void
     {
@@ -369,12 +446,15 @@ final class StripeWebhookTest extends TestCase
         string $type = 'customer.subscription.updated',
         string $eventId = 'evt_test',
         ?Carbon $periodStart = null,
+        ?Carbon $at = null,
     ): array {
         $start = $periodStart ?? Carbon::now()->startOfDay();
 
         return [
             'id' => $eventId,
             'type' => $type,
+            // Stripe's own timestamp for the event, which is what orders them.
+            'created' => ($at ?? Carbon::now())->getTimestamp(),
             'data' => ['object' => [
                 'id' => 'sub_test',
                 'status' => $status,
@@ -394,11 +474,13 @@ final class StripeWebhookTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function invoicePayload(string $type, string $eventId = 'evt_invoice'): array
+    private function invoicePayload(string $type, string $eventId = 'evt_invoice', ?Carbon $at = null): array
     {
         return [
             'id' => $eventId,
             'type' => $type,
+            // Stripe's own timestamp for the event, which is what orders them.
+            'created' => ($at ?? Carbon::now())->getTimestamp(),
             'data' => ['object' => [
                 'id' => 'in_test',
                 'subscription' => 'sub_test',

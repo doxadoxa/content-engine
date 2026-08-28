@@ -60,6 +60,30 @@ class BillingCheckoutController extends Controller
             ]);
         }
 
+        // A customer who already pays is *changing* plan, not buying a second
+        // one. A checkout opens a new recurring subscription, so sending an
+        // existing subscriber through it would leave two of them at Stripe —
+        // billed for both, while the one local row followed whichever webhook
+        // arrived last.
+        try {
+            if ($this->provider->changePlan($user, $project, $plan)) {
+                Inertia::flash('toast', [
+                    'type' => 'success',
+                    'message' => "This project is on {$plan->name} now. Stripe will settle the difference on your next invoice.",
+                ]);
+
+                return back();
+            }
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with('billing', [
+                'code' => 'plan_change_failed',
+                'message' => 'We could not change the plan just now. Nothing has changed.',
+                'metric' => null,
+            ]);
+        }
+
         try {
             $url = $this->provider->checkoutUrl($user, $project, $plan, route('billing.index'));
         } catch (Throwable $e) {

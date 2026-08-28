@@ -90,6 +90,41 @@ final class BillingGateTest extends TestCase
     }
 
     #[Test]
+    public function the_tick_does_not_write_an_article_a_project_has_no_allowance_for(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+
+        // The project-level check asks only whether this project may spend at
+        // all, and a used-up quota is deliberately not a global refusal — so
+        // the tick was free to go on writing articles after the allowance was
+        // gone. The manual routes carried metric-specific middleware and
+        // unattended generation, which is where almost all the money goes,
+        // carried none.
+        $this->console('engine:tick')
+            ->assertSuccessful()
+            ->expectsOutputToContain('articles are used up');
+
+        $this->assertSame(
+            0,
+            PipelineRun::acrossProjects()->whereIn('pipeline', ['generation', 'research'])->count(),
+        );
+    }
+
+    #[Test]
+    public function the_tick_still_does_the_work_a_different_allowance_covers(): void
+    {
+        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+
+        // Out of articles is not out of everything. A counter filling must not
+        // read as a pause.
+        $this->console('engine:tick')
+            ->assertSuccessful()
+            ->doesntExpectOutputToContain('skipped');
+    }
+
+    #[Test]
     public function a_spending_route_is_refused_where_a_person_can_see_it(): void
     {
         ProjectSubscription::factory()->forProject($this->project)->trialExpired()->create();

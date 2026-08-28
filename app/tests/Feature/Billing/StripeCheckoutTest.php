@@ -85,6 +85,42 @@ final class StripeCheckoutTest extends TestCase
     }
 
     #[Test]
+    public function an_existing_subscriber_changes_plan_rather_than_buying_a_second_one(): void
+    {
+        // A checkout opens a *new* recurring subscription. Sending somebody who
+        // already pays through one leaves two of them at Stripe — billed for
+        // both — while the single local row follows whichever webhook arrives
+        // last.
+        $this->provider->canChangePlan = true;
+
+        ProjectSubscription::factory()->forProject($this->project)->create([
+            'stripe_id' => 'sub_test',
+        ]);
+
+        $this->actingAs($this->owner)
+            ->from(route('billing.index'))
+            ->post(route('billing.checkout'), ['plan' => 'small'])
+            ->assertRedirect(route('billing.index'));
+
+        $this->assertSame('small', $this->provider->planChanges[0]['plan']);
+        $this->assertSame([], $this->provider->checkouts);
+    }
+
+    #[Test]
+    public function a_project_with_nothing_at_the_provider_still_goes_to_a_checkout(): void
+    {
+        // `changePlan` answers false when there is no subscription to change,
+        // and the caller falls back rather than refusing.
+        $this->actingAs($this->owner)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->assertStatus(409);
+
+        $this->assertSame([], $this->provider->planChanges);
+        $this->assertCount(1, $this->provider->checkouts);
+    }
+
+    #[Test]
     public function a_plan_that_is_arranged_rather_than_bought_has_no_checkout(): void
     {
         // Enterprise is a conversation and a custom price. A checkout for it

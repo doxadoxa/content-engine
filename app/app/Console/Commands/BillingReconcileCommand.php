@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Billing\Contracts\BillingProvider;
 use App\Billing\Subscriptions;
 use App\Enums\BillingStatus;
+use App\Models\Project;
 use App\Models\ProjectSubscription;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -131,10 +132,7 @@ class BillingReconcileCommand extends Command
                 // cancelling a customer who has paid. Without this the command
                 // counted that as drift, logged that it had corrected it,
                 // printed the row, and changed nothing.
-                default => $subscription->fill([
-                    'status' => $theirs->status,
-                    'grace_ends_at' => null,
-                ])->save(),
+                default => $this->restore($subscriptions, $project, $subscription, $theirs->status),
             };
 
             // Loudly. A projection that drifted is evidence a webhook was lost,
@@ -155,5 +153,26 @@ class BillingReconcileCommand extends Command
             : ($dry ? "{$drifted} would be corrected." : "{$drifted} corrected."));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Healthy again — and running again.
+     *
+     * The same omission the webhook had: restoring the subscription fields
+     * leaves a project the sweep paused still paused, so a customer whose lost
+     * webhook this command exists to repair goes on paying for silence.
+     */
+    private function restore(
+        Subscriptions $subscriptions,
+        Project $project,
+        ProjectSubscription $subscription,
+        BillingStatus $status,
+    ): void {
+        $subscription->fill([
+            'status' => $status,
+            'grace_ends_at' => null,
+        ])->save();
+
+        $subscriptions->resume($project);
     }
 }

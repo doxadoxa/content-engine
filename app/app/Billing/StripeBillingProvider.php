@@ -80,6 +80,26 @@ class StripeBillingProvider implements BillingProvider
         return (string) $checkout->asStripeCheckoutSession()->url;
     }
 
+    public function changePlan(User $payer, Project $project, Plan $plan): bool
+    {
+        $price = $plan->stripePrice;
+        // Cashier names a subscription after the project it pays for, which is
+        // how one saved card holds several.
+        $subscription = $payer->subscription($project->getKey());
+
+        if ($price === null || $subscription === null || ! $subscription->valid()) {
+            return false;
+        }
+
+        // `swap`, not `newSubscription`. The customer keeps one subscription,
+        // Stripe prorates the difference, and a trial in progress survives the
+        // change — where a second checkout would have started a second charge
+        // and a second free window.
+        $subscription->swap($price);
+
+        return true;
+    }
+
     public function portalUrl(User $payer, string $returnUrl): string
     {
         return $payer->billingPortalUrl($returnUrl);

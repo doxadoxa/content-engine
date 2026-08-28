@@ -94,8 +94,14 @@ class BillingSweepCommand extends Command
             // readable", which is exactly where a lapsed customer belongs — and
             // reusing it means every screen that already understands a paused
             // project understands this one too.
+            //
+            // Recorded as *our* pause, because a project that starts paying
+            // again has to start running again — and resuming without knowing
+            // why it stopped would also override an operator who paused it
+            // deliberately. See {@see \App\Billing\Subscriptions::resume()}.
             if ($project->status !== ProjectStatus::Paused) {
                 $project->forceFill(['status' => ProjectStatus::Paused])->save();
+                $subscription->forceFill(['paused_by_billing' => true])->save();
             }
 
             $this->line("  {$project->slug}: {$why}, paused");

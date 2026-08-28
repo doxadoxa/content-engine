@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Content\ArticleScore;
 use App\Enums\ContentItemState;
 use App\Enums\ProjectStatus;
@@ -59,6 +60,33 @@ class EngineTickCommand extends Command
 
     /** Ceiling per tick per project, so one busy project cannot flood the queue. */
     private const int MAX_STARTS = 5;
+
+    /**
+     * Which allowance each pipeline spends against.
+     *
+     * The project-level check above asks only whether this project may spend at
+     * all, and a used-up quota is deliberately *not* a global refusal — running
+     * out of articles must not stop social posts. But that left the tick free
+     * to keep writing articles after the article allowance was gone: the manual
+     * routes carry metric-specific middleware and unattended generation, which
+     * is where almost all the money goes, carried none.
+     *
+     * `repurpose` counts against social posts because that is what it makes.
+     * `research` counts against articles because that is the only thing it
+     * exists to feed — a project with no articles left has nothing to research
+     * for. `feedback` and `visibility` are measurement rather than production:
+     * they make no units, so no unit quota bounds them, and the cost ceiling is
+     * what stands behind them.
+     *
+     * @var array<string, Metric>
+     */
+    private const array QUOTA_FOR = [
+        'generation' => Metric::Articles,
+        'research' => Metric::Articles,
+        'planning' => Metric::ContentPlans,
+        'repurpose' => Metric::SocialPosts,
+        'content_studio' => Metric::SocialPosts,
+    ];
 
     /**
      * The pipelines this command starts, and therefore the only ones allowed to
@@ -134,6 +162,19 @@ class EngineTickCommand extends Command
         foreach ($this->due($project) as $work) {
             if ($started >= self::MAX_STARTS) {
                 break;
+            }
+
+            $refusal = $this->entitlements
+                ->for($project)
+                ->refusal(self::QUOTA_FOR[$work['pipeline']] ?? null);
+
+            if ($refusal !== null) {
+                // Said out loud, like the project-level skip. An engine that
+                // stops for a billing reason and reports nothing is
+                // indistinguishable from one that is broken.
+                $this->line("  {$project->slug}: not {$work['why']} — {$refusal->message}");
+
+                continue;
             }
 
             $this->line("  {$project->slug}: {$work['why']}");

@@ -45,6 +45,20 @@ interface BillingProvider
     public function checkoutUrl(User $payer, Project $project, Plan $plan, string $returnUrl): string;
 
     /**
+     * Move a subscription that already exists onto another plan.
+     *
+     * Not a second checkout. A checkout opens a *new* recurring subscription,
+     * so an existing customer choosing another plan would end up with two of
+     * them at the provider and be billed for both — while the one local row
+     * followed whichever webhook happened to arrive last. A plan change is a
+     * change to the thing already being charged, prorated by the provider.
+     *
+     * Returns false when there is nothing to change, so the caller can fall
+     * back to opening a checkout.
+     */
+    public function changePlan(User $payer, Project $project, Plan $plan): bool;
+
+    /**
      * Where to send somebody to change their card, their plan, or their mind.
      *
      * The Billing Portal, for the same reason: plan changes, card updates,

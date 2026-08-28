@@ -31,6 +31,18 @@ class FakeBillingProvider implements BillingProvider
     /** @var list<array{payer: int, return_url: string}> */
     public array $portals = [];
 
+    /** @var list<array{payer: int, project: string, plan: string}> */
+    public array $planChanges = [];
+
+    /**
+     * Whether there is an existing subscription to change.
+     *
+     * False by default, which is what the real one answers for a project that
+     * has never been through a checkout — and therefore the state most tests
+     * are describing. A test about an existing subscriber sets it.
+     */
+    public bool $canChangePlan = false;
+
     /** @var array<string, ProviderSubscription> */
     private array $subscriptions = [];
 
@@ -52,6 +64,21 @@ class FakeBillingProvider implements BillingProvider
         ];
 
         return 'https://checkout.stripe.test/'.$plan->key.'/'.$project->getKey();
+    }
+
+    public function changePlan(User $payer, Project $project, Plan $plan): bool
+    {
+        if (! $this->canChangePlan) {
+            return false;
+        }
+
+        $this->planChanges[] = [
+            'payer' => (int) $payer->getKey(),
+            'project' => $project->getKey(),
+            'plan' => $plan->key,
+        ];
+
+        return true;
     }
 
     public function portalUrl(User $payer, string $returnUrl): string
