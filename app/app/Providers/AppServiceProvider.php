@@ -16,6 +16,11 @@ use App\Ai\OpenAiEmbeddingGateway;
 use App\Audit\PageSpeed\Contracts\PageSpeedGateway;
 use App\Audit\PageSpeed\FakePageSpeed;
 use App\Audit\PageSpeed\GooglePageSpeedInsights;
+use App\Billing\Contracts\BillingProvider;
+use App\Billing\Entitlements;
+use App\Billing\FakeBillingProvider;
+use App\Billing\PlanCatalog;
+use App\Billing\StripeBillingProvider;
 use App\Enums\ChannelType;
 use App\Feedback\Contracts\AnalyticsGateway;
 use App\Feedback\Contracts\CitationChecker;
@@ -59,6 +64,32 @@ class AppServiceProvider extends ServiceProvider
         // life of the request or job. The tenant id itself lives in the
         // context, not in this instance.
         $this->app->singleton(CurrentProject::class);
+
+        // A singleton, because the memo inside it is the point. Entitlement is
+        // consulted several times within one request — route middleware, then
+        // the shared props the frame renders from, then whatever the controller
+        // does — and three independent reads is three chances to let a route
+        // through and then paint it shut.
+        //
+        // Flushed between queued jobs below, for the reason CurrentProject is:
+        // a worker process outlives the job that filled the memo, and a
+        // planning step reading `Project::weeklyTarget()` would otherwise hold
+        // one project's plan, counters and spend for the life of the worker —
+        // through plan changes, through every increment, through any amount of
+        // new spend.
+        $this->app->singleton(Entitlements::class);
+
+        // Stateless, and a singleton only to avoid rebuilding it per injection.
+        $this->app->singleton(PlanCatalog::class);
+
+        // The one door to a payment provider, bound the way every other
+        // provider in this application is bound. It matters more here than
+        // anywhere else: a billing suite that needs Stripe credentials is a
+        // billing suite that gets skipped, and this is the subsystem where an
+        // untested branch costs money in both directions.
+        $this->app->singleton(BillingProvider::class, fn (): BillingProvider => $this->app->environment('testing')
+            ? new FakeBillingProvider
+            : $this->app->make(StripeBillingProvider::class));
 
         // The one door to a language model (§3.3). Bound here rather than
         // resolved at each call site, so the test environment can put the fake
@@ -188,8 +219,17 @@ class AppServiceProvider extends ServiceProvider
 
         // Context is hydrated once per queued job, which is the boundary where
         // a worker stops being about the previous project. Anything the tenant
-        // service memoised belongs to that job, not this one.
-        Event::listen(ContextHydrated::class, fn () => $this->app->make(CurrentProject::class)->flushResolved());
+        // service memoised belongs to that job, not this one — and that is as
+        // true of what a project is *entitled* to as of which project it is.
+        //
+        // Entitlement is memoised per project inside a singleton, so without
+        // this a worker would answer for the whole of its life from whatever it
+        // read first: a plan changed an hour ago, counters incremented by fifty
+        // approvals, a cost ceiling crossed and never noticed.
+        Event::listen(ContextHydrated::class, function (): void {
+            $this->app->make(CurrentProject::class)->flushResolved();
+            $this->app->make(Entitlements::class)->forget();
+        });
 
         // The engine's one outward signal, and what chains a new project's
         // first research → planning → generation without the runner knowing

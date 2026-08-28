@@ -9,6 +9,8 @@ use App\Ai\FakeModelGateway;
 use App\Ai\ModelCatalog;
 use App\Ai\ModelRequest;
 use App\Ai\UnmeteredSession;
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\ContentStudio\ContentStudioAssistant;
 use App\Enums\AssetRole;
 use App\Enums\AssetSource;
@@ -572,6 +574,30 @@ final class ContentStudioTest extends TestCase
                 ->where('goal', null)
                 ->etc()
             );
+    }
+
+    #[Test]
+    public function accepting_the_same_version_twice_spends_one_plan(): void
+    {
+        $this->fakeModel([$this->proposal()]);
+
+        $planId = $this->postJson('/studio/propose', ['month' => '2026-08'])
+            ->json('plan.id');
+
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+        // A retry, or the button pressed twice. `accept()` allows re-accepting
+        // the version that is already current, so this used to spend a second
+        // plan — and with an allowance of one or two, an ordinary duplicate
+        // request could exhaust the customer's period without a single new
+        // plan existing.
+        $this->postJson("/studio/plans/{$planId}/accept", ['version' => 1])->assertOk();
+
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $this->assertSame(
+                1,
+                app(Entitlements::class)->for($this->project)->used(Metric::ContentPlans),
+            );
+        });
     }
 
     #[Test]

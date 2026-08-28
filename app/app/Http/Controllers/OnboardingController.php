@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Contracts\BillingProvider;
+use App\Billing\PlanCatalog;
+use App\Billing\TrialEligibility;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
@@ -12,20 +15,19 @@ use App\Models\BrandBrief;
 use App\Models\Channel;
 use App\Models\Project;
 use App\Models\User;
-use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Duty\DutyHours;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Throwable;
 
 /**
@@ -45,6 +47,9 @@ class OnboardingController extends Controller
         private readonly ProjectManager $projects,
         private readonly CurrentProject $current,
         private readonly ChannelPublisherRegistry $publishers,
+        private readonly TrialEligibility $trials,
+        private readonly BillingProvider $provider,
+        private readonly PlanCatalog $plans,
     ) {}
 
     /** The wizard itself, resuming whatever draft the operator has open. */
@@ -134,18 +139,29 @@ class OnboardingController extends Controller
     /**
      * The last step: write the brief, connect the channels, start the engine.
      */
-    public function launch(Request $request, Project $project, ProjectLaunch $launch): RedirectResponse
+    public function launch(Request $request, Project $project): SymfonyResponse
     {
         $this->authorise($request, $project);
 
         /** @var User $user */
         $user = $request->user();
 
+        // Before anything is written, because everything below this line
+        // spends money: the brief is a model call, and `begin()` starts
+        // research. A refusal has to cost nothing.
+        $refusal = $this->trials->refusalFor($user, $project);
+
+        if ($refusal !== null) {
+            Inertia::flash('toast', ['type' => 'error', 'message' => $refusal]);
+
+            return back();
+        }
+
         // The row lock makes the status transition a single winner. Two final
         // clicks can arrive before either response returns; only the request
         // that sees Draft while holding this lock may create the brief,
         // channels, and research run.
-        $started = DB::transaction(function () use ($project, $launch): ?bool {
+        $started = DB::transaction(function () use ($project): ?bool {
             $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
 
             if ($locked->onboarding_status !== OnboardingStatus::Draft) {
@@ -164,7 +180,13 @@ class OnboardingController extends Controller
                 $this->connectChannels($locked);
             });
 
-            $launch->begin($locked);
+            // Marked as launching, and nothing started.
+            //
+            // The engine begins when Stripe confirms the trial, not here — see
+            // the redirect below. Flipping the status inside the lock is what
+            // makes a double-pressed final button safe: the guard above reads
+            // Draft, so the second press finds Launching and does nothing.
+            $locked->forceFill(['onboarding_status' => OnboardingStatus::Launching])->save();
 
             return true;
         });
@@ -183,15 +205,54 @@ class OnboardingController extends Controller
         $this->projects->switchTo($user, $project);
 
         if ($started === false) {
+            // Already launched. Whatever this second press was, it was not the
+            // first one.
             return to_route('home.index');
         }
 
-        Inertia::flash('toast', [
-            'type' => 'success',
-            'message' => "{$project->name} is set up. Research and the first social content proposal have started.",
-        ]);
+        // Out to Stripe for the card.
+        //
+        // The subscription is created now and charges nothing; the first
+        // invoice falls due when the free days run out. Somebody who stays does
+        // nothing to convert, and somebody who leaves cancels before the date —
+        // which is the whole reason for asking here rather than on day three,
+        // when the only thing left to do would be to take the engine away.
+        //
+        // Asked *after* the wizard, deliberately. They have just watched us
+        // read their site and agreed to what we found; that is the strongest
+        // moment to ask, and a card before any of it is the weakest.
+        //
+        // A project whose checkout is abandoned sits at Launching with no
+        // subscription. That is a legible state rather than a stuck one: the
+        // banner says there is no card and links to the same checkout.
+        $plan = $this->plans->get((string) config('billing.default_plan', 'medium'));
 
-        return to_route('home.index');
+        try {
+            return Inertia::location($this->provider->checkoutUrl(
+                $user,
+                $project,
+                $plan,
+                route('home.index'),
+                // Free days only if this site has not had them. The eligibility
+                // check above already refused a *second concurrent* trial; this
+                // is the same question asked of the checkout, so relaunching a
+                // project whose trial has been and gone buys a plan rather than
+                // starting the window again.
+                withTrial: $this->trials->mayHaveATrial($project),
+            ));
+        } catch (Throwable $e) {
+            // The engine has not started and no card was taken, so nothing is
+            // half-done — but the operator is looking at a wizard that appears
+            // to have swallowed their last click.
+            report($e);
+
+            Inertia::flash('toast', [
+                'type' => 'error',
+                'message' => 'We could not open the checkout. Your project is saved — add a card from Plan & usage to start it.',
+            ]);
+
+            return to_route('home.index');
+        }
     }
 
     /**

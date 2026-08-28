@@ -7,6 +7,8 @@ namespace App\Http\Controllers;
 use App\Audit\AuditScore;
 use App\Audit\CheckRegistry;
 use App\Audit\SiteAuditStarter;
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Enums\AuditCheckGroup;
 use App\Models\Project;
 use App\Models\SiteAudit;
@@ -40,6 +42,7 @@ class SiteAuditController extends Controller
         private readonly CurrentProject $current,
         private readonly SiteAuditStarter $audits,
         private readonly CheckRegistry $checks,
+        private readonly Entitlements $entitlements,
     ) {}
 
     public function index(SafeMarkdown $markdown): Response
@@ -102,9 +105,17 @@ class SiteAuditController extends Controller
 
         $run = $this->audits->start($project);
 
-        return $run === null
-            ? $this->back('info', 'A sweep of this site is already running.')
-            : $this->back('success', 'Reading the site now. This takes a few minutes.');
+        if ($run === null) {
+            // Refused because one is already running, so nothing was bought and
+            // nothing is counted. The starter's own refusal is what makes this
+            // safe to double-press; the quota must not punish somebody for the
+            // press that did nothing.
+            return $this->back('info', 'A sweep of this site is already running.');
+        }
+
+        $this->entitlements->record($project, Metric::SiteAudits);
+
+        return $this->back('success', 'Reading the site now. This takes a few minutes.');
     }
 
     /** Ask the model to order the newest sweep's findings. */

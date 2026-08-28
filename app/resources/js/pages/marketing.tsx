@@ -19,7 +19,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
 import { openPreferences } from '@/lib/consent';
-import { login } from '@/routes';
+import { login, register } from '@/routes';
 
 type Feature = {
     title: string;
@@ -615,7 +615,27 @@ function FeedbackCard() {
     );
 }
 
-export default function Marketing() {
+type PricingPlan = {
+    key: string;
+    name: string;
+    price_cents: number;
+    limits: {
+        articles: number | null;
+        social_posts: number | null;
+        locales: number | null;
+        seats: number | null;
+    };
+};
+
+type Props = {
+    pricing: {
+        currency: string;
+        trial_days: number;
+        plans: PricingPlan[];
+    };
+};
+
+export default function Marketing({ pricing }: Props) {
     return (
         <div className="marketing-page min-h-screen overflow-x-hidden bg-[var(--brand-canvas)] text-[var(--brand-ink)]">
             <Head title="Organic growth, orchestrated">
@@ -655,6 +675,12 @@ export default function Marketing() {
                             Why Avyo
                         </a>
                         <a
+                            href="#pricing"
+                            className="text-[13px] font-medium text-[#4e4944] transition-colors hover:text-[#17352f]"
+                        >
+                            Pricing
+                        </a>
+                        <a
                             href="#faq"
                             className="text-[13px] font-medium text-[#5f5a55] transition-colors hover:text-[#17352f]"
                         >
@@ -669,13 +695,13 @@ export default function Marketing() {
                         >
                             Log in
                         </Link>
-                        <a
-                            href="#product"
+                        <Link
+                            href={register()}
                             className="group inline-flex h-10 items-center gap-2 rounded-full bg-[#17352f] px-4 text-[12px] font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5 sm:px-5"
                         >
-                            See Avyo in action
+                            Start free
                             <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </a>
+                        </Link>
                     </div>
                 </div>
             </header>
@@ -711,18 +737,18 @@ export default function Marketing() {
                         </p>
 
                         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-                            <a
-                                href="#how-it-works"
+                            <Link
+                                href={register()}
                                 className="group inline-flex h-12 w-full items-center justify-center rounded-full bg-[#17352f] px-6 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(21,20,25,0.18)] transition-all hover:-translate-y-0.5 hover:shadow-[0_14px_30px_rgba(21,20,25,0.22)] sm:w-auto"
                             >
-                                <ArrowLink>Explore the workflow</ArrowLink>
-                            </a>
-                            <Link
-                                href={login()}
+                                <ArrowLink>Start free</ArrowLink>
+                            </Link>
+                            <a
+                                href="#how-it-works"
                                 className="inline-flex h-12 w-full items-center justify-center rounded-full border border-[#d0c4b1] bg-white px-6 text-sm font-semibold text-[#332f2b] transition-colors hover:bg-[#f1eeea] sm:w-auto"
                             >
-                                Open Avyo
-                            </Link>
+                                Explore the workflow
+                            </a>
                         </div>
 
                         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-[#6f6962]">
@@ -1040,6 +1066,8 @@ export default function Marketing() {
                     </div>
                 </section>
 
+                <Pricing pricing={pricing} />
+
                 <section
                     id="faq"
                     className="scroll-mt-20 bg-white py-20 sm:py-28 lg:py-36"
@@ -1106,10 +1134,10 @@ export default function Marketing() {
                             </p>
                             <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
                                 <Link
-                                    href={login()}
+                                    href={register()}
                                     className="group inline-flex h-12 items-center justify-center rounded-full bg-white px-6 text-sm font-semibold text-[#10241f] transition-transform hover:-translate-y-0.5"
                                 >
-                                    <ArrowLink>Open Avyo</ArrowLink>
+                                    <ArrowLink>Start free</ArrowLink>
                                 </Link>
                                 <a
                                     href="#top"
@@ -1141,6 +1169,9 @@ export default function Marketing() {
                             className="hover:text-[#17352f]"
                         >
                             How it works
+                        </a>
+                        <a href="#pricing" className="hover:text-[#17352f]">
+                            Pricing
                         </a>
                         <a href="#faq" className="hover:text-[#17352f]">
                             FAQ
@@ -1178,5 +1209,136 @@ export default function Marketing() {
                 </div>
             </footer>
         </div>
+    );
+}
+
+/**
+ * What it costs, from the same config the engine bills against.
+ *
+ * Not written into this page. There is one price list, in
+ * `config/billing.php`, and a second copy of it in a marketing component is a
+ * second copy to forget — the sort of thing that is discovered by a customer
+ * who was quoted one number and charged another.
+ *
+ * Two plans, not three. Enterprise is a conversation and a custom price, so it
+ * gets a sentence and a mail link rather than a card with a button that would
+ * promise a checkout there is no code for.
+ */
+function Pricing({ pricing }: Props) {
+    const money = (cents: number) =>
+        new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: pricing.currency.toUpperCase(),
+            maximumFractionDigits: 0,
+        }).format(cents / 100);
+
+    const rows = (plan: PricingPlan) => [
+        [
+            'Articles a month',
+            plan.limits.articles === null
+                ? 'Unlimited'
+                : String(plan.limits.articles),
+        ],
+        [
+            'Social posts a month',
+            plan.limits.social_posts === null
+                ? 'Unlimited'
+                : String(plan.limits.social_posts),
+        ],
+        [
+            'Languages',
+            plan.limits.locales === null
+                ? 'Unlimited'
+                : String(plan.limits.locales),
+        ],
+        [
+            'Seats',
+            plan.limits.seats === null
+                ? 'Unlimited'
+                : String(plan.limits.seats),
+        ],
+    ];
+
+    return (
+        <section
+            id="pricing"
+            className="scroll-mt-20 bg-[#f7f4f0] py-20 sm:py-28 lg:py-36"
+        >
+            <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
+                <div className="mx-auto max-w-2xl text-center">
+                    <p className="text-[10px] font-semibold tracking-[0.17em] text-[#a13220] uppercase">
+                        Pricing
+                    </p>
+                    <h2 className="mt-5 text-4xl font-semibold tracking-[-0.055em] sm:text-5xl">
+                        One price per site
+                    </h2>
+                    <p className="mt-5 text-base leading-7 text-[#6f6962]">
+                        Every plan is per project, so a second site is a second
+                        subscription rather than a bigger one.{' '}
+                        {pricing.trial_days} days free to start, and no card
+                        until you decide.
+                    </p>
+                </div>
+
+                <div className="mx-auto mt-14 grid max-w-4xl gap-6 sm:grid-cols-2">
+                    {pricing.plans.map((plan, index) => (
+                        <div
+                            key={plan.key}
+                            className={`rounded-3xl border p-8 ${
+                                index === pricing.plans.length - 1
+                                    ? 'border-[#17352f] bg-white shadow-[0_18px_44px_rgba(21,20,25,0.10)]'
+                                    : 'border-[#e2dbd0] bg-white/60'
+                            }`}
+                        >
+                            <div className="flex items-baseline justify-between gap-3">
+                                <h3 className="text-xl font-semibold tracking-[-0.03em]">
+                                    {plan.name}
+                                </h3>
+                                <p className="text-2xl font-semibold tabular-nums">
+                                    {money(plan.price_cents)}
+                                    <span className="text-sm font-normal text-[#6f6962]">
+                                        /mo
+                                    </span>
+                                </p>
+                            </div>
+
+                            <ul className="mt-6 space-y-3 text-sm">
+                                {rows(plan).map(([label, value]) => (
+                                    <li
+                                        key={label}
+                                        className="flex items-center justify-between gap-3 border-b border-[#ece5db] pb-3 last:border-0"
+                                    >
+                                        <span className="text-[#6f6962]">
+                                            {label}
+                                        </span>
+                                        <span className="font-medium tabular-nums">
+                                            {value}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+
+                            <Link
+                                href={register()}
+                                className="group mt-8 inline-flex h-11 w-full items-center justify-center rounded-full bg-[#17352f] text-sm font-semibold text-white transition-transform hover:-translate-y-0.5"
+                            >
+                                <ArrowLink>Start free</ArrowLink>
+                            </Link>
+                        </div>
+                    ))}
+                </div>
+
+                <p className="mx-auto mt-10 max-w-2xl text-center text-sm text-[#6f6962]">
+                    Larger volumes, more languages or an agreement of your own?{' '}
+                    <a
+                        href="mailto:hello@avyo.io?subject=Avyo%20for%20a%20larger%20team"
+                        className="font-medium text-[#17352f] underline underline-offset-4"
+                    >
+                        Talk to us
+                    </a>
+                    .
+                </p>
+            </div>
+        </section>
     );
 }

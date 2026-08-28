@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
+import { register } from '@/routes';
 import { store } from '@/routes/login';
 import { request } from '@/routes/password';
 
@@ -86,6 +87,20 @@ export default function Login({ status, canResetPassword }: Props) {
                                 {processing && <Spinner />}
                                 Log in
                             </Button>
+
+                            {/*
+                             * The way out of here, which did not exist while
+                             * accounts were made by hand. A public sign-up
+                             * that the sign-in screen never mentions is a
+                             * sign-up only people who already know the URL can
+                             * find.
+                             */}
+                            <div className="text-center text-sm text-muted-foreground">
+                                New here?{' '}
+                                <TextLink href={register()} tabIndex={5}>
+                                    Create an account
+                                </TextLink>
+                            </div>
                         </div>
                     </>
                 )}

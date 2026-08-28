@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Content\PostScore;
 use App\Content\UnitScore;
 use App\Enums\ContentItemState;
@@ -53,6 +55,7 @@ class ApprovalController extends Controller
         private readonly UnitScore $score,
         private readonly PipelineRunner $runner,
         private readonly CurrentProject $current,
+        private readonly Entitlements $entitlements,
     ) {}
 
     public function index(): Response
@@ -145,6 +148,34 @@ class ApprovalController extends Controller
             $draft->forceFill(['review' => [], 'reviewed_at' => null])->save();
 
             $draft->approve();
+
+            // The plan's counter moves here, at approval, and not at
+            // generation. The engine writes eight social posts to keep one, and
+            // charging a customer for the seven it discarded would make the
+            // number on their screen mean nothing. The seven were not free —
+            // they are what the cost ceiling is watching, which is the whole
+            // reason there are two layers of limit.
+            //
+            // Checked as well as counted, and inside the row lock. Approval is
+            // the consumption point, so it is also the only place the allowance
+            // can be enforced — and it was incrementing blindly: a drafting
+            // batch leaves several candidates behind, so a project with one
+            // article left could approve five and publish all of them. A
+            // counter nothing reads before writing is a report, not a quota.
+            $metric = $draft->isSocial() ? Metric::SocialPosts : Metric::Articles;
+
+            // Reserved, not checked-then-counted. The lock above serialises
+            // *this* draft against itself and nothing else — two different
+            // drafts approved at the same instant contend for a counter that is
+            // a different row entirely, so both would read the same remaining
+            // allowance and both increment past it. `reserve()` puts the guard
+            // inside the write.
+            if (! $this->entitlements->reserve($draft->project, $metric)) {
+                // 409 rather than a redirect with a message, because this
+                // arrives from a queue screen that has to re-render: the draft
+                // stays exactly where it was, and the operator is told why.
+                abort(409, "This period’s {$metric->label()} are used up. This one can go out next period, or on a larger plan.");
+            }
 
             return $this->channels->publishAutomatically($draft);
         });

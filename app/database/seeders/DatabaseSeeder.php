@@ -29,7 +29,7 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
-        User::firstOrCreate(
+        $account = User::firstOrCreate(
             ['email' => (string) config('seeding.admin.email')],
             [
                 'name' => (string) config('seeding.admin.name'),
@@ -37,5 +37,32 @@ class DatabaseSeeder extends Seeder
                 'email_verified_at' => now(),
             ],
         );
+
+        $this->ensureThereIsAWayIn($account);
+    }
+
+    /**
+     * Somebody has to be able to open `/admin`.
+     *
+     * `users.is_admin` is granted by an administrator, which is fine once one
+     * exists and is a deadlock on the day none does. The migration that added
+     * the column grants it to the `HORIZON_ALLOWED_EMAILS` list — but on a
+     * fresh container migrations run *before* this seeder, so there is no
+     * account for that pass to find, and the account it then creates has the
+     * column's default. The panel would answer 404 for every account on the
+     * installation, with nothing able to change that.
+     *
+     * Only when there is no administrator at all, which is exactly the
+     * bootstrap case and nothing else. A deployment that has revoked its last
+     * administrator on purpose is not a case this can distinguish, and getting
+     * that wrong is a locked-out operator rather than a leak.
+     */
+    private function ensureThereIsAWayIn(User $account): void
+    {
+        if (User::query()->where('is_admin', true)->exists()) {
+            return;
+        }
+
+        $account->forceFill(['is_admin' => true])->save();
     }
 }

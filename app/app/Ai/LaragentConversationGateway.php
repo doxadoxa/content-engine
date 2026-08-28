@@ -6,6 +6,7 @@ namespace App\Ai;
 
 use App\Ai\Agents\EngineAgent;
 use App\Ai\Contracts\ConversationGateway;
+use App\Pipelines\Core\PipelineRunner;
 use Illuminate\Support\Str;
 use LarAgent\Context\SessionIdentity;
 use LarAgent\History\InMemoryChatHistory;
@@ -69,27 +70,85 @@ class LaragentConversationGateway implements ConversationGateway
             // committed and queued. Throwing the history away here would tell
             // an operator the turn did not finish while an article was being
             // written, and their second ask would write a second one.
+            //
+            // And with whatever it already spent, by the same argument applied
+            // to money: the requests that drove those tool calls were paid for
+            // before this one fell over. A meter that only counts turns which
+            // came back is a meter a flapping provider walks straight through.
             throw new ConversationFailed(
                 "The {$choice->provider} conversation failed: {$e->getMessage()}",
                 $this->toolCallsSince($history, $before),
                 $e,
+                $this->usage($agent, $choice, $startedAt),
             );
         }
 
-        $latencyMs = (int) ((hrtime(true) - $startedAt) / 1_000_000);
-        $usage = $agent->usageStorage()?->getLastUsage();
+        // A turn that came back but reported no usage still happened, so it is
+        // described with the model we asked for and a token count of zero —
+        // the shape the response has always had. Only the *failing* path can
+        // say "nothing was spent", because only there is it ever true.
+        $usage = $this->usage($agent, $choice, $startedAt) ?? new ConversationUsage(
+            provider: $choice->provider,
+            model: $choice->model,
+            inputTokens: 0,
+            outputTokens: 0,
+            latencyMs: (int) ((hrtime(true) - $startedAt) / 1_000_000),
+        );
 
         return new ConversationResponse(
             text: is_string($answer) ? $answer : (string) json_encode($answer),
             toolCalls: $this->toolCallsSince($history, $before),
+            provider: $usage->provider,
+            model: $usage->model,
+            inputTokens: $usage->inputTokens,
+            outputTokens: $usage->outputTokens,
+            latencyMs: $usage->latencyMs,
+        );
+    }
+
+    /**
+     * What the turn spent, read off the agent's usage storage.
+     *
+     * **Every round-trip, not the last one.** A turn is a loop: LarAgent calls
+     * the model, runs whatever it reached for, and calls again — appending one
+     * `UsageRecord` per call — so a turn that used three tools made four
+     * requests. Pricing `getLastUsage()` alone would record the fourth and drop
+     * the three before it, which are the *expensive* ones: each carries the
+     * whole conversation plus every tool result so far, and the final leg is
+     * the leanest of the four. {@see PipelineRunner::meter()}
+     * sums a step's model calls for exactly this reason.
+     *
+     * The storage is safe to aggregate whole because its identity is minted per
+     * turn — see the random `chat-` key above — so there is nothing in it but
+     * this turn.
+     *
+     * Null where the provider reported nothing at all, because a failure before
+     * the first request really did cost nothing and a zero-cost row next to a
+     * zero token count is a claim that a call was made. Where usage *is*
+     * reported, missing halves are zero rather than null for the reason
+     * {@see ModelResponse} gives: a cost table with holes in it is
+     * indistinguishable from one showing cheap turns.
+     */
+    private function usage(EngineAgent $agent, ModelChoice $choice, float|int $startedAt): ?ConversationUsage
+    {
+        $storage = $agent->usageStorage();
+        $last = $storage?->getLastUsage();
+
+        if ($storage === null || $last === null) {
+            return null;
+        }
+
+        $totals = $storage->aggregate();
+
+        return new ConversationUsage(
             provider: $choice->provider,
-            model: $usage === null ? $choice->model : ($usage->modelName ?: $choice->model),
-            // Zero rather than null where the provider reported nothing, for
-            // the reason `ModelResponse` gives: a cost table with holes in it is
-            // indistinguishable from one showing cheap turns.
-            inputTokens: $usage === null ? 0 : (int) $usage->promptTokens,
-            outputTokens: $usage === null ? 0 : (int) $usage->completionTokens,
-            latencyMs: $latencyMs,
+            // The last record's, because every call of one turn is the same
+            // model — the agent is built with one — and the last is the one
+            // that answered.
+            model: $last->modelName ?: $choice->model,
+            inputTokens: (int) ($totals['total_prompt_tokens'] ?? 0),
+            outputTokens: (int) ($totals['total_completion_tokens'] ?? 0),
+            latencyMs: (int) ((hrtime(true) - $startedAt) / 1_000_000),
         );
     }
 

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Actions\Fortify;
 
 use App\Models\User;
-use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -34,15 +33,23 @@ class UpdateUserProfileInformation implements UpdatesUserProfileInformation
             ],
         ])->validateWithBag('updateProfileInformation');
 
-        if ($input['email'] !== $user->email &&
-            $user instanceof MustVerifyEmail) {
+        // Changing the address always re-verifies now. The stock scaffolding
+        // guarded this with `$user instanceof MustVerifyEmail`, which was a
+        // real question while accounts were made by hand and stopped being one
+        // when registration opened: the model declares the interface, so the
+        // guard was a branch that could no longer be taken. Leaving it would
+        // have read as though unverified addresses were still a possibility
+        // somebody had thought about.
+        if ($input['email'] !== $user->email) {
             $this->updateVerifiedUser($user, $input);
-        } else {
-            $user->forceFill([
-                'name' => $input['name'],
-                'email' => $input['email'],
-            ])->save();
+
+            return;
         }
+
+        $user->forceFill([
+            'name' => $input['name'],
+            'email' => $input['email'],
+        ])->save();
     }
 
     /**

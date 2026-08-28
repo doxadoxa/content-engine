@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+use App\Billing\Plan;
+use App\Billing\PlanCatalog;
 use App\Http\Controllers\Api\PullContentController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\ArticleController;
 use App\Http\Controllers\AssistantController;
+use App\Http\Controllers\BillingCheckoutController;
+use App\Http\Controllers\BillingController;
 use App\Http\Controllers\BrandBriefController;
 use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\ChannelController;
@@ -34,7 +38,32 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
-Route::get('/', fn () => Inertia::render('marketing'))->name('home');
+/*
+ * The landing page, and the prices on it.
+ *
+ * Read from `config/billing.php` rather than written into the page, because
+ * there is one price list and a second copy of it in a marketing component is
+ * a second copy to forget. Only the self-serve plans: Enterprise is a
+ * conversation, and a "Choose" button under it would promise a checkout that
+ * does not exist.
+ */
+Route::get('/', fn (PlanCatalog $plans) => Inertia::render('marketing', [
+    'pricing' => [
+        'currency' => (string) config('billing.currency', 'eur'),
+        'trial_days' => $plans->trialDays(),
+        'plans' => array_map(static fn (Plan $plan): array => [
+            'key' => $plan->key,
+            'name' => $plan->name,
+            'price_cents' => $plan->priceCents,
+            'limits' => [
+                'articles' => $plan->limit('articles'),
+                'social_posts' => $plan->limit('social_posts'),
+                'locales' => $plan->limit('locales'),
+                'seats' => $plan->limit('seats'),
+            ],
+        ], $plans->selfServe()),
+    ],
+]))->name('home');
 
 /*
  * The three public documents (see `LegalController`). Outside the auth group
@@ -77,10 +106,10 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // calls and each one is a bill.
     Route::get('chat', [AssistantController::class, 'index'])->name('assistant.index');
     Route::post('chat', [AssistantController::class, 'store'])
-        ->middleware('throttle:30,1')->name('assistant.store');
+        ->middleware(['throttle:30,1', 'project.entitled:assistant_turns'])->name('assistant.store');
     Route::get('chat/{thread}', [AssistantController::class, 'show'])->name('assistant.show');
     Route::post('chat/{thread}', [AssistantController::class, 'reply'])
-        ->middleware('throttle:30,1')->name('assistant.reply');
+        ->middleware(['throttle:30,1', 'project.entitled:assistant_turns'])->name('assistant.reply');
     Route::patch('chat/{thread}', [AssistantController::class, 'rename'])->name('assistant.rename');
     Route::delete('chat/{thread}', [AssistantController::class, 'destroy'])->name('assistant.destroy');
 
@@ -92,17 +121,44 @@ Route::middleware(['auth'])->group(function () use ($social): void {
 
     // Creating a project is a wizard, not a form (§3.1): URL in, a reading of
     // the site, then the operator correcting it — and the engine starts itself.
-    Route::get('onboarding', [OnboardingController::class, 'show'])->name('onboarding.show');
-    // Throttled: each call makes an outbound fetch and a model call on nothing
-    // more than a string somebody typed, which is a bill and a request-forgery
-    // surface an unbounded loop would make worse.
-    Route::post('onboarding/analyse', [OnboardingController::class, 'analyse'])
-        ->middleware('throttle:20,1')
-        ->name('onboarding.analyse');
-    Route::post('onboarding/{project}/save', [OnboardingController::class, 'save'])
-        ->middleware('project.owner')->name('onboarding.save');
-    Route::post('onboarding/{project}/launch', [OnboardingController::class, 'launch'])
-        ->middleware('project.owner')->name('onboarding.launch');
+    //
+    // The whole wizard is behind `verified`, and that is the earliest honest
+    // place for it. Every step of it spends something — the first one fetches
+    // somebody's site and asks a model about it — and the last one starts a
+    // free trial that costs us real provider calls. Putting the check only on
+    // the final step would let somebody fill in six screens before being told
+    // to go and read their email; putting it on the whole application would
+    // lock a signed-in operator out of work they already paid for.
+    Route::middleware('verified')->group(function (): void {
+        Route::get('onboarding', [OnboardingController::class, 'show'])->name('onboarding.show');
+        // Throttled: each call makes an outbound fetch and a model call on
+        // nothing more than a string somebody typed, which is a bill and a
+        // request-forgery surface an unbounded loop would make worse.
+        Route::post('onboarding/analyse', [OnboardingController::class, 'analyse'])
+            ->middleware('throttle:20,1')
+            ->name('onboarding.analyse');
+        Route::post('onboarding/{project}/save', [OnboardingController::class, 'save'])
+            ->middleware('project.owner')->name('onboarding.save');
+        Route::post('onboarding/{project}/launch', [OnboardingController::class, 'launch'])
+            ->middleware('project.owner')->name('onboarding.launch');
+    });
+
+    // What the project is on, and what else there is. Not behind
+    // `project.owner`: an operator who has run out of articles should be able
+    // to find out why without asking the account holder, and everything here is
+    // a quota rather than a figure about our money.
+    //
+    // Never behind `project.entitled`, which would be the funniest bug in this
+    // subsystem — the page you go to *because* you are not entitled.
+    Route::get('billing', BillingController::class)->name('billing.index');
+
+    // Out to Stripe. Owner-only, unlike the screen above: reading which quotas
+    // are left is an operator's business, committing the account holder's card
+    // is not. Throttled because each press opens a session at a provider.
+    Route::post('billing/checkout', [BillingCheckoutController::class, 'checkout'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('billing.checkout');
+    Route::post('billing/portal', [BillingCheckoutController::class, 'portal'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('billing.portal');
 
     Route::get('projects', [ProjectController::class, 'index'])->name('projects.index');
     Route::get('projects/{project}/edit', [ProjectController::class, 'edit'])
@@ -154,7 +210,7 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // somebody else's website. Same permission as editing the brief: it changes
     // what the brief offers.
     Route::post('brief/palette', [BrandBriefController::class, 'palette'])
-        ->middleware(['project.owner', 'throttle:10,1'])->name('brief.palette');
+        ->middleware(['project.owner', 'throttle:10,1', 'project.entitled'])->name('brief.palette');
 
     // §7's own screen: one summary, five minutes, four sections. No
     // `project.owner`, by the same reasoning as `content.approve` and
@@ -226,7 +282,7 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // the picture, or both. Throttled: every call is a model call, and the
     // picture half puts a paid redraw on the queue.
     Route::post('social/posts/{item}/edit', [SocialPostController::class, 'edit'])
-        ->middleware('throttle:20,1')->name('social.posts.edit');
+        ->middleware(['throttle:20,1', 'project.entitled'])->name('social.posts.edit');
 
     // The monthly assistant, which is a *tab of the social surface* rather than
     // a place of its own. It was a top-level "Studio" beside "Social" for one
@@ -244,22 +300,26 @@ Route::middleware(['auth'])->group(function () use ($social): void {
         return redirect()->route('social.plan', $request->query());
     })->name('studio.index');
     Route::post('studio/propose', [ContentStudioController::class, 'propose'])
-        ->middleware('throttle:10,1')->name('studio.propose');
+        ->middleware(['throttle:10,1', 'project.entitled:content_plans'])->name('studio.propose');
     Route::post('studio/plans/{plan}/refine', [ContentStudioController::class, 'refine'])
-        ->middleware('throttle:20,1')->name('studio.refine');
+        ->middleware(['throttle:20,1', 'project.entitled'])->name('studio.refine');
+    // Accepting is where a content plan is *spent*, so it is where the
+    // allowance is enforced. Proposing was gated and accepting was not, which
+    // let a project propose a month at a time all year and then commit every
+    // one of them — the counter moved on each, and nothing ever read it.
     Route::post('studio/plans/{plan}/accept', [ContentStudioController::class, 'accept'])
-        ->name('studio.accept');
+        ->middleware('project.entitled:content_plans')->name('studio.accept');
     Route::post('studio/plans/{plan}/generate', [ContentStudioController::class, 'generate'])
-        ->middleware('throttle:10,1')->name('studio.generate');
+        ->middleware(['throttle:10,1', 'project.entitled:social_posts'])->name('studio.generate');
     // One idea, on demand. Throttled like the batch above rather than like the
     // text actions: it buys a pool of model calls and a picture per channel,
     // which is the same money the weekly button spends, one idea at a time.
     Route::post('studio/ideas/{idea}/generate', [ContentStudioController::class, 'generateIdea'])
-        ->middleware('throttle:10,1')->name('studio.ideas.generate');
+        ->middleware(['throttle:10,1', 'project.entitled:social_posts'])->name('studio.ideas.generate');
     // An idea somebody typed, written on the spot. Throttled like the two
     // above: it writes the row and immediately buys the same drafting run.
     Route::post('studio/ideas', [ContentStudioController::class, 'storeIdea'])
-        ->middleware('throttle:10,1')->name('studio.ideas.store');
+        ->middleware(['throttle:10,1', 'project.entitled:social_posts'])->name('studio.ideas.store');
     // What an idea is called, what its point is, and what it should be made
     // as — the three things somebody adjusts before pressing Create. Not
     // throttled with the two above: it spends nothing.
@@ -269,7 +329,7 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // from a provider, and a stuck button should cost a few cents rather than
     // a few dollars.
     Route::post('studio/drafts/{item}/image', [ContentStudioController::class, 'reviseImage'])
-        ->middleware('throttle:20,1')->name('studio.image.revise');
+        ->middleware(['throttle:20,1', 'project.entitled'])->name('studio.image.revise');
     Route::post('studio/drafts/{item}/photo', [ContentStudioController::class, 'uploadImage'])
         ->middleware('throttle:60,1')->name('studio.image.upload');
     Route::post('studio/drafts/{item}/image/{asset}', [ContentStudioController::class, 'chooseImage'])
@@ -281,9 +341,9 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // `ArticleController`. Throttled like the studio's, because both put a
     // model call behind one press.
     Route::post('content/articles', [ArticleController::class, 'store'])
-        ->middleware('throttle:10,1')->name('content.articles.store');
+        ->middleware(['throttle:10,1', 'project.entitled:articles'])->name('content.articles.store');
     Route::post('content/plan', [ArticleController::class, 'plan'])
-        ->middleware('throttle:5,1')->name('content.plan');
+        ->middleware(['throttle:5,1', 'project.entitled:content_plans'])->name('content.plan');
 
     Route::get('content/{item}', ContentItemDetailController::class)->name('content.show');
 
@@ -317,9 +377,9 @@ Route::middleware(['auth'])->group(function () use ($social): void {
     // button should cost a few cents rather than a few dollars.
     Route::get('audit', [SiteAuditController::class, 'index'])->name('audit.index');
     Route::post('audit/recheck', [SiteAuditController::class, 'recheck'])
-        ->middleware('throttle:10,1')->name('audit.recheck');
+        ->middleware(['throttle:10,1', 'project.entitled:site_audits'])->name('audit.recheck');
     Route::post('audit/fix-plan', [SiteAuditController::class, 'fixPlan'])
-        ->middleware('throttle:10,1')->name('audit.fix-plan');
+        ->middleware(['throttle:10,1', 'project.entitled'])->name('audit.fix-plan');
 });
 
 // The pull API (§9.5). Outside the auth group: it is authenticated by a
@@ -355,3 +415,4 @@ if ($social) {
 }
 
 require __DIR__.'/settings.php';
+require __DIR__.'/admin.php';

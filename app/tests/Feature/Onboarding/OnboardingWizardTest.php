@@ -6,6 +6,10 @@ namespace Tests\Feature\Onboarding;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
+use App\Billing\Contracts\BillingProvider;
+use App\Billing\FakeBillingProvider;
+use App\Billing\StripeWebhook;
+use App\Enums\BillingStatus;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
 use App\Enums\PipelineRunStatus;
@@ -14,6 +18,7 @@ use App\Models\Channel;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\Contracts\SiteReader;
 use App\Onboarding\FakeSiteReader;
@@ -334,9 +339,15 @@ final class OnboardingWizardTest extends TestCase
             'answers' => ['weekly_target' => 5, 'autopublish' => true],
         ])->assertOk();
 
+        // Out to Stripe for the card, not home. The subscription is created
+        // charging nothing; the first invoice falls due when the free days run
+        // out. `Inertia::location()` is the only answer an Inertia form
+        // understands as "leave this application".
         $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
             ->post("/onboarding/{$id}/launch")
-            ->assertRedirect('/home');
+            ->assertStatus(409)
+            ->assertHeader('X-Inertia-Location', 'https://checkout.stripe.test/medium/'.$id);
 
         $project->refresh();
 
@@ -371,6 +382,13 @@ final class OnboardingWizardTest extends TestCase
                 Channel::query()->where('name', 'Website')->firstOrFail()->type,
             );
         });
+
+        // And now the card. Everything above happened at the wizard's last step;
+        // nothing has run yet, because research is spend and spend before a
+        // subscription exists is what every gate here refuses.
+        $this->assertSame(0, PipelineRun::acrossProjects()->count());
+
+        $this->subscriptionCreated($project);
 
         // The engine started itself. Nobody has to press a second button.
         Queue::assertPushed(
@@ -423,32 +441,105 @@ final class OnboardingWizardTest extends TestCase
     }
 
     #[Test]
-    public function launching_twice_does_not_start_a_second_month(): void
+    public function the_wizard_takes_a_card_and_starts_nothing_until_it_is_accepted(): void
     {
         Queue::fake();
 
         $operator = User::factory()->create();
-        $project = Project::factory()->onboarding()->create([
+        $project = Project::factory()->onboarding()->unbilled()->create([
             'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
         ]);
         $operator->projects()->attach($project, ['role' => 'owner']);
 
-        $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch")
-            ->assertRedirect('/home');
+        $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch")
+            ->assertStatus(409);
 
-        $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch")
-            ->assertRedirect('/home');
+        // Research is spend, and spend before a subscription exists is what
+        // every gate in this subsystem refuses. So the launch waits for the
+        // event that says a card was accepted.
+        $this->assertSame(0, PipelineRun::acrossProjects()->count());
+        $this->assertSame(0, ProjectSubscription::query()->count());
+        $this->assertSame(OnboardingStatus::Launching, $project->fresh()?->onboarding_status);
+    }
+
+    #[Test]
+    public function the_engine_starts_when_stripe_confirms_the_trial(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch");
+
+        $this->subscriptionCreated($project);
+
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame(BillingStatus::Trialing, $subscription->status);
+        $this->assertTrue($subscription->trial_ends_at?->isFuture());
+
+        // And now the first run of the project's life.
+        $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'research')->count());
+    }
+
+    #[Test]
+    public function a_redelivered_subscription_event_does_not_start_a_second_month(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch");
+
+        $this->subscriptionCreated($project);
+        $this->subscriptionCreated($project, 'evt_again');
 
         $this->assertSame(
             1,
             PipelineRun::acrossProjects()->where('pipeline', 'research')->count(),
-            'A double-submitted last step must not research and plan the month twice.',
+            'A re-delivered subscription event must not research and plan the month twice.',
         );
-        $this->assertSame(
-            1,
-            PipelineRun::acrossProjects()->where('pipeline', 'content_studio')->count(),
-            'A double-submitted last step must not propose the social month twice.',
-        );
+    }
+
+    #[Test]
+    public function launching_twice_does_not_take_a_second_card(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch")
+            ->assertStatus(409);
+
+        // The status flipped inside the lock, so the guard reads Launching and
+        // the second press is a no-op rather than a second checkout.
+        $this->actingAs($operator)
+            ->post("/onboarding/{$project->getKey()}/launch")
+            ->assertRedirect('/home');
+
+        $provider = app(BillingProvider::class);
+        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
+        $this->assertCount(1, $provider->checkouts);
     }
 
     #[Test]
@@ -663,6 +754,32 @@ final class OnboardingWizardTest extends TestCase
         $this->actingAs($operator)
             ->post("/onboarding/{$theirs->getKey()}/launch")
             ->assertNotFound();
+    }
+
+    /** What Stripe sends once the card is accepted. */
+    private function subscriptionCreated(Project $project, string $eventId = 'evt_test'): void
+    {
+        $start = now()->startOfDay();
+
+        app(StripeWebhook::class)->handle([
+            'id' => $eventId,
+            'type' => 'customer.subscription.created',
+            'data' => ['object' => [
+                'id' => 'sub_test',
+                'status' => 'trialing',
+                'customer' => 'cus_test',
+                'current_period_start' => $start->getTimestamp(),
+                'current_period_end' => $start->copy()->addMonth()->getTimestamp(),
+                'trial_end' => now()->addDays((int) config('billing.trial.days'))->getTimestamp(),
+                'canceled_at' => null,
+                'metadata' => [
+                    'project_id' => $project->getKey(),
+                    'plan' => 'medium',
+                    'plan_version' => '1',
+                ],
+                'items' => ['data' => [['price' => ['id' => 'price_medium']]]],
+            ]],
+        ]);
     }
 
     private function fakeModel(int $times = 1): void

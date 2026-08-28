@@ -1,5 +1,6 @@
 import { AppTopBar } from '@/components/app-header';
 import { AppSidebar } from '@/components/app-sidebar';
+import { BillingBanner } from '@/components/billing-banner';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import type { AppLayoutProps } from '@/types';
 
@@ -28,6 +29,15 @@ export default function AppSidebarLayout({
 
             <SidebarInset id="main-content" tabIndex={-1}>
                 <AppTopBar breadcrumbs={breadcrumbs} />
+
+                {/*
+                 * Under the bar and above the page, so it is read on the way
+                 * in rather than found by scrolling. It renders nothing at all
+                 * for a working subscription — a countdown on every day of a
+                 * paid month is the noise that stops people reading the line
+                 * that eventually matters.
+                 */}
+                <BillingBanner />
 
                 <div className="flex flex-1 flex-col">{children}</div>
             </SidebarInset>

@@ -807,7 +807,7 @@ class ContentStudioAssistant
             ->pluck('title')
             ->all();
 
-        $targetIdeas = max(8, min(20, $project->weekly_target * 4));
+        $targetIdeas = max(8, min(20, $project->weeklyTarget() * 4));
 
         // The goal only if a person confirmed it. An unconfirmed one is this
         // assistant's own previous guess, and feeding a model its own estimate

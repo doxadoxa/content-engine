@@ -1,0 +1,119 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Billing;
+
+use App\Billing\Contracts\BillingProvider;
+use App\Billing\Contracts\ProviderSubscription;
+use App\Models\Project;
+use App\Models\User;
+use DateTimeInterface;
+
+/**
+ * Stripe, without the network.
+ *
+ * Bound over {@see BillingProvider} in the test
+ * environment for the same reason the model and conversation gateways have
+ * fakes: the suite must never reach a provider, in any phase, for any test.
+ * It matters more here than anywhere else in this application — a billing suite
+ * that needs credentials is a billing suite that gets skipped, and this is the
+ * one subsystem where an untested branch costs money in both directions.
+ *
+ * It records what it was asked for, so a test can assert that a checkout was
+ * started for the right project on the right plan, which is the half that
+ * matters and the half a stub returning a fixed URL would not prove.
+ */
+class FakeBillingProvider implements BillingProvider
+{
+    /** @var list<array{payer: int, project: string, plan: string, return_url: string, with_trial: bool}> */
+    public array $checkouts = [];
+
+    /** @var list<array{payer: int, return_url: string}> */
+    public array $portals = [];
+
+    /** @var list<array{payer: int, project: string, plan: string}> */
+    public array $planChanges = [];
+
+    /**
+     * Whether there is an existing subscription to change.
+     *
+     * False by default, which is what the real one answers for a project that
+     * has never been through a checkout — and therefore the state most tests
+     * are describing. A test about an existing subscriber sets it.
+     */
+    public bool $canChangePlan = false;
+
+    /** @var list<array{project: string, until: string}> */
+    public array $trialExtensions = [];
+
+    /** @var array<string, ProviderSubscription> */
+    private array $subscriptions = [];
+
+    /** What Stripe will say about this subscription when the reconciler asks. */
+    public function willReport(ProviderSubscription $subscription): self
+    {
+        $this->subscriptions[$subscription->id] = $subscription;
+
+        return $this;
+    }
+
+    public function checkoutUrl(
+        User $payer,
+        Project $project,
+        Plan $plan,
+        string $returnUrl,
+        bool $withTrial = false,
+    ): string {
+        $this->checkouts[] = [
+            'payer' => (int) $payer->getKey(),
+            'project' => $project->getKey(),
+            'plan' => $plan->key,
+            'return_url' => $returnUrl,
+            'with_trial' => $withTrial,
+        ];
+
+        return 'https://checkout.stripe.test/'.$plan->key.'/'.$project->getKey();
+    }
+
+    public function changePlan(User $payer, Project $project, Plan $plan): bool
+    {
+        if (! $this->canChangePlan) {
+            return false;
+        }
+
+        $this->planChanges[] = [
+            'payer' => (int) $payer->getKey(),
+            'project' => $project->getKey(),
+            'plan' => $plan->key,
+        ];
+
+        return true;
+    }
+
+    public function extendTrial(User $payer, Project $project, DateTimeInterface $until): bool
+    {
+        if (! $this->canChangePlan) {
+            return false;
+        }
+
+        $this->trialExtensions[] = [
+            'project' => $project->getKey(),
+            'until' => $until->format(DATE_ATOM),
+        ];
+
+        return true;
+    }
+
+    public function portalUrl(User $payer, string $returnUrl): string
+    {
+        $this->portals[] = ['payer' => (int) $payer->getKey(), 'return_url' => $returnUrl];
+
+        return 'https://portal.stripe.test/'.$payer->getKey();
+    }
+
+    public function subscription(string $stripeId): ?ProviderSubscription
+    {
+        return $this->subscriptions[$stripeId] ?? null;
+    }
+}

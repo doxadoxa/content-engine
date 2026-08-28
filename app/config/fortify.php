@@ -164,10 +164,20 @@ return [
     */
 
     'features' => [
-        // No registration: an account exists because someone created it (§10
-        // of the product spec puts public sign-up out of scope). Leaving the
-        // feature on would publish a working /register on an engine that
-        // writes for four of our own brands.
+        // Registration is public, which reverses §10 of the product spec —
+        // "an account exists because someone created it" — and it should,
+        // because that sentence describes an operator tool and this is what
+        // turns it into a service. Somebody has to be able to meet the engine
+        // without meeting us.
+        Features::registration(),
+
+        // And has to prove the address before the engine spends anything on
+        // them. This is the cheapest of the three checks in
+        // {@see \App\Billing\TrialEligibility}, and the one that makes the
+        // other two worth having: a trial costs us real model and image calls,
+        // so an unverified signup is an open tab.
+        Features::emailVerification(),
+
         Features::resetPasswords(),
         Features::updateProfileInformation(),
         Features::updatePasswords(),

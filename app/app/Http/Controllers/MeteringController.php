@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\AssistantMessage;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Support\Metering\PostCostReport;
+use App\Support\Metering\ProjectSpend;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -46,6 +48,21 @@ class MeteringController extends Controller
             'by_pipeline' => $this->byPipeline($since),
             'trend' => $this->trend($since),
             'per_unit' => $this->perUnit($since),
+
+            // The conversation's half of the bill, which this screen did not
+            // show for as long as it existed. Every other figure on the page is
+            // an aggregate over `pipeline_runs`, and the assistant is not one —
+            // so a project could be talked to all month and the screen would
+            // report the engine's spend as though it were the total.
+            'assistant' => $this->assistant($since),
+
+            // The whole bill, both doors, which is the only number that answers
+            // "what did this project cost us". It is here rather than derived
+            // in the page because the same sum is what a plan's cost ceiling is
+            // compared against, and there must be one of it.
+            'spend' => $project instanceof Project
+                ? ProjectSpend::for($project, $since)->toArray()
+                : null,
 
             // §8, and not deferred, for the same reason as everything else on
             // this page: it is a handful of aggregates over the window the rest
@@ -137,6 +154,44 @@ class MeteringController extends Controller
             'cost_micros' => (int) $row->cost_micros,
             'runs' => (int) $row->runs,
         ], $rows);
+    }
+
+    /**
+     * What talking to the engine cost, and how much of it there was.
+     *
+     * Turns rather than rows: only the assistant's own message carries a price,
+     * and counting the person's sentence and the tool receipts beside it would
+     * divide the cost of a conversation by three.
+     *
+     * Tenant-scoped like every other query on this screen — an operator reads
+     * their own project's bill and nobody else's.
+     *
+     * @return array{turns: int, input_tokens: int, output_tokens: int, cost_micros: int, average_micros: int|null}
+     */
+    private function assistant(\DateTimeInterface $since): array
+    {
+        $turns = AssistantMessage::query()
+            ->where('created_at', '>=', $since)
+            ->whereNotNull('provider');
+
+        /** @var object{turns: int, input_tokens: string|null, output_tokens: string|null, cost_micros: string|null} $totals */
+        $totals = $turns->clone()->toBase()->first([
+            DB::raw('count(*) as turns'),
+            DB::raw('coalesce(sum(input_tokens), 0) as input_tokens'),
+            DB::raw('coalesce(sum(output_tokens), 0) as output_tokens'),
+            DB::raw('coalesce(sum(cost_micros), 0) as cost_micros'),
+        ]) ?? (object) ['turns' => 0, 'input_tokens' => 0, 'output_tokens' => 0, 'cost_micros' => 0];
+
+        $count = (int) $totals->turns;
+        $cost = (int) $totals->cost_micros;
+
+        return [
+            'turns' => $count,
+            'input_tokens' => (int) $totals->input_tokens,
+            'output_tokens' => (int) $totals->output_tokens,
+            'cost_micros' => $cost,
+            'average_micros' => $count === 0 ? null : intdiv($cost, $count),
+        ];
     }
 
     /**

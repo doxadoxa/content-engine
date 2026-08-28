@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Billing\Entitlements;
 use App\Enums\LocaleMode;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
@@ -224,6 +225,26 @@ class Project extends Model
             array_unique(array_filter(array_map(trim(...), [$this->default_locale, ...$this->locales]))),
             fn (string $locale): bool => $this->localeMode($locale)->isWritten(),
         ));
+    }
+
+    /**
+     * How much to write in a week, clamped to what the plan allows.
+     *
+     * The stored column is what the operator chose and is never overwritten:
+     * somebody who set fourteen and then downgraded gets fourteen back when
+     * they upgrade, rather than discovering the plan quietly rewrote a setting
+     * of theirs. This is the number the engine acts on.
+     *
+     * A clamp rather than a counter, and that is the better limit of the two.
+     * A counter stops a project dead on the 22nd of the month, which reads as a
+     * broken engine; a clamped cadence makes the engine pace itself so the
+     * month comes out even and the boundary is never felt. The article counter
+     * behind it is the backstop for the paths that bypass the tick — the
+     * Studio's buttons, an article somebody writes by hand.
+     */
+    public function weeklyTarget(): int
+    {
+        return app(Entitlements::class)->for($this)->weeklyTarget($this->weekly_target);
     }
 
     /**
