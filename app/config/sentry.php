@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Support\Observability\ScrubSentryPayloads;
+
 /*
  * Where faults go, now that they go somewhere.
  *
@@ -91,6 +93,24 @@ return [
     // a project id and nothing else.
     // @see: https://docs.sentry.io/platforms/php/guides/laravel/configuration/options/#send_default_pii
     'send_default_pii' => env('SENTRY_SEND_DEFAULT_PII', false),
+
+    /*
+     * What `send_default_pii => false` does not cover.
+     *
+     * That setting governs what the SDK collects on its own. It says nothing
+     * about what this application hands over: a `Log::` context array becomes
+     * a breadcrumb verbatim, and an outbound request records its query string
+     * on both a breadcrumb and a span. Two places in this codebase put a
+     * customer's prompt and a customer's search terms into exactly those, so
+     * without these hooks the promise made in config/legal.php — that Sentry
+     * "is not sent your content" — is untrue.
+     *
+     * Array callables, not closures: the production entrypoint runs
+     * `php artisan config:cache`, which cannot serialise a closure and fails
+     * the boot outright.
+     */
+    'before_breadcrumb' => [ScrubSentryPayloads::class, 'breadcrumb'],
+    'before_send_transaction' => [ScrubSentryPayloads::class, 'transaction'],
 
     // @see: https://docs.sentry.io/platforms/php/guides/laravel/configuration/options/#ignore_exceptions
     // 'ignore_exceptions' => [],
