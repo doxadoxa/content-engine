@@ -55,6 +55,9 @@ use Illuminate\Log\Context\Events\ContextHydrated;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
+use Sentry\State\Scope;
+
+use function Sentry\configureScope;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -229,6 +232,21 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(ContextHydrated::class, function (): void {
             $this->app->make(CurrentProject::class)->flushResolved();
             $this->app->make(Entitlements::class)->forget();
+
+            // The same boundary is where a fault report stops being about the
+            // previous job. App\Http\Middleware\SentryContext does this for
+            // http; a worker has no middleware stack, so it is done here, off
+            // the one event that already means "a new tenant has arrived".
+            //
+            // Set unconditionally, including to null: a scope on a long-lived
+            // worker outlives the job that filled it, so a job running without
+            // a project would otherwise report under whichever project the
+            // worker happened to handle before it.
+            $projectId = $this->app->make(CurrentProject::class)->id();
+
+            configureScope(function (Scope $scope) use ($projectId): void {
+                $scope->setTag('project_id', $projectId ?? 'none');
+            });
         });
 
         // The engine's one outward signal, and what chains a new project's

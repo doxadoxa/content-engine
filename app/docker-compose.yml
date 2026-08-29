@@ -17,10 +17,26 @@ name: content-engine
 
 services:
   app:
-    build:
+    build: &app-build
       context: .
       dockerfile: Dockerfile
       target: dev
+      # `env_file` below reaches the finished container, which is too late for
+      # these: Vite substitutes `VITE_` names into the bundle when the assets
+      # are compiled, and .env is not in the build context. Without them here,
+      # setting VITE_SENTRY_DSN in .env and running `compose up --build` gives
+      # you a server configured for Sentry — CSP widened, PHP reporting — and a
+      # frontend compiled without a DSN, which is the worst shape for it to
+      # fail in: everything looks configured and the browser reports nothing.
+      #
+      # Interpolated from .env in this directory, so they follow the same file
+      # as everything else. Empty is the default and means "no browser Sentry",
+      # which is what a local checkout wants.
+      args:
+        VITE_SENTRY_DSN: "${VITE_SENTRY_DSN:-}"
+        VITE_SENTRY_ENVIRONMENT: "${VITE_SENTRY_ENVIRONMENT:-local}"
+        VITE_SENTRY_TRACES_SAMPLE_RATE: "${VITE_SENTRY_TRACES_SAMPLE_RATE:-}"
+        SENTRY_RELEASE: "${SENTRY_RELEASE:-}"
     image: content-engine:dev
     # Comes back on its own, like the datastores below.
     #
@@ -54,7 +70,12 @@ services:
       APP_URL: "${APP_URL:-http://localhost:${CE_APP_PORT:-8091}}"
       # Local-only key, shared by every container. Not a production secret.
       APP_KEY: base64:qO3H1n8cJt5vX2bK9wR4dM7gY0sT6uA1eL5pN8iZ3Fc=
-      LOG_CHANNEL: stderr
+      # A stack, not plain stderr: `docker logs` still shows everything, and
+      # `Log::error` additionally reaches Sentry. Set here as well as in the
+      # Dockerfile because this block wins over both it and .env — changing
+      # only one of the two leaves the containers on the old value.
+      LOG_CHANNEL: stack
+      LOG_STACK: stderr,sentry
 
       # Inside the compose network. Absent in production until the service is
       # deployed there, and PanelRenderer treats absent as "not configured"
@@ -204,10 +225,8 @@ services:
       start_period: 15s
 
   horizon:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: dev
+    # Same image and therefore the same build arguments — see the app service.
+    build: *app-build
     image: content-engine:dev
     # `depends_on` orders `compose up` and nothing else — the daemon bringing
     # containers back after a reboot does not re-evaluate it. So this may well
@@ -234,10 +253,8 @@ services:
       start_period: 60s
 
   scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: dev
+    # Same image and therefore the same build arguments — see the app service.
+    build: *app-build
     image: content-engine:dev
     # The one this matters most for, because nothing downstream complains when
     # it is gone. This container exited 1 around 14 August 2026 and stayed

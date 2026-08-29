@@ -78,7 +78,7 @@ const TOGGLES: Toggle[] = [
         key: 'analytics',
         title: 'Analytics',
         description:
-            'Would measure which pages are used and where people get stuck. Avyo sets no analytics cookies today; this permission is asked in advance so nothing is ever measured before you allow it.',
+            'Measures how quickly pages and actions load, so we can find what is slow. No cookie and no advertising profile — and nothing is measured until you allow it here. Errors are always reported, with or without this, because a page that breaks is our defect rather than a measurement of you.',
     },
     {
         locked: false,
@@ -180,7 +180,7 @@ export default function CookieConsent() {
                         <DialogDescription className="text-[13px] leading-6 text-[#6f6962] shell-dark:text-white/60">
                             Two of these are part of how the product works and
                             cannot be switched off. The other two are yours to
-                            decide, and both are empty today.
+                            decide, and neither sets a cookie.
                         </DialogDescription>
                     </DialogHeader>
 

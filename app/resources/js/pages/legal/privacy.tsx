@@ -360,8 +360,11 @@ export default function Privacy({
             <Section id="cookies" title="9. Cookies">
                 <p>
                     {entity.product} sets only the cookies it needs to work and
-                    to remember settings you chose yourself. It runs no
-                    analytics, no tag manager, and no advertising pixel. The{' '}
+                    to remember settings you chose yourself. It runs no tag
+                    manager and no advertising pixel, and it builds no profile
+                    of you. It does report its own errors, and — if you allow
+                    analytics — time how quickly pages load; neither of those
+                    sets a cookie. The{' '}
                     <Link href={cookiePolicy.url()}>cookie policy</Link> lists
                     every cookie by name, and you can{' '}
                     <button

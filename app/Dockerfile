@@ -14,11 +14,14 @@ WORKDIR /app
 
 # pdo_pgsql/pgsql for Postgres; pcntl and posix are what let queue:work and
 # Horizon manage their child processes; intl/bcmath/gd/zip are what the panel
-# and the framework expect. curl serves the container healthcheck.
+# and the framework expect. curl serves the container healthcheck. excimer is
+# the sampling profiler Sentry's `profiles_sample_rate` needs — absent, the SDK
+# quietly does not profile, which is why a host PHP without it is fine and only
+# the image that actually serves traffic carries it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && install-php-extensions pdo_pgsql pgsql pcntl posix bcmath intl gd zip
+    && install-php-extensions pdo_pgsql pgsql pcntl posix bcmath intl gd zip excimer
 
 # ---- Stage 2: PHP dependencies ----
 # Resolved on php-base rather than the composer image so the platform php-*
@@ -64,7 +67,44 @@ COPY --from=wayfinder /app/resources/js/wayfinder ./resources/js/wayfinder
 # There is no PHP in this stage, so the Vite plugin must not try to regenerate
 # what the previous stage already produced.
 ENV WAYFINDER_SKIP=true
-RUN npm run build
+
+# Sentry, all optional. Vite inlines VITE_* literally, so the browser DSN and
+# the release have to be present *here* — setting them on the running container
+# does nothing, because by then the bundle is already compiled.
+#
+# SENTRY_RELEASE has to be the same string the server reports under and the same
+# one the maps are uploaded against, or Sentry holds maps it will never apply.
+# Pass the commit sha: --build-arg SENTRY_RELEASE=$(git rev-parse HEAD).
+# The sample rate is inlined at build time like the rest of them, so it has to
+# be declared here to be settable at all: .env is not in the build context, and
+# setting it on the running container changes nothing. Left out, an operator
+# following .env.example would set it, see no effect, and have no way to tell
+# that the value never reached the compiler.
+ARG VITE_SENTRY_DSN=""
+ARG VITE_SENTRY_ENVIRONMENT="production"
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE=""
+ARG SENTRY_RELEASE=""
+ARG SENTRY_ORG=""
+ARG SENTRY_PROJECT=""
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
+    VITE_SENTRY_ENVIRONMENT=$VITE_SENTRY_ENVIRONMENT \
+    VITE_SENTRY_TRACES_SAMPLE_RATE=$VITE_SENTRY_TRACES_SAMPLE_RATE \
+    VITE_SENTRY_RELEASE=$SENTRY_RELEASE \
+    SENTRY_RELEASE=$SENTRY_RELEASE \
+    SENTRY_ORG=$SENTRY_ORG \
+    SENTRY_PROJECT=$SENTRY_PROJECT
+
+# The auth token is a secret and not a build arg: an ARG is readable in the
+# image history of anyone who can pull the intermediate stage. Mounted, it
+# exists only for the life of this command.
+#
+#   docker build --secret id=sentry_auth_token,env=SENTRY_AUTH_TOKEN .
+#
+# Without it, vite.config.ts emits no source maps and skips the upload
+# entirely, so this builds unchanged with no Sentry configuration at all.
+RUN --mount=type=secret,id=sentry_auth_token \
+    SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" \
+    npm run build
 
 # ---- Stage 5: Production runtime ----
 FROM php-base AS production
@@ -78,9 +118,13 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint \
     && chown -R www-data:www-data storage bootstrap/cache
 
+# A stack rather than plain stderr, so `Log::error` reaches Sentry as well as
+# the container log. The stderr half is unchanged and stays the source of
+# truth for `docker logs`; the sentry half is a no-op until a DSN is set.
 ENV APP_ENV=production \
     APP_DEBUG=false \
-    LOG_CHANNEL=stderr \
+    LOG_CHANNEL=stack \
+    LOG_STACK=stderr,sentry \
     SERVER_NAME=:80 \
     CONTAINER_MODE=app
 

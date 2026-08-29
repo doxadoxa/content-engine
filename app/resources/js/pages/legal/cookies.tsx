@@ -52,9 +52,11 @@ export default function Cookies({
                         There are currently no analytics, advertising, or
                         marketing cookies at all.
                     </strong>{' '}
-                    We still ask, because the day we add one, consent for it
-                    needs to have been collected beforehand rather than assumed
-                    afterwards.
+                    The analytics permission is still worth answering, because
+                    it governs something that sets no cookie: whether we may
+                    time how quickly pages load for you. That is measurement of
+                    your visit whether or not anything is stored, so we ask
+                    before doing it.
                 </p>
                 <p>
                     <button
@@ -160,11 +162,24 @@ export default function Cookies({
                     would be worse than not offering one.
                 </p>
 
-                <h3>Analytics — your choice, currently unused</h3>
+                <h3>Analytics — your choice</h3>
                 <p>
-                    Would tell us which pages are used and where people get
-                    stuck. Nothing of the kind is installed today. If we add it,
-                    it will not run until you say yes.
+                    Allowing this lets us time how long pages and actions take,
+                    so we can find what is slow. It is handled by Sentry, our
+                    error and performance monitor, and it sets no cookie and
+                    builds no profile of you. Nothing is timed until you say
+                    yes, and switching this off stops it immediately rather than
+                    at your next visit.
+                </p>
+                <p>
+                    Reporting a page that <em>breaks</em> is separate and is not
+                    covered by this permission. A crash is a defect in our
+                    software rather than a measurement of you: it sends the
+                    error and where in our code it happened, sets no cookie,
+                    stores nothing on your device, and does not identify you to
+                    anyone who could not already see the same request in our own
+                    logs. We would rather know about it on the sign-up form,
+                    where nobody has answered this banner yet.
                 </p>
 
                 <h3>Marketing — your choice, currently unused</h3>
