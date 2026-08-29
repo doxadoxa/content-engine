@@ -82,6 +82,22 @@ final class SentryTest extends TestCase
     }
 
     #[Test]
+    public function the_sentry_channel_leaves_exceptions_to_the_exception_handler(): void
+    {
+        /*
+         * Laravel runs its reportable callbacks and then logs the exception
+         * anyway, with the throwable in the context. With this channel in the
+         * stack and this flag on, every unhandled failure would reach Sentry
+         * twice — once from Integration::handles() and once from its own log
+         * line — which is two issues to triage and two of every alert.
+         */
+        $this->assertFalse(
+            config('logging.channels.sentry.report_exceptions'),
+            'The sentry log channel is reporting exceptions as well as messages, so every unhandled failure is sent to Sentry twice.',
+        );
+    }
+
+    #[Test]
     public function the_csp_lets_the_browser_reach_the_configured_sentry(): void
     {
         config()->set('security.csp.sentry_browser_dsn', 'https://publickey@o123456.ingest.de.sentry.io/7891011');
