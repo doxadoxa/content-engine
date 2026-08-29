@@ -58,8 +58,8 @@ return [
      */
     'updated' => [
         'terms' => env('LEGAL_TERMS_UPDATED', '2026-08-27'),
-        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-08-27'),
-        'cookies' => env('LEGAL_COOKIES_UPDATED', '2026-08-27'),
+        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-08-28'),
+        'cookies' => env('LEGAL_COOKIES_UPDATED', '2026-08-28'),
     ],
 
     /*
@@ -67,7 +67,7 @@ return [
      * to the prose: fixing a typo in the cookie policy should not throw away a
      * million consent records, and adding an analytics cookie must.
      */
-    'consent_version' => env('LEGAL_CONSENT_VERSION', '2026-08-27'),
+    'consent_version' => env('LEGAL_CONSENT_VERSION', '2026-08-28'),
 
     /*
      * Every cookie this application sets, by the category the banner offers.
@@ -89,12 +89,21 @@ return [
      * for, and the alternative — a toggle that, switched off, silently keeps
      * writing them — is worse than not offering the toggle.
      *
-     * `analytics` and `marketing` are genuinely opt-in, default to off, and are
-     * deliberately empty today: Avyo runs no analytics, no tag manager and no
-     * advertising pixel, and the policy says exactly that rather than reserving
-     * the right in vague terms. They exist so that the day one is added,
-     * consent for it has been collected already rather than retrofitted — see
-     * resources/js/lib/consent.ts, which is the gate that makes them real.
+     * `analytics` and `marketing` are genuinely opt-in and default to off.
+     * `marketing` is still empty — no tag manager, no advertising pixel — and
+     * the policy says exactly that rather than reserving the right in vague
+     * terms. `analytics` stopped being empty when Sentry arrived: refusing it
+     * now switches off browser performance tracing, which is the test this file
+     * sets for whether a category deserves to exist at all.
+     *
+     * Note that no cookie appears below for it, and that is not an oversight.
+     * Sentry's browser SDK sets no cookie and writes nothing to storage in the
+     * configuration we run (resources/js/lib/observability.ts) — what consent
+     * governs there is the measuring, not a stored identifier. The list below
+     * is of cookies, so the honest thing is to leave it alone and say so on the
+     * cookie policy, which is what that page now does.
+     *
+     * The gate that makes any of this real is resources/js/lib/consent.ts.
      */
     'cookies' => [
         [
@@ -179,6 +188,12 @@ return [
             'purpose' => 'Publishes approved posts and delivers the replies and mentions your account receives.',
             'region' => 'United States',
             'optional' => true,
+        ],
+        [
+            'name' => 'Sentry',
+            'purpose' => 'Receives a report when the application fails: the error, where in our code it happened, and the identifiers of the account and project it happened under. It is not sent your content, and performance timings are only measured if you allow analytics.',
+            'region' => 'European Union',
+            'optional' => false,
         ],
         [
             'name' => 'Hosting and infrastructure',

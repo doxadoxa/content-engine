@@ -32,6 +32,14 @@ final class SecurityHeaders
             $connectSources[] = 'http://localhost:5173';
         }
 
+        // Without this the browser SDK is installed and mute: `connect-src
+        // 'self'` makes the browser drop its POST before it leaves the page,
+        // and it does so silently. Nothing is added when no DSN is configured,
+        // so the header stays exactly as strict as it was.
+        foreach ($this->sentryOrigins() as $origin) {
+            $connectSources[] = $origin;
+        }
+
         $response->headers->set('Content-Security-Policy', implode('; ', [
             "default-src 'self'",
             'script-src '.implode(' ', $scriptSources),
@@ -56,5 +64,54 @@ final class SecurityHeaders
         }
 
         return $response;
+    }
+
+    /**
+     * The Sentry ingest origins the browser may post to, derived from the DSNs.
+     *
+     * Derived rather than written down, because the host is not a constant: it
+     * carries the organisation id and the storage region, so a project created
+     * in the EU and one created in the US do not share it, and a hardcoded
+     * `*.ingest.sentry.io` would be a header that looks correct and blocks
+     * everything. The DSN already holds the answer.
+     *
+     * Scheme and host only. The rest of a DSN is a public key and a project
+     * path, and neither belongs in a response header.
+     *
+     * @return list<string>
+     */
+    private function sentryOrigins(): array
+    {
+        $origins = [];
+
+        $configured = [
+            config('security.csp.sentry_dsn'),
+            config('security.csp.sentry_browser_dsn'),
+        ];
+
+        foreach ($configured as $dsn) {
+            if (! is_string($dsn) || $dsn === '') {
+                continue;
+            }
+
+            $parts = parse_url($dsn);
+
+            // A malformed DSN is a configuration mistake, not a request-time
+            // failure. Skipping it leaves the strict header in place, which is
+            // the safe way to be wrong.
+            if (! is_array($parts) || ! isset($parts['scheme'], $parts['host'])) {
+                continue;
+            }
+
+            $origin = $parts['scheme'].'://'.$parts['host'];
+
+            if (isset($parts['port'])) {
+                $origin .= ':'.$parts['port'];
+            }
+
+            $origins[] = $origin;
+        }
+
+        return array_values(array_unique($origins));
     }
 }

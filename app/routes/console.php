@@ -12,6 +12,27 @@ Artisan::command('inspire', function () {
 
 /*
 |--------------------------------------------------------------------------
+| Why every task below ends in ->sentryMonitor()
+|--------------------------------------------------------------------------
+|
+| Because the failure this file is most exposed to is not a command that
+| throws — that one reports itself — but a command that never runs at all.
+| The scheduler container exited once and stayed exited for five days (the
+| comment on that service in docker-compose.yml is the post-mortem), and
+| nothing anywhere noticed: no exception, no failed job, no error line. A
+| silent process is indistinguishable from a healthy one that had nothing to
+| do, and every task here is `withoutOverlapping` and `runInBackground`, which
+| are exactly the flags that make quiet look normal.
+|
+| A check-in inverts that. Sentry knows each task's schedule and alerts on the
+| check-in that did not arrive, so the absence becomes the signal. Left
+| unconfigured — no DSN — the call is a no-op, so the schedule runs exactly as
+| it did before.
+|
+*/
+
+/*
+|--------------------------------------------------------------------------
 | The engine's own clock
 |--------------------------------------------------------------------------
 |
@@ -28,7 +49,8 @@ Artisan::command('inspire', function () {
 Schedule::command('engine:tick')
     ->hourly()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 /*
 | Trials and dunning graces end because time passed, not because anybody did
@@ -43,7 +65,8 @@ Schedule::command('engine:tick')
 Schedule::command('billing:sweep')
     ->hourlyAt(5)
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 /*
 | And the repair for the other half, which is not optional.
@@ -60,14 +83,16 @@ Schedule::command('billing:sweep')
 Schedule::command('billing:reconcile')
     ->dailyAt('04:10')
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // Anything approved goes out. Separate from the tick because publishing is the
 // one step with an outside effect, and it should be readable on its own line.
 Schedule::command('publish:approved')
     ->everyThirtyMinutes()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // The floor under the queue. A delivery job has one try, only a `retrying` row
 // is ever re-dispatched, and `dispatch_key` stops a second row being made — so
@@ -79,7 +104,8 @@ Schedule::command('publish:approved')
 Schedule::command('publish:sweep-stranded')
     ->everyTenMinutes()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // The same floor, one layer down: under the queue itself rather than under
 // publishing. `PipelineRunner::resume()` was written to pick a stalled run back
@@ -96,7 +122,8 @@ Schedule::command('publish:sweep-stranded')
 Schedule::command('pipeline:reap')
     ->everyTenMinutes()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 /*
 |--------------------------------------------------------------------------
@@ -123,7 +150,8 @@ Schedule::command('pipeline:reap')
 Schedule::command('audit:sweep')
     ->dailyAt('03:40')
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 /*
 |--------------------------------------------------------------------------
@@ -181,7 +209,8 @@ if (! config('social.enabled')) {
 Schedule::command('social:listen')
     ->hourly()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 /*
 |--------------------------------------------------------------------------
@@ -209,7 +238,8 @@ Schedule::command('social:listen')
 Schedule::command('social:plan')
     ->weeklyOn(1, '06:00')
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // The other end of the week the planner wrote. A slot is a time to publish at
 // and nothing else until this runs, so without it §4.3's second contour stops
@@ -222,7 +252,8 @@ Schedule::command('social:plan')
 Schedule::command('social:draft')
     ->hourly()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // §5's kill: a reactive draft that missed its window is deleted, not published
 // late — "автоматический комментарий к позавчерашней новости хуже молчания".
@@ -231,7 +262,8 @@ Schedule::command('social:draft')
 Schedule::command('social:kill-expired')
     ->hourly()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // The other half of the signal table's life. `Signal::scopeReapable()` spares
 // consumed signals and anything a content unit points at, because §3's
@@ -243,7 +275,8 @@ Schedule::command('social:kill-expired')
 Schedule::command('signals:reap')
     ->dailyAt('03:20')
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 // Threads tokens, kept alive (§9). Daily is generous for a credential that
 // lasts about sixty days and is renewed inside the last week of them — the
@@ -258,7 +291,8 @@ Schedule::command('signals:reap')
 Schedule::command('threads:renew')
     ->daily()
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();
 
 /*
 |--------------------------------------------------------------------------
@@ -286,4 +320,5 @@ Schedule::command('threads:renew')
 Schedule::command('project:capture')
     ->dailyAt('04:10')
     ->withoutOverlapping()
-    ->runInBackground();
+    ->runInBackground()
+    ->sentryMonitor();

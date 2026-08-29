@@ -60,6 +60,30 @@ return [
             'ignore_exceptions' => false,
         ],
 
+        /*
+         * Not everything that goes wrong throws.
+         *
+         * A handful of places in this application catch a failure, decide the
+         * run cannot continue, and write `Log::error` — the pipeline runner
+         * abandoning a step, a Stripe webhook it could not make sense of, a
+         * reply the social sender gave up on. Those are the real "somebody
+         * should look at this" moments, and none of them reach the exception
+         * handler, so none of them would reach Sentry through it.
+         *
+         * `error` and above only, deliberately. This application logs at
+         * `warning` freely and for ordinary conditions — a feed that returned
+         * nothing, a page that would not parse — and routing those to Sentry
+         * would bury the seven things that matter under thousands that do not.
+         *
+         * Added to the stack in the Dockerfile and docker-compose.yml rather
+         * than here, because the containers set LOG_CHANNEL themselves.
+         */
+        'sentry' => [
+            'driver' => 'sentry',
+            'level' => env('LOG_LEVEL_SENTRY', 'error'),
+            'bubble' => true,
+        ],
+
         'single' => [
             'driver' => 'single',
             'path' => storage_path('logs/laravel.log'),

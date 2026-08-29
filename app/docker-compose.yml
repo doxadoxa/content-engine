@@ -54,7 +54,12 @@ services:
       APP_URL: "${APP_URL:-http://localhost:${CE_APP_PORT:-8091}}"
       # Local-only key, shared by every container. Not a production secret.
       APP_KEY: base64:qO3H1n8cJt5vX2bK9wR4dM7gY0sT6uA1eL5pN8iZ3Fc=
-      LOG_CHANNEL: stderr
+      # A stack, not plain stderr: `docker logs` still shows everything, and
+      # `Log::error` additionally reaches Sentry. Set here as well as in the
+      # Dockerfile because this block wins over both it and .env — changing
+      # only one of the two leaves the containers on the old value.
+      LOG_CHANNEL: stack
+      LOG_STACK: stderr,sentry
 
       # Inside the compose network. Absent in production until the service is
       # deployed there, and PanelRenderer treats absent as "not configured"

@@ -9,6 +9,7 @@ use App\Http\Middleware\RequireAdministrator;
 use App\Http\Middleware\RequireEntitlement;
 use App\Http\Middleware\RequireProjectOwner;
 use App\Http\Middleware\SecurityHeaders;
+use App\Http\Middleware\SentryContext;
 use App\Http\Middleware\ThrottleRegistration;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -17,6 +18,7 @@ use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Env;
+use Sentry\Laravel\Integration;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -66,6 +68,8 @@ return Application::configure(basePath: dirname(__DIR__))
             // registers its shared data on the way *in*, so a project resolved
             // after it would not reach the page.
             EnsureCurrentProject::class,
+            // After the project is resolved, not before: this reads it.
+            SentryContext::class,
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,
         ]);
@@ -81,6 +85,12 @@ return Application::configure(basePath: dirname(__DIR__))
         );
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Reports what Laravel decides to report — so the framework's own
+        // "not worth reporting" list (validation failures, 404s, a wrong
+        // password) still applies, and Sentry sees faults rather than users
+        // making ordinary mistakes. No-op when the DSN is empty.
+        Integration::handles($exceptions);
+
         // The panel's forms are Inertia, which wants a redirect with a flashed
         // error bag rather than a 422 — hence the narrowing. But the onboarding
         // wizard talks to two endpoints over fetch with `Accept: application/

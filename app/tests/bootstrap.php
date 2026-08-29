@@ -69,6 +69,18 @@ $overrides = [
     'PULSE_ENABLED' => 'false',
     'TELESCOPE_ENABLED' => 'false',
     'NIGHTWATCH_ENABLED' => 'false',
+
+    // Empty is how the Sentry SDK is switched off, and the suite has to be
+    // switched off rather than merely quiet: a developer with a DSN in their
+    // .env would otherwise post every deliberately-thrown test exception to
+    // the production project, and the run would take the network round trip
+    // for each one. Note that Http::preventStrayRequests() in TestCase does
+    // *not* catch this — the PHP SDK has its own transport and never touches
+    // the Http facade — so this line is the only thing keeping the suite
+    // offline. Both names, because config/sentry.php falls back from the
+    // first to the second.
+    'SENTRY_LARAVEL_DSN' => '',
+    'SENTRY_DSN' => '',
     // Reserved .test hosts are used behind Http::fake throughout the suite.
     // Literal/private addresses are still rejected by the outbound policy.
     'OUTBOUND_ALLOW_UNRESOLVED_HOSTS' => 'true',
