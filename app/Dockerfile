@@ -75,13 +75,20 @@ ENV WAYFINDER_SKIP=true
 # SENTRY_RELEASE has to be the same string the server reports under and the same
 # one the maps are uploaded against, or Sentry holds maps it will never apply.
 # Pass the commit sha: --build-arg SENTRY_RELEASE=$(git rev-parse HEAD).
+# The sample rate is inlined at build time like the rest of them, so it has to
+# be declared here to be settable at all: .env is not in the build context, and
+# setting it on the running container changes nothing. Left out, an operator
+# following .env.example would set it, see no effect, and have no way to tell
+# that the value never reached the compiler.
 ARG VITE_SENTRY_DSN=""
 ARG VITE_SENTRY_ENVIRONMENT="production"
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE=""
 ARG SENTRY_RELEASE=""
 ARG SENTRY_ORG=""
 ARG SENTRY_PROJECT=""
 ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
     VITE_SENTRY_ENVIRONMENT=$VITE_SENTRY_ENVIRONMENT \
+    VITE_SENTRY_TRACES_SAMPLE_RATE=$VITE_SENTRY_TRACES_SAMPLE_RATE \
     VITE_SENTRY_RELEASE=$SENTRY_RELEASE \
     SENTRY_RELEASE=$SENTRY_RELEASE \
     SENTRY_ORG=$SENTRY_ORG \

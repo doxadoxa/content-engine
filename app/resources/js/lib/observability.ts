@@ -44,6 +44,29 @@ import { hasConsent, whenGranted } from '@/lib/consent';
  */
 const dsn = import.meta.env.VITE_SENTRY_DSN;
 
+/*
+ * Parsed rather than coerced, because `Number('')` is 0 and an unset build arg
+ * arrives as an empty string — which would read as "trace nothing" and be
+ * indistinguishable, from the outside, from tracing that is working and simply
+ * never sampling. `??` does not help: an empty string is not nullish. So
+ * anything that is not a usable number falls back to the documented default,
+ * and only a rate somebody actually chose can turn tracing down.
+ *
+ * Out-of-range values are rejected for the same reason: Sentry treats a rate
+ * above 1 as invalid and drops everything, so a stray `10` meaning "10%" would
+ * silently switch tracing off rather than turning it up.
+ */
+const configuredSampleRate = Number.parseFloat(
+    import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? '',
+);
+
+const tracesSampleRate =
+    Number.isFinite(configuredSampleRate) &&
+    configuredSampleRate >= 0 &&
+    configuredSampleRate <= 1
+        ? configuredSampleRate
+        : 0.1;
+
 export function initSentry(): void {
     if (!dsn) {
         return;
@@ -62,15 +85,34 @@ export function initSentry(): void {
         sendDefaultPii: false,
 
         /*
-         * Deliberately empty, which turns off Sentry's default set as well.
+         * Every default except one.
          *
-         * The defaults are mostly harmless (breadcrumbs, global handlers), but
-         * `browserTracingIntegration` is among the things that would otherwise
-         * be assembled for us, and starting it here would start measuring
-         * before the banner has been answered. Tracing is added below, on
-         * consent, and nowhere else.
+         * The defaults are what make this an error monitor at all — global
+         * handlers for uncaught exceptions and unhandled rejections, the
+         * wrapping of event and timer callbacks, breadcrumbs, `linkedErrors`
+         * for causes. Without them the only thing reported would be what the
+         * React boundary happens to catch, which is a fraction of what breaks.
+         * Note that the array form of this option *adds* to the defaults
+         * rather than replacing them; the function form is what allows one to
+         * be dropped, and dropping one is the whole reason it is used here.
+         *
+         * `BrowserSession` is the exception, and it is removed on purpose. It
+         * is not error reporting: it starts a session on load and sends it
+         * when the page goes idle, so it puts a request on the wire for every
+         * pageload by every visitor whether or not anything went wrong. That
+         * is a pageload count, which is the thing the analytics category
+         * exists to ask about — and it would make the cookie policy's promise
+         * ("reporting a page that breaks... sends the error") untrue for every
+         * page that didn't break. Without it, a visitor who never triggers a
+         * fault causes no traffic to Sentry at all.
+         *
+         * `browserTracingIntegration` is not in this set and never was — it is
+         * opt-in, and it is added below, on consent, and nowhere else.
          */
-        integrations: [],
+        integrations: (defaults) =>
+            defaults.filter(
+                (integration) => integration.name !== 'BrowserSession',
+            ),
 
         /*
          * A function rather than a rate, and this is the part that makes
@@ -86,10 +128,7 @@ export function initSentry(): void {
          *
          * The rate itself matches the server's tenth.
          */
-        tracesSampler: () =>
-            hasConsent('analytics')
-                ? Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? 0.1)
-                : 0,
+        tracesSampler: () => (hasConsent('analytics') ? tracesSampleRate : 0),
     });
 
     /*
