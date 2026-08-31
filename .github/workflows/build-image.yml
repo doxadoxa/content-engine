@@ -63,10 +63,12 @@ jobs:
           # be byte-identical to the full 40-character github.sha the app reports
           # to Sentry as its release; short would tag sha-860c190 against a 40-char
           # release, and the two would stop naming each other.
+          #
+          # Only the immutable tag is built here. `latest` and `main` are applied
+          # afterwards by a step that first checks this commit is still main's
+          # head -- see it below for why.
           tags: |
             type=sha,prefix=sha-,format=long
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -100,6 +102,7 @@ jobs:
             VITE_SENTRY_TRACES_SAMPLE_RATE=${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
             SENTRY_ORG=${{ vars.SENTRY_ORG }}
             SENTRY_PROJECT=${{ vars.SENTRY_PROJECT }}
+            CACHE_BUST=${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
           # A secret and not a build arg: an ARG is readable in the image history
           # of anyone who can pull the intermediate stage. Unset, vite.config.ts
           # emits no source maps and skips the upload.
@@ -107,6 +110,42 @@ jobs:
             sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
+
+      # Mutable tags move forward only.
+      #
+      # Builds are grouped per commit so no commit is dropped, which means two
+      # commits can build at once and finish in either order -- a faster cache on
+      # the newer one is enough to invert them. Pushed with the image, `latest`
+      # would then be whichever build happened to finish last rather than the
+      # newest commit, and re-running an old run by hand would drag it backwards
+      # on purpose. So the mutable tags are applied here instead, and only if the
+      # commit that was just built is still what main points at.
+      #
+      # `imagetools create` retags the manifest that was already pushed; it does
+      # not rebuild or re-upload the image.
+      #
+      # A window remains: main can move between this check and the retag, and the
+      # two jobs answer it independently, so the app and renderer images can
+      # briefly disagree about `latest`. Closing it properly needs a deployment
+      # lock, which is more machinery than a convenience tag is worth. Deploy the
+      # sha- tag, which is never ambiguous, and treat `latest` as a shortcut.
+      - name: Move latest to this build, if it is still main's head
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+          if [ "$head" != "$SHA" ]; then
+            echo "main is at $head, this build is $SHA -- leaving latest alone."
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:latest" \
+            --tag "$IMAGE:main" \
+            "$IMAGE:sha-$SHA"
 
   renderer:
     name: Build renderer image
@@ -139,10 +178,12 @@ jobs:
           # be byte-identical to the full 40-character github.sha the app reports
           # to Sentry as its release; short would tag sha-860c190 against a 40-char
           # release, and the two would stop naming each other.
+          #
+          # Only the immutable tag is built here. `latest` and `main` are applied
+          # afterwards by a step that first checks this commit is still main's
+          # head -- see it below for why.
           tags: |
             type=sha,prefix=sha-,format=long
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -161,3 +202,39 @@ jobs:
           # Chromium download that is expensive to lose.
           cache-from: type=gha,scope=renderer
           cache-to: type=gha,mode=max,scope=renderer
+
+      # Mutable tags move forward only.
+      #
+      # Builds are grouped per commit so no commit is dropped, which means two
+      # commits can build at once and finish in either order -- a faster cache on
+      # the newer one is enough to invert them. Pushed with the image, `latest`
+      # would then be whichever build happened to finish last rather than the
+      # newest commit, and re-running an old run by hand would drag it backwards
+      # on purpose. So the mutable tags are applied here instead, and only if the
+      # commit that was just built is still what main points at.
+      #
+      # `imagetools create` retags the manifest that was already pushed; it does
+      # not rebuild or re-upload the image.
+      #
+      # A window remains: main can move between this check and the retag, and the
+      # two jobs answer it independently, so the app and renderer images can
+      # briefly disagree about `latest`. Closing it properly needs a deployment
+      # lock, which is more machinery than a convenience tag is worth. Deploy the
+      # sha- tag, which is never ambiguous, and treat `latest` as a shortcut.
+      - name: Move latest to this build, if it is still main's head
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}/renderer
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+          if [ "$head" != "$SHA" ]; then
+            echo "main is at $head, this build is $SHA -- leaving latest alone."
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:latest" \
+            --tag "$IMAGE:main" \
+            "$IMAGE:sha-$SHA"

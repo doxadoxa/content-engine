@@ -257,7 +257,19 @@ docker pull ghcr.io/doxadoxa/content-engine:sha-<release-from-sentry>
 ```
 
 That one step aside, an event, an image and a commit all name each other, on
-the server and in the browser both. `latest` is for convenience, and moves.
+the server and in the browser both.
+
+`latest` and `main` are conveniences and are applied only when the commit that
+was built is still what `main` points at, so they do not walk backwards when two
+builds finish out of order or an old run is re-run by hand. They are still
+best-effort: a narrow race remains, and the app and renderer images resolve it
+separately. Deploy the `sha-` tag, which cannot be ambiguous.
+
+Enabling Sentry on an already-built commit means re-running the workflow from
+the Actions tab rather than pushing an empty commit. A manual run passes a
+cache-bust so the frontend is genuinely rebuilt — Docker does not treat a
+changed build secret as a cache miss, so without it the source-map upload would
+be skipped and the failure would be silent.
 
 `docker-compose.yml` in this directory builds `target: dev` from source instead
 and is not a deployment manifest — see the note under [Quick start](#quick-start).
