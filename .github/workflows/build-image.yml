@@ -53,8 +53,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # format=long overrides the action's short default. The sha tag has to
+          # be byte-identical to the full 40-character github.sha the app reports
+          # to Sentry as its release; short would tag sha-860c190 against a 40-char
+          # release, and the two would stop naming each other.
           tags: |
-            type=sha,prefix=sha-
+            type=sha,prefix=sha-,format=long
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
 
@@ -125,8 +129,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}/renderer
+          # format=long overrides the action's short default. The sha tag has to
+          # be byte-identical to the full 40-character github.sha the app reports
+          # to Sentry as its release; short would tag sha-860c190 against a 40-char
+          # release, and the two would stop naming each other.
           tags: |
-            type=sha,prefix=sha-
+            type=sha,prefix=sha-,format=long
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
 

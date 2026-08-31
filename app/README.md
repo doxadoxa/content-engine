@@ -245,9 +245,12 @@ builds and pushes two images to GHCR on every push to `main`:
 | `ghcr.io/doxadoxa/content-engine` | The app, in all four roles — `CONTAINER_MODE` picks one of `app`, `horizon`, `queue`, `scheduler` |
 | `ghcr.io/doxadoxa/content-engine/renderer` | The Remotion renderer: Node, Chromium and the brand typeface |
 
-Both are tagged `sha-<commit>` and `latest`. Deploy the `sha-` tag: it is the
-same string the application reports to Sentry as its release, so an event, an
-image and a commit all name each other. `latest` is for convenience, and moves.
+Both are tagged `sha-<commit>` and `latest`, where `<commit>` is the full
+40-character sha and not the abbreviated one. Deploy the `sha-` tag: it is
+byte-identical to the string the application reports to Sentry as its release,
+so an event, an image and a commit all name each other, and pasting a release
+out of Sentry pulls the image that produced it. `latest` is for convenience,
+and moves.
 
 `docker-compose.yml` in this directory builds `target: dev` from source instead
 and is not a deployment manifest — see the note under [Quick start](#quick-start).
