@@ -246,11 +246,18 @@ builds and pushes two images to GHCR on every push to `main`:
 | `ghcr.io/doxadoxa/content-engine/renderer` | The Remotion renderer: Node, Chromium and the brand typeface |
 
 Both are tagged `sha-<commit>` and `latest`, where `<commit>` is the full
-40-character sha and not the abbreviated one. Deploy the `sha-` tag: it is
-byte-identical to the string the application reports to Sentry as its release,
-so an event, an image and a commit all name each other, and pasting a release
-out of Sentry pulls the image that produced it. `latest` is for convenience,
-and moves.
+40-character sha and not the abbreviated one. Deploy the `sha-` tag.
+
+The release the application reports to Sentry is that same sha **without the
+`sha-` prefix** — the prefix belongs to the tag, not to the release. So a
+release copied out of Sentry needs it prepended to become an image reference:
+
+```sh
+docker pull ghcr.io/doxadoxa/content-engine:sha-<release-from-sentry>
+```
+
+That one step aside, an event, an image and a commit all name each other, on
+the server and in the browser both. `latest` is for convenience, and moves.
 
 `docker-compose.yml` in this directory builds `target: dev` from source instead
 and is not a deployment manifest — see the note under [Quick start](#quick-start).

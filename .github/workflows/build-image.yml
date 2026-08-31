@@ -20,9 +20,15 @@ on:
   # For rebuilding a tag by hand while preparing a deployment.
   workflow_dispatch:
 
-# One build per commit on main; never cancel an in-flight deploy build.
+# Grouped by commit, not by ref. Grouping every main build together looks like
+# a queue and is not one: GitHub keeps at most one run pending per group and
+# cancels the previous pending run when a newer one arrives, even with
+# cancel-in-progress false. Three merges in quick succession would leave the
+# middle commit with no image at all -- and every commit on main having a
+# deployable sha tag is the whole premise of this file. Per-sha still dedupes
+# what it should: a push and a manual re-run of the same commit.
 concurrency:
-  group: build-image-${{ github.ref }}
+  group: build-image-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:

@@ -109,6 +109,16 @@ RUN --mount=type=secret,id=sentry_auth_token \
 # ---- Stage 5: Production runtime ----
 FROM php-base AS production
 
+# The server's half of the release. Declared again because build args do not
+# cross stages and this one starts from php-base, not from `frontend`: the ARG
+# up there compiled the browser bundle and went with it. config/sentry.php reads
+# SENTRY_RELEASE from the runtime environment, so without this line server events
+# arrive with no release while browser events carry one, the source maps uploaded
+# against that release are never applied to a PHP stack trace, and "the same
+# string the server reports under" -- which this file asks for above -- is not
+# true of the image this file builds.
+ARG SENTRY_RELEASE=""
+
 COPY --from=vendor /app /app
 COPY --from=frontend /app/public/build /app/public/build
 
@@ -125,6 +135,7 @@ ENV APP_ENV=production \
     APP_DEBUG=false \
     LOG_CHANNEL=stack \
     LOG_STACK=stderr,sentry \
+    SENTRY_RELEASE=$SENTRY_RELEASE \
     SERVER_NAME=:80 \
     CONTAINER_MODE=app
 
