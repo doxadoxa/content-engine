@@ -235,6 +235,37 @@ Without Stripe keys nothing breaks — entitlement is decided from local rows an
 `billing:assign` works with no provider at all. What stops working is checkout,
 the billing portal and the reconciler.
 
+## Production images
+
+[`.github/workflows/build-image.yml`](../.github/workflows/build-image.yml)
+builds and pushes two images to GHCR on every push to `main`:
+
+| Image | Contents |
+|---|---|
+| `ghcr.io/doxadoxa/content-engine` | The app, in all four roles — `CONTAINER_MODE` picks one of `app`, `horizon`, `queue`, `scheduler` |
+| `ghcr.io/doxadoxa/content-engine/renderer` | The Remotion renderer: Node, Chromium and the brand typeface |
+
+Both are tagged `sha-<commit>` and `latest`. Deploy the `sha-` tag: it is the
+same string the application reports to Sentry as its release, so an event, an
+image and a commit all name each other. `latest` is for convenience, and moves.
+
+`docker-compose.yml` in this directory builds `target: dev` from source instead
+and is not a deployment manifest — see the note under [Quick start](#quick-start).
+
+Sentry is optional and off by default; the images build and run with none of it
+configured. Because Vite inlines `VITE_*` into the bundle, the browser half has
+to be configured on the *build*, not on the running container. Set these on the
+repository:
+
+- Variables — `SENTRY_ORG`, `SENTRY_PROJECT`, `VITE_SENTRY_ENVIRONMENT`
+  (defaults to `production`), `VITE_SENTRY_TRACES_SAMPLE_RATE`.
+- Secrets — `VITE_SENTRY_DSN`, and `SENTRY_AUTH_TOKEN` if the build should
+  upload source maps. The token is passed as a build secret rather than a build
+  arg, which would leave it readable in the image history.
+
+The server half (`SENTRY_LARAVEL_DSN` and the rest) is ordinary runtime
+configuration; set it on the container.
+
 ## Running the service
 
 `users.is_admin` is the permission for `/admin` and for Horizon, and the only
