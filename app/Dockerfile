@@ -102,12 +102,40 @@ ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
 #
 # Without it, vite.config.ts emits no source maps and skips the upload
 # entirely, so this builds unchanged with no Sentry configuration at all.
+# A secret's *value* is deliberately not part of the cache key -- Docker: "the
+# contents of build secrets are not part of the build cache. Changing the value
+# of a secret doesn't result in cache invalidation." Which means adding
+# SENTRY_AUTH_TOKEN for the first time, or rotating it, and rebuilding the same
+# tree reuses the layer below and never runs the upload: the build succeeds, the
+# release exists, and the source maps are simply not there. That is precisely the
+# "turn Sentry on, then rebuild" sequence the README describes, so the failure
+# would land on whoever follows the instructions.
+#
+# Ordinary build args do invalidate, so this is one. The workflow sets it only on
+# manual runs -- pushes carry new source anyway, which busts the layer above on
+# its own, and setting it every time would rebuild the bundle for nothing.
+ARG CACHE_BUST=""
+
+# CACHE_BUST is passed to npm, which has no use for it. It is referenced so its
+# value lands in this layer's cache key; an ARG that no instruction mentions does
+# not affect caching, and a bust nothing reads would not bust anything.
 RUN --mount=type=secret,id=sentry_auth_token \
+    CACHE_BUST="$CACHE_BUST" \
     SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" \
     npm run build
 
 # ---- Stage 5: Production runtime ----
 FROM php-base AS production
+
+# The server's half of the release. Declared again because build args do not
+# cross stages and this one starts from php-base, not from `frontend`: the ARG
+# up there compiled the browser bundle and went with it. config/sentry.php reads
+# SENTRY_RELEASE from the runtime environment, so without this line server events
+# arrive with no release while browser events carry one, the source maps uploaded
+# against that release are never applied to a PHP stack trace, and "the same
+# string the server reports under" -- which this file asks for above -- is not
+# true of the image this file builds.
+ARG SENTRY_RELEASE=""
 
 COPY --from=vendor /app /app
 COPY --from=frontend /app/public/build /app/public/build
@@ -125,6 +153,7 @@ ENV APP_ENV=production \
     APP_DEBUG=false \
     LOG_CHANNEL=stack \
     LOG_STACK=stderr,sentry \
+    SENTRY_RELEASE=$SENTRY_RELEASE \
     SERVER_NAME=:80 \
     CONTAINER_MODE=app
 

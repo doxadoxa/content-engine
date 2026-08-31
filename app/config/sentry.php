@@ -40,9 +40,13 @@ return [
     // @see: https://docs.sentry.io/platforms/php/guides/laravel/configuration/options/#logger
     // 'logger' => Sentry\Logger\DebugFileLogger::class, // By default this will log to `storage_path('logs/sentry.log')`
 
-    // The release version of your application
-    // Example with dynamic git hash: trim(exec('git --git-dir ' . base_path('.git') . ' log --pretty="%h" -n1 HEAD'))
-    'release' => env('SENTRY_RELEASE'),
+    // The release version of your application. The image sets SENTRY_RELEASE to
+    // the commit it was built from; `?: null` because it sets the variable
+    // whether or not a release was passed, and env() hands back '' rather than
+    // null for one that is present and empty. An empty-string release is not the
+    // same thing as no release: it would have the SDK report every server event
+    // under a release named nothing.
+    'release' => env('SENTRY_RELEASE') ?: null,
 
     // When left empty or `null` the Laravel environment will be used (usually discovered from `APP_ENV` in your `.env`)
     'environment' => env('SENTRY_ENVIRONMENT'),

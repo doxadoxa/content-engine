@@ -235,6 +235,59 @@ Without Stripe keys nothing breaks — entitlement is decided from local rows an
 `billing:assign` works with no provider at all. What stops working is checkout,
 the billing portal and the reconciler.
 
+## Production images
+
+[`.github/workflows/build-image.yml`](../.github/workflows/build-image.yml)
+builds and pushes two images to GHCR on every push to `main`:
+
+| Image | Contents |
+|---|---|
+| `ghcr.io/doxadoxa/content-engine` | The app, in all four roles — `CONTAINER_MODE` picks one of `app`, `horizon`, `queue`, `scheduler` |
+| `ghcr.io/doxadoxa/content-engine/renderer` | The Remotion renderer: Node, Chromium and the brand typeface |
+
+Both are tagged `sha-<commit>` and `latest`, where `<commit>` is the full
+40-character sha and not the abbreviated one. Deploy the `sha-` tag.
+
+The release the application reports to Sentry is that same sha **without the
+`sha-` prefix** — the prefix belongs to the tag, not to the release. So a
+release copied out of Sentry needs it prepended to become an image reference:
+
+```sh
+docker pull ghcr.io/doxadoxa/content-engine:sha-<release-from-sentry>
+```
+
+That one step aside, an event, an image and a commit all name each other, on
+the server and in the browser both.
+
+`latest` and `main` are conveniences and are applied only when the commit that
+was built is still what `main` points at, so they do not walk backwards when two
+builds finish out of order or an old run is re-run by hand. They are still
+best-effort: a narrow race remains, and the app and renderer images resolve it
+separately. Deploy the `sha-` tag, which cannot be ambiguous.
+
+Enabling Sentry on an already-built commit means re-running the workflow from
+the Actions tab rather than pushing an empty commit. A manual run passes a
+cache-bust so the frontend is genuinely rebuilt — Docker does not treat a
+changed build secret as a cache miss, so without it the source-map upload would
+be skipped and the failure would be silent.
+
+`docker-compose.yml` in this directory builds `target: dev` from source instead
+and is not a deployment manifest — see the note under [Quick start](#quick-start).
+
+Sentry is optional and off by default; the images build and run with none of it
+configured. Because Vite inlines `VITE_*` into the bundle, the browser half has
+to be configured on the *build*, not on the running container. Set these on the
+repository:
+
+- Variables — `SENTRY_ORG`, `SENTRY_PROJECT`, `VITE_SENTRY_ENVIRONMENT`
+  (defaults to `production`), `VITE_SENTRY_TRACES_SAMPLE_RATE`.
+- Secrets — `VITE_SENTRY_DSN`, and `SENTRY_AUTH_TOKEN` if the build should
+  upload source maps. The token is passed as a build secret rather than a build
+  arg, which would leave it readable in the image history.
+
+The server half (`SENTRY_LARAVEL_DSN` and the rest) is ordinary runtime
+configuration; set it on the container.
+
 ## Running the service
 
 `users.is_admin` is the permission for `/admin` and for Horizon, and the only

@@ -1,0 +1,240 @@
+name: Build & Push Images
+
+# Builds and pushes the two production container images on every push to main:
+#
+#   ghcr.io/<owner>/<repo>            the multi-mode app image (app/horizon/
+#                                     queue/scheduler, chosen by CONTAINER_MODE)
+#   ghcr.io/<owner>/<repo>/renderer   the Remotion renderer (Node + Chromium)
+#
+# PRs do NOT build images — tests.yml validates them; the images are built only
+# once a change lands on main, to save CI compute. Deploy by pulling the
+# `sha-<commit>` tag, which is the same string the app reports to Sentry as its
+# release.
+#
+# Everything the build needs lives under `app/`, so that is the build context
+# for both images and `app/.dockerignore` is the one that applies.
+
+on:
+  push:
+    branches: [main]
+  # For rebuilding a tag by hand while preparing a deployment.
+  workflow_dispatch:
+
+# Grouped by commit, not by ref. Grouping every main build together looks like
+# a queue and is not one: GitHub keeps at most one run pending per group and
+# cancels the previous pending run when a newer one arrives, even with
+# cancel-in-progress false. Three merges in quick succession would leave the
+# middle commit with no image at all -- and every commit on main having a
+# deployable sha tag is the whole premise of this file. Per-sha still dedupes
+# what it should: a push and a manual re-run of the same commit.
+concurrency:
+  group: build-image-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  app:
+    name: Build app image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # format=long overrides the action's short default. The sha tag has to
+          # be byte-identical to the full 40-character github.sha the app reports
+          # to Sentry as its release; short would tag sha-860c190 against a 40-char
+          # release, and the two would stop naming each other.
+          #
+          # Only the immutable tag is built here. `latest` and `main` are applied
+          # afterwards by a step that first checks this commit is still main's
+          # head -- see it below for why.
+          tags: |
+            type=sha,prefix=sha-,format=long
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          target: production
+          # The runner is amd64 and so is the deployment. Named rather than left
+          # implicit because adding linux/arm64 here would emulate the whole PHP
+          # and Node build under QEMU, which is hours, not minutes.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Vite inlines VITE_* literally, so the browser DSN and the release have
+          # to be present at build time — setting them on the running container
+          # does nothing. All optional: with none of them configured the image
+          # builds unchanged and simply reports nothing to Sentry.
+          #
+          # Configure as repository variables: SENTRY_ORG, SENTRY_PROJECT,
+          # VITE_SENTRY_ENVIRONMENT, VITE_SENTRY_TRACES_SAMPLE_RATE.
+          # Configure as repository secrets: VITE_SENTRY_DSN, SENTRY_AUTH_TOKEN.
+          #
+          # SENTRY_RELEASE is the commit sha, which is also the image tag and what
+          # the server reports under — the three must agree or Sentry holds source
+          # maps it will never apply.
+          build-args: |
+            SENTRY_RELEASE=${{ github.sha }}
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+            VITE_SENTRY_ENVIRONMENT=${{ vars.VITE_SENTRY_ENVIRONMENT || 'production' }}
+            VITE_SENTRY_TRACES_SAMPLE_RATE=${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
+            SENTRY_ORG=${{ vars.SENTRY_ORG }}
+            SENTRY_PROJECT=${{ vars.SENTRY_PROJECT }}
+            CACHE_BUST=${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
+          # A secret and not a build arg: an ARG is readable in the image history
+          # of anyone who can pull the intermediate stage. Unset, vite.config.ts
+          # emits no source maps and skips the upload.
+          secrets: |
+            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+
+      # Mutable tags move forward only.
+      #
+      # Builds are grouped per commit so no commit is dropped, which means two
+      # commits can build at once and finish in either order -- a faster cache on
+      # the newer one is enough to invert them. Pushed with the image, `latest`
+      # would then be whichever build happened to finish last rather than the
+      # newest commit, and re-running an old run by hand would drag it backwards
+      # on purpose. So the mutable tags are applied here instead, and only if the
+      # commit that was just built is still what main points at.
+      #
+      # `imagetools create` retags the manifest that was already pushed; it does
+      # not rebuild or re-upload the image.
+      #
+      # A window remains: main can move between this check and the retag, and the
+      # two jobs answer it independently, so the app and renderer images can
+      # briefly disagree about `latest`. Closing it properly needs a deployment
+      # lock, which is more machinery than a convenience tag is worth. Deploy the
+      # sha- tag, which is never ambiguous, and treat `latest` as a shortcut.
+      - name: Move latest to this build, if it is still main's head
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+          if [ "$head" != "$SHA" ]; then
+            echo "main is at $head, this build is $SHA -- leaving latest alone."
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:latest" \
+            --tag "$IMAGE:main" \
+            "$IMAGE:sha-$SHA"
+
+  renderer:
+    name: Build renderer image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/renderer
+          # format=long overrides the action's short default. The sha tag has to
+          # be byte-identical to the full 40-character github.sha the app reports
+          # to Sentry as its release; short would tag sha-860c190 against a 40-char
+          # release, and the two would stop naming each other.
+          #
+          # Only the immutable tag is built here. `latest` and `main` are applied
+          # afterwards by a step that first checks this commit is still main's
+          # head -- see it below for why.
+          tags: |
+            type=sha,prefix=sha-,format=long
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # Context is `app/`, not `app/docker/renderer/`: the Dockerfile copies
+          # `resources/fonts` from the application so the panels are drawn with
+          # the same WOFF2 files the site already ships.
+          context: ./app
+          file: ./app/docker/renderer/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Its own cache scope. Sharing one with the app image would have each
+          # build evict the other's layers, and this one carries a ~150MB
+          # Chromium download that is expensive to lose.
+          cache-from: type=gha,scope=renderer
+          cache-to: type=gha,mode=max,scope=renderer
+
+      # Mutable tags move forward only.
+      #
+      # Builds are grouped per commit so no commit is dropped, which means two
+      # commits can build at once and finish in either order -- a faster cache on
+      # the newer one is enough to invert them. Pushed with the image, `latest`
+      # would then be whichever build happened to finish last rather than the
+      # newest commit, and re-running an old run by hand would drag it backwards
+      # on purpose. So the mutable tags are applied here instead, and only if the
+      # commit that was just built is still what main points at.
+      #
+      # `imagetools create` retags the manifest that was already pushed; it does
+      # not rebuild or re-upload the image.
+      #
+      # A window remains: main can move between this check and the retag, and the
+      # two jobs answer it independently, so the app and renderer images can
+      # briefly disagree about `latest`. Closing it properly needs a deployment
+      # lock, which is more machinery than a convenience tag is worth. Deploy the
+      # sha- tag, which is never ambiguous, and treat `latest` as a shortcut.
+      - name: Move latest to this build, if it is still main's head
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}/renderer
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+          if [ "$head" != "$SHA" ]; then
+            echo "main is at $head, this build is $SHA -- leaving latest alone."
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:latest" \
+            --tag "$IMAGE:main" \
+            "$IMAGE:sha-$SHA"
