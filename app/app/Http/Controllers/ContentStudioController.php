@@ -16,6 +16,7 @@ use App\Enums\ChannelType;
 use App\Enums\ContentFormat;
 use App\Enums\PipelineRunStatus;
 use App\Enums\PostKind;
+use App\Media\MediaWriteFailed;
 use App\Media\UploadedPicture;
 use App\Models\Asset;
 use App\Models\ContentIdea;
@@ -31,6 +32,7 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -238,7 +240,24 @@ class ContentStudioController extends Controller
                 $request->file('photo'),
                 ChannelPlaybook::for($channel),
             );
+        } catch (MediaWriteFailed $e) {
+            // Before this catch existed the storage failure fell into the 422
+            // below, which tells the operator their picture was unacceptable
+            // when the picture was fine and the bucket was not. It also never
+            // reached anybody: every disk is configured `report => false`, so
+            // nothing was logged either, and the only trace of an outage was
+            // people being told to try a different image.
+            Log::error('An uploaded picture could not be stored', [
+                'item' => $item->getKey(),
+                'reason' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'The picture could not be stored just now. Try again in a moment.',
+            ], 503);
         } catch (RuntimeException $e) {
+            // Genuinely the picture's fault: not an image, too large, a format
+            // GD will not open.
             return response()->json(['message' => $e->getMessage()], 422);
         }
 

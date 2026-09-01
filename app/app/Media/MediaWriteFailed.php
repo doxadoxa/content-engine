@@ -28,4 +28,37 @@ use App\Pipelines\Exceptions\RetryableStepFailure;
  * draw. Catching this type there degrades the same way, and a caught write
  * failure leaves no Asset row behind, which is the whole point of raising it.
  */
-final class MediaWriteFailed extends RetryableStepFailure {}
+final class MediaWriteFailed extends RetryableStepFailure
+{
+    /**
+     * What the provider had already been paid before the disk refused, when a
+     * provider was involved at all.
+     *
+     * The picture is generated and charged for, and only then written. Raising
+     * on the write meant the GeneratedImage that carries the cost was never
+     * constructed, so the money left the account and no cost row recorded it —
+     * a spend that is invisible is worse than one that is merely wasted, since
+     * §6's reports are how anybody would notice this happening at all.
+     */
+    public function __construct(
+        string $message,
+        public readonly ?string $spendProvider = null,
+        public readonly ?string $spendModel = null,
+        public readonly ?int $spendMicros = null,
+    ) {
+        parent::__construct($message);
+    }
+
+    /** The same failure, knowing what it cost. */
+    public function withSpend(string $provider, string $model, int $micros): self
+    {
+        return new self($this->getMessage(), $provider, $model, $micros);
+    }
+
+    public function wasPaidFor(): bool
+    {
+        return $this->spendProvider !== null
+            && $this->spendModel !== null
+            && $this->spendMicros !== null;
+    }
+}

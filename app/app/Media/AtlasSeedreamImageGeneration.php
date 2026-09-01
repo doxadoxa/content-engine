@@ -140,7 +140,19 @@ class AtlasSeedreamImageGeneration implements ImageGenerationProvider
 
         $path = 'generated/'.Str::random(24).'.webp';
 
-        MediaDisk::put($path, $response->body());
+        try {
+            MediaDisk::put($path, $response->body());
+        } catch (MediaWriteFailed $e) {
+            // The charge has already happened by this line — the picture was
+            // drawn and downloaded above — so the failure carries the bill out
+            // with it. A caller that gives up here can still record what was
+            // spent, and one that retries pays again knowing it.
+            throw $e->withSpend(
+                $this->name(),
+                $model,
+                (int) config('media.atlas.cost_micros', 40_000),
+            );
+        }
 
         // Measured, not assumed. The provider honours the *ratio* it was asked
         // for and renders on its own grid — a request for 1080×1350 comes back

@@ -2594,7 +2594,18 @@ class ContentStudioAssistant
 
         try {
             $made = $this->images->for($item, $playbook, $prompt, $brief, $item->contentIdea?->kind->shot());
-        } catch (TerminalStepFailure|MediaWriteFailed) {
+        } catch (MediaWriteFailed $e) {
+            // The same degradation as below, plus the bill. The provider drew
+            // this picture and was paid for it before the disk refused to keep
+            // it; dropping the failure silently would leave that spend out of
+            // §6's cost rows entirely, and a cost report that under-reports a
+            // storage outage is how it stays unnoticed.
+            if ($e->wasPaidFor()) {
+                $models?->spend($e->spendMicros, $e->spendProvider, $e->spendModel);
+            }
+
+            return $payload;
+        } catch (TerminalStepFailure) {
             // A provider that will not draw must not lose a post that is
             // already written and paid for. An unillustrated draft is a weaker
             // draft; a failed batch is no drafts at all.
