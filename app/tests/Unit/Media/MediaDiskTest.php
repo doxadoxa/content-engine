@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\Media;
 
 use App\Media\MediaDisk;
+use App\Media\MediaWriteFailed;
 use App\Pipelines\Core\ErrorClassifier;
-use App\Pipelines\Exceptions\RetryableStepFailure;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
@@ -45,7 +45,7 @@ final class MediaDiskTest extends TestCase
         $refusing->method('put')->willReturn(false);
         Storage::set('refusing', $refusing);
 
-        $this->expectException(RetryableStepFailure::class);
+        $this->expectException(MediaWriteFailed::class);
         $this->expectExceptionMessage('Could not write panels/x.png to the refusing disk.');
 
         MediaDisk::put('panels/x.png', 'bytes');
@@ -54,8 +54,12 @@ final class MediaDiskTest extends TestCase
     #[Test]
     public function the_pipeline_treats_a_refused_write_as_worth_retrying(): void
     {
+        // The type carries the classification. A step run is resumable, so the
+        // ladder is the right answer there — and it only gets one because this
+        // extends RetryableStepFailure, which ErrorClassifier recognises. A bare
+        // exception falls through to `default => false` and ends the run.
         $classified = new ErrorClassifier()->isRetryable(
-            new RetryableStepFailure('Could not write panels/x.png to the s3 disk.'),
+            new MediaWriteFailed('Could not write panels/x.png to the s3 disk.'),
         );
 
         $this->assertTrue($classified);

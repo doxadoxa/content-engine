@@ -13,6 +13,7 @@ use App\Pipelines\Exceptions\RetryableStepFailure;
 use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Support\Brand\VisualStyle;
 use App\Support\Social\ChannelPlaybook;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -112,7 +113,25 @@ class CarouselPanels
             }
 
             $path = 'panels/'.Str::random(24).'.png';
-            MediaDisk::put($path, $bytes);
+
+            try {
+                MediaDisk::put($path, $bytes);
+            } catch (MediaWriteFailed $e) {
+                // The same conclusion as the renderer catch above, for the same
+                // reason. Raising here would escape into `generateIdea`, which
+                // has already persisted every draft and holds a lock rather than
+                // a transaction — so the retry finds nothing missing, answers
+                // `created: 0`, and the carousel never gets pictures at all.
+                // Skipping costs this one panel and no Asset row, which is the
+                // failure the caller can actually survive.
+                Log::warning('A carousel panel could not be stored', [
+                    'item' => $item->getKey(),
+                    'path' => $path,
+                    'reason' => $e->getMessage(),
+                ]);
+
+                continue;
+            }
 
             $drawn[] = Asset::query()->create([
                 'content_item_id' => $item->getKey(),

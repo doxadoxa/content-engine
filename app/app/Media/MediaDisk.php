@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Media;
 
-use App\Pipelines\Exceptions\RetryableStepFailure;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -27,8 +26,8 @@ use Illuminate\Support\Facades\Storage;
  * Failing loudly puts it back where it can be seen, and no row gets written
  * describing a file that is not there.
  *
- * `RetryableStepFailure` and not a plain `RuntimeException`, which is what this
- * threw first and was wrong: ErrorClassifier defaults anything it does not
+ * {@see MediaWriteFailed} extends RetryableStepFailure, and not a plain
+ * RuntimeException, which is what this threw first and was wrong: ErrorClassifier defaults anything it does not
  * recognise to terminal, so a blink from the bucket ended the run rather than
  * taking the retry ladder. It matters most where it costs most — IllustrateDraft
  * catches only `TerminalStepFailure` around the hero, so a write that failed
@@ -57,7 +56,7 @@ final class MediaDisk
         // path in its other form, and a truthy-check would be wrong the day
         // somebody calls that one.
         if (Storage::disk($disk)->put($path, $bytes) === false) {
-            throw new RetryableStepFailure("Could not write {$path} to the {$disk} disk.");
+            throw new MediaWriteFailed("Could not write {$path} to the {$disk} disk.");
         }
     }
 }
