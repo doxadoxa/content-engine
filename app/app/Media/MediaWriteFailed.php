@@ -4,31 +4,42 @@ declare(strict_types=1);
 
 namespace App\Media;
 
-use App\Pipelines\Exceptions\RetryableStepFailure;
+use App\Pipelines\Exceptions\TerminalStepFailure;
+use App\Pipelines\Steps\Generation\IllustrateDraft;
 
 /**
  * A media write the disk refused.
  *
- * Its own type, and not a bare {@see RetryableStepFailure}, because the two
- * callers want opposite things from it and neither should have to catch a
- * category that wide.
+ * **Terminal, and that is the interesting part.** Waiting does not fix a bucket
+ * that will not take the object often enough to be worth what a retry costs
+ * here, because the retry does not resume — it starts the step again from the
+ * top, and the top is a paid image generation.
  *
- * A pipeline step wants the ladder: the run is resumable, so waiting and trying
- * again is free and usually works. Extending RetryableStepFailure is what gives
- * it that, unchanged.
+ * This was retryable for two commits and the two things it broke are the
+ * argument. `SocialImage::variants()` persists each variant as it is made, so a
+ * write failing on the third left the first two committed and the retry drew
+ * them again: a second charge and duplicate candidates on the draft, which is a
+ * wrong draft rather than merely an expensive one. And every image step meters
+ * its spend only after the picture is safely stored, so each re-drawn attempt
+ * was paid for and recorded nowhere.
  *
- * The studio assistant wants to carry on. `generateIdea` persists every draft
- * before it illustrates anything and is wrapped in a lock rather than a
- * transaction, so an exception escaping illustration leaves the drafts written
- * — and the retry finds nothing missing, returns `created: 0` and never
- * illustrates. That failure is documented twice in this codebase already, once
- * on the renderer catch in {@see CarouselPanels} and once on the provider catch
- * in ContentStudioAssistant, both of which reach the same conclusion: a post
- * that is written and paid for must not be lost to a picture that would not
- * draw. Catching this type there degrades the same way, and a caught write
- * failure leaves no Asset row behind, which is the whole point of raising it.
+ * Terminal instead, which every caller already knows how to survive: the hero
+ * catches in {@see IllustrateDraft} and
+ * ContentStudioAssistant both degrade to a post that ships without its picture,
+ * and {@see CarouselPanels} skips the panel. That is this codebase's settled
+ * answer to a picture that will not come — "an unillustrated draft is a weaker
+ * draft; a failed batch is no drafts at all" — and a storage failure is the
+ * same situation arriving one step later.
+ *
+ * What is given up is real: a bucket that blinked for ten seconds now costs
+ * that picture rather than recovering it. Buying that back means resuming
+ * *after* the generation rather than before it, which is a change to how steps
+ * checkpoint and not something a exception class can decide.
+ *
+ * A caught write failure leaves no Asset row behind, which is the whole point
+ * of raising it at all.
  */
-final class MediaWriteFailed extends RetryableStepFailure
+final class MediaWriteFailed extends TerminalStepFailure
 {
     /**
      * What the provider had already been paid before the disk refused, when a

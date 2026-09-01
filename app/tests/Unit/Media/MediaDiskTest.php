@@ -52,17 +52,19 @@ final class MediaDiskTest extends TestCase
     }
 
     #[Test]
-    public function the_pipeline_treats_a_refused_write_as_worth_retrying(): void
+    public function the_pipeline_does_not_retry_a_refused_write(): void
     {
-        // The type carries the classification. A step run is resumable, so the
-        // ladder is the right answer there — and it only gets one because this
-        // extends RetryableStepFailure, which ErrorClassifier recognises. A bare
-        // exception falls through to `default => false` and ends the run.
+        // The type carries the classification, and this one says do not come
+        // back. A retry restarts the step rather than resuming it, and the top
+        // of every one of these steps is a paid image generation — so the
+        // ladder buys a second charge, and in SocialImage::variants() a set of
+        // duplicate candidates on the draft, in exchange for a bucket that may
+        // still be refusing. The callers degrade instead.
         $classified = new ErrorClassifier()->isRetryable(
             new MediaWriteFailed('Could not write panels/x.png to the s3 disk.'),
         );
 
-        $this->assertTrue($classified);
+        $this->assertFalse($classified);
     }
 
     #[Test]
