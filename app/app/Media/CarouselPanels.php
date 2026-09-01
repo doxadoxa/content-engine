@@ -112,14 +112,14 @@ class CarouselPanels
             }
 
             $path = 'panels/'.Str::random(24).'.png';
-            Storage::disk((string) config('media.disk', 'public'))->put($path, $bytes);
+            MediaDisk::put($path, $bytes);
 
             $drawn[] = Asset::query()->create([
                 'content_item_id' => $item->getKey(),
                 'role' => AssetRole::Inline,
                 'source' => AssetSource::Rendered,
                 'anchor' => $this->anchor($position),
-                'disk' => (string) config('media.disk', 'public'),
+                'disk' => MediaDisk::name(),
                 'path' => $path,
                 // The slide's own heading, which is what a screen reader needs
                 // and what the panel actually shows.

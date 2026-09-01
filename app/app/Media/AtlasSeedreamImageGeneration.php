@@ -10,7 +10,6 @@ use App\Pipelines\Exceptions\TerminalStepFailure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 
@@ -141,7 +140,7 @@ class AtlasSeedreamImageGeneration implements ImageGenerationProvider
 
         $path = 'generated/'.Str::random(24).'.webp';
 
-        Storage::disk((string) config('media.disk', 'public'))->put($path, $response->body());
+        MediaDisk::put($path, $response->body());
 
         // Measured, not assumed. The provider honours the *ratio* it was asked
         // for and renders on its own grid — a request for 1080×1350 comes back
@@ -152,7 +151,7 @@ class AtlasSeedreamImageGeneration implements ImageGenerationProvider
         $measured = @getimagesizefromstring($response->body());
 
         return new GeneratedImage(
-            disk: (string) config('media.disk', 'public'),
+            disk: MediaDisk::name(),
             path: $path,
             width: is_array($measured) ? $measured[0] : (int) ($options['width'] ?? 1200),
             height: is_array($measured) ? $measured[1] : (int) ($options['height'] ?? 630),
