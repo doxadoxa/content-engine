@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Tests\Unit\Media;
 
 use App\Media\MediaDisk;
+use App\Pipelines\Core\ErrorClassifier;
+use App\Pipelines\Exceptions\RetryableStepFailure;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
-use RuntimeException;
 use Tests\TestCase;
 
 /*
@@ -25,6 +26,12 @@ use Tests\TestCase;
  * 404s whenever somebody opens the post days later, by which time nothing
  * connects the missing picture to the write. This is the assertion that keeps
  * that failure attached to the thing that caused it.
+ *
+ * The second assertion is the one with teeth. Raising *something* is not enough:
+ * ErrorClassifier defaults every exception it does not recognise to terminal, so
+ * the obvious `RuntimeException` ends the run on the first blink from the bucket
+ * — and by then the provider has already drawn the picture and charged for it.
+ * The type is the behaviour here, so the type is what gets asserted.
  */
 final class MediaDiskTest extends TestCase
 {
@@ -38,10 +45,20 @@ final class MediaDiskTest extends TestCase
         $refusing->method('put')->willReturn(false);
         Storage::set('refusing', $refusing);
 
-        $this->expectException(RuntimeException::class);
+        $this->expectException(RetryableStepFailure::class);
         $this->expectExceptionMessage('Could not write panels/x.png to the refusing disk.');
 
         MediaDisk::put('panels/x.png', 'bytes');
+    }
+
+    #[Test]
+    public function the_pipeline_treats_a_refused_write_as_worth_retrying(): void
+    {
+        $classified = new ErrorClassifier()->isRetryable(
+            new RetryableStepFailure('Could not write panels/x.png to the s3 disk.'),
+        );
+
+        $this->assertTrue($classified);
     }
 
     #[Test]
