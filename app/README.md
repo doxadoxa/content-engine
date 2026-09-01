@@ -65,6 +65,10 @@ The important groups are:
   [Billing and entitlement](#billing-and-entitlement).
 - `TRUSTED_PROXIES` and `OUTBOUND_*` for deployment and outbound-network
   policy. Production requires HTTPS outbound targets by default.
+- `MEDIA_DISK` and the `AWS_*` group for where generated and uploaded images
+  live. The default writes into the container, which only works while one
+  container both draws and serves them; any deployment running more than one
+  wants `s3` and a bucket. Works against any S3-compatible provider.
 
 Queue workers load configuration once. Restart Horizon after changing provider
 keys or queue configuration:
