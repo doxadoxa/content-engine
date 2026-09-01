@@ -6,6 +6,7 @@ namespace App\Pipelines\Steps\Generation;
 
 use App\Console\Commands\EngineTickCommand;
 use App\Media\HeroImage;
+use App\Media\MediaWriteFailed;
 use App\Media\PublicUrl;
 use App\Models\Asset;
 use App\Models\ContentItem;
@@ -90,6 +91,13 @@ class IllustrateDraft extends AbstractStep
         try {
             $made = $this->hero->for($unit, $unit->title, $unit->summary);
         } catch (TerminalStepFailure $e) {
+            // The picture was drawn and charged for and then not stored, so the
+            // money left whether or not this step ships an image. Metered here
+            // rather than lost, because §6's cost rows are the only place a
+            // storage outage shows up as spend rather than as a gap.
+            if ($e instanceof MediaWriteFailed && $e->wasPaidFor()) {
+                $context->spend($e->spendMicros, $e->spendProvider, $e->spendModel);
+            }
             // A provider that is configured and will not draw is the same
             // situation as one that was never configured, and this step already
             // says what to do about that: the writing still ships. An empty

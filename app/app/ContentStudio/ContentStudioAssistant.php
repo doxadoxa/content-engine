@@ -15,6 +15,7 @@ use App\Enums\SlideLayout;
 use App\Enums\SocialKpi;
 use App\Media\CarouselPanels;
 use App\Media\HeroImage;
+use App\Media\MediaWriteFailed;
 use App\Media\SocialImage;
 use App\Models\Asset;
 use App\Models\BrandBrief;
@@ -2593,10 +2594,28 @@ class ContentStudioAssistant
 
         try {
             $made = $this->images->for($item, $playbook, $prompt, $brief, $item->contentIdea?->kind->shot());
+        } catch (MediaWriteFailed $e) {
+            // The same degradation as below, plus the bill. The provider drew
+            // this picture and was paid for it before the disk refused to keep
+            // it; dropping the failure silently would leave that spend out of
+            // §6's cost rows entirely, and a cost report that under-reports a
+            // storage outage is how it stays unnoticed.
+            if ($e->wasPaidFor()) {
+                $models?->spend($e->spendMicros, $e->spendProvider, $e->spendModel);
+            }
+
+            return $payload;
         } catch (TerminalStepFailure) {
             // A provider that will not draw must not lose a post that is
             // already written and paid for. An unillustrated draft is a weaker
             // draft; a failed batch is no drafts at all.
+            //
+            // A disk that will not store the picture it drew is the same
+            // situation arriving one step later, and it needs naming separately
+            // because it is a *retryable* failure that has nowhere to retry:
+            // `generateIdea` persisted the drafts before calling this and holds
+            // a lock, not a transaction, so raising here leaves them written and
+            // the retry answers `created: 0` without illustrating anything.
             return $payload;
         }
 

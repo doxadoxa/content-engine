@@ -11,7 +11,6 @@ use App\Models\ContentItem;
 use App\Support\Social\ChannelPlaybook;
 use GdImage;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -75,14 +74,14 @@ class UploadedPicture
 
         imagedestroy($canvas);
 
-        Storage::disk((string) config('media.disk', 'public'))->put($path, $bytes);
+        MediaDisk::put($path, $bytes);
 
         return Asset::query()->create([
             'content_item_id' => $item->getKey(),
             'role' => AssetRole::Variant,
             'source' => AssetSource::Uploaded,
             'anchor' => null,
-            'disk' => (string) config('media.disk', 'public'),
+            'disk' => MediaDisk::name(),
             'path' => $path,
             // The operator's own filename, which is the only description of the
             // picture anybody has supplied. Better than the post's first line,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Pipelines\Steps\SocialDraft;
 
 use App\Media\HeroImage;
+use App\Media\MediaWriteFailed;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
@@ -90,6 +91,13 @@ class GenerateImage extends AbstractStep
         try {
             $made = $this->hero->for($unit, $unit->title, $subject);
         } catch (TerminalStepFailure $e) {
+            // The picture was drawn and charged for and then not stored, so the
+            // money left whether or not this step ships an image. Metered here
+            // rather than lost, because §6's cost rows are the only place a
+            // storage outage shows up as spend rather than as a gap.
+            if ($e instanceof MediaWriteFailed && $e->wasPaidFor()) {
+                $context->spend($e->spendMicros, $e->spendProvider, $e->spendModel);
+            }
             // A configured provider that will not draw is the same situation as
             // one that was never configured, and the answer is the same: the
             // post still ships. Only terminal failures — a timeout or a 500 is
