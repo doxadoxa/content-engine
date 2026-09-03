@@ -6,8 +6,13 @@ namespace Tests\Feature\Auth;
 
 use App\Models\OauthIdentity;
 use App\Models\User;
+use App\Notifications\ResetPassword;
+use App\Notifications\VerifyEmail;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Notification;
 use Inertia\Testing\AssertableInertia as Assert;
 use Laravel\Socialite\Facades\Socialite;
 use Laravel\Socialite\Two\InvalidStateException;
@@ -97,7 +102,7 @@ final class GoogleLoginTest extends TestCase
 
         $response->assertRedirect(config('fortify.home'));
 
-        $user = User::query()->where('email', 'alex@example.com')->sole();
+        $user = User::query()->where('email', 'alex@gmail.com')->sole();
 
         $this->assertAuthenticatedAs($user);
         $this->assertSame('Alex Moreira', $user->name);
@@ -124,7 +129,7 @@ final class GoogleLoginTest extends TestCase
     #[Test]
     public function it_links_a_verified_address_to_the_account_that_already_has_it(): void
     {
-        $existing = User::factory()->create(['email' => 'alex@example.com']);
+        $existing = User::factory()->create(['email' => 'alex@gmail.com']);
 
         $this->fakeGoogleReturns($this->googleUser());
 
@@ -141,7 +146,7 @@ final class GoogleLoginTest extends TestCase
     #[Test]
     public function linking_verifies_an_address_that_was_still_unverified(): void
     {
-        $existing = User::factory()->unverified()->create(['email' => 'alex@example.com']);
+        $existing = User::factory()->unverified()->create(['email' => 'alex@gmail.com']);
 
         $this->fakeGoogleReturns($this->googleUser());
 
@@ -151,9 +156,136 @@ final class GoogleLoginTest extends TestCase
     }
 
     #[Test]
+    public function a_workspace_domain_google_asserts_is_authoritative_too(): void
+    {
+        $existing = User::factory()->create(['email' => 'alex@company.example']);
+
+        $this->fakeGoogleReturns($this->googleUser(
+            email: 'alex@company.example',
+            hostedDomain: 'company.example',
+        ));
+
+        $this->get('/auth/google/callback?code=good&state=good');
+
+        $this->assertAuthenticatedAs($existing);
+        $this->assertSame(1, $existing->oauthIdentities()->count());
+    }
+
+    #[Test]
+    public function a_hosted_domain_for_some_other_domain_vouches_for_nothing(): void
+    {
+        User::factory()->create(['email' => 'alex@company.example']);
+
+        // A `hd` is present, and it is not this address's domain. Accepting
+        // the mere presence of the claim would let any Workspace account link
+        // to any address it once verified.
+        $this->fakeGoogleReturns($this->googleUser(
+            email: 'alex@company.example',
+            hostedDomain: 'somewhere-else.example',
+        ));
+
+        $this->get('/auth/google/callback?code=good&state=good')
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('socialError');
+
+        $this->assertGuest();
+        $this->assertSame(0, OauthIdentity::query()->count());
+    }
+
+    #[Test]
+    public function a_verified_but_unowned_address_cannot_take_over_an_existing_account(): void
+    {
+        // The address was verified at Google once, on a consumer account, and
+        // has since been reassigned to somebody else who has an account here.
+        // `email_verified` is true and means nothing about who holds the inbox
+        // now, which is the whole reason ownership is asked separately.
+        $victim = User::factory()->create(['email' => 'alex@company.example']);
+
+        $this->fakeGoogleReturns($this->googleUser(email: 'alex@company.example'));
+
+        $this->get('/auth/google/callback?code=good&state=good')
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('socialError');
+
+        $this->assertGuest();
+        $this->assertSame(0, $victim->oauthIdentities()->count());
+        $this->assertSame(1, User::query()->count());
+    }
+
+    #[Test]
+    public function a_verified_but_unowned_address_with_no_account_gets_one_and_has_to_prove_itself(): void
+    {
+        Notification::fake();
+
+        $this->fakeGoogleReturns($this->googleUser(email: 'alex@company.example'));
+
+        $this->get('/auth/google/callback?code=good&state=good');
+
+        $user = User::query()->sole();
+
+        // Signed in, because there is nobody to take the account from — but
+        // not verified, because nothing here proved the inbox. That is the
+        // ordinary email path, and it sends the ordinary email.
+        $this->assertAuthenticatedAs($user);
+        $this->assertNull($user->email_verified_at);
+        Notification::assertSentTo($user, VerifyEmail::class);
+    }
+
+    #[Test]
+    public function an_authoritative_address_is_not_asked_to_prove_itself_again(): void
+    {
+        Notification::fake();
+
+        $this->fakeGoogleReturns($this->googleUser());
+
+        $this->get('/auth/google/callback?code=good&state=good');
+
+        Notification::assertNothingSent();
+    }
+
+    #[Test]
+    public function losing_the_race_to_create_the_account_still_signs_the_person_in(): void
+    {
+        // Two callbacks for the same new account, close enough together that
+        // both looked and found nothing. This stands in for the other request:
+        // it commits the row this one is about to insert, then fails this
+        // insert the way Postgres would.
+        $raced = false;
+
+        Event::listen('eloquent.creating: '.User::class, function () use (&$raced): void {
+            if ($raced) {
+                return;
+            }
+
+            $raced = true;
+
+            DB::table('users')->insert([
+                'name' => 'Alex Moreira',
+                'email' => 'alex@gmail.com',
+                'email_verified_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            throw new UniqueConstraintViolationException(
+                'pgsql', 'insert into users', [], new \PDOException('duplicate key value violates unique constraint')
+            );
+        });
+
+        $this->fakeGoogleReturns($this->googleUser());
+
+        $this->get('/auth/google/callback?code=good&state=good')
+            ->assertRedirect(config('fortify.home'));
+
+        $this->assertTrue($raced, 'The race was never triggered, so this proved nothing.');
+        $this->assertAuthenticatedAs(User::query()->sole());
+        $this->assertSame(1, OauthIdentity::query()->count());
+    }
+
+    #[Test]
     public function it_refuses_an_unverified_address_rather_than_handing_over_the_account(): void
     {
-        User::factory()->create(['email' => 'alex@example.com']);
+        User::factory()->create(['email' => 'alex@gmail.com']);
 
         $this->fakeGoogleReturns($this->googleUser(verified: false));
 
@@ -182,11 +314,11 @@ final class GoogleLoginTest extends TestCase
     #[Test]
     public function a_returning_identity_signs_in_as_its_owner_whatever_the_address_now_is(): void
     {
-        $user = User::factory()->create(['email' => 'alex@example.com']);
+        $user = User::factory()->create(['email' => 'alex@gmail.com']);
         $user->oauthIdentities()->create([
             'provider' => 'google',
             'provider_subject' => 'google-subject-1',
-            'email' => 'alex@example.com',
+            'email' => 'alex@gmail.com',
         ]);
 
         // Same Google account, new address on it. The subject is what this
@@ -201,7 +333,7 @@ final class GoogleLoginTest extends TestCase
         $this->assertSame('alex@newjob.example', OauthIdentity::query()->sole()->email);
         // The account keeps its own address: the one somebody signs in with
         // here is not changed by what they renamed themselves to at Google.
-        $this->assertSame('alex@example.com', $user->fresh()->email);
+        $this->assertSame('alex@gmail.com', $user->fresh()->email);
     }
 
     #[Test]
@@ -226,11 +358,11 @@ final class GoogleLoginTest extends TestCase
     #[Test]
     public function a_google_account_made_again_under_the_same_address_relinks(): void
     {
-        $user = User::factory()->create(['email' => 'alex@example.com']);
+        $user = User::factory()->create(['email' => 'alex@gmail.com']);
         $user->oauthIdentities()->create([
             'provider' => 'google',
             'provider_subject' => 'the-deleted-one',
-            'email' => 'alex@example.com',
+            'email' => 'alex@gmail.com',
         ]);
 
         // Same person, same verified address, new `sub`. A plain insert here
@@ -310,27 +442,60 @@ final class GoogleLoginTest extends TestCase
         // is here because the column becoming nullable is what made that
         // relevant, and a regression to a blank-string default would pass
         // every other test in this file.
-        $this->post('/login', ['email' => 'alex@example.com', 'password' => ''])
+        $this->post('/login', ['email' => 'alex@gmail.com', 'password' => ''])
             ->assertSessionHasErrors();
 
         $this->assertGuest();
     }
 
     #[Test]
-    public function somebody_who_arrived_through_google_can_set_a_first_password(): void
+    public function a_session_alone_cannot_mint_a_password_for_a_passwordless_account(): void
     {
         $this->fakeGoogleReturns($this->googleUser());
         $this->get('/auth/google/callback?code=good&state=good');
 
         $user = User::query()->sole();
 
-        // No `current_password`, because there is not one to give.
+        // The interesting case, and the reason the rule is unconditional. A
+        // borrowed session would otherwise leave behind a credential that
+        // still works after the session is revoked.
         $this->put('/user/password', [
             'password' => 'a-long-enough-password',
             'password_confirmation' => 'a-long-enough-password',
-        ])->assertSessionHasNoErrors();
+        ])->assertSessionHasErrors('current_password', errorBag: 'updatePassword');
 
-        $this->assertTrue(Hash::check('a-long-enough-password', (string) $user->fresh()->password));
+        $this->assertFalse($user->fresh()->hasPassword());
+    }
+
+    #[Test]
+    public function it_emails_a_first_password_link_to_an_account_that_has_none(): void
+    {
+        Notification::fake();
+
+        $this->fakeGoogleReturns($this->googleUser());
+        $this->get('/auth/google/callback?code=good&state=good');
+
+        $user = User::query()->sole();
+
+        $this->post('/settings/password/link')
+            ->assertRedirect()
+            ->assertSessionHas('status');
+
+        Notification::assertSentTo($user, ResetPassword::class);
+    }
+
+    #[Test]
+    public function it_does_not_email_a_link_to_an_account_that_already_has_a_password(): void
+    {
+        Notification::fake();
+
+        // Not an error page — the answer is the same either way, so nothing
+        // here reports on the state of an account. It just does not send.
+        $this->actingAs(User::factory()->create())
+            ->post('/settings/password/link')
+            ->assertRedirect();
+
+        Notification::assertNothingSent();
     }
 
     #[Test]
@@ -375,20 +540,32 @@ final class GoogleLoginTest extends TestCase
         Socialite::extend('google', fn (): FakeGoogleProvider => new FakeGoogleProvider(request(), failure: $failure));
     }
 
+    /**
+     * Gmail by default, because that is the case Google is authoritative for
+     * and most of the assertions below are about what happens when it is. The
+     * `hostedDomain` argument is how a Workspace account says so instead.
+     */
     private function googleUser(
-        string $email = 'alex@example.com',
+        string $email = 'alex@gmail.com',
         bool $verified = true,
         string $subject = 'google-subject-1',
         string $name = 'Alex Moreira',
+        ?string $hostedDomain = null,
     ): SocialiteUser {
         $user = new SocialiteUser;
 
-        return $user->setRaw([
+        $raw = [
             'sub' => $subject,
             'email' => $email,
             'email_verified' => $verified,
             'name' => $name,
-        ])->map([
+        ];
+
+        if ($hostedDomain !== null) {
+            $raw['hd'] = $hostedDomain;
+        }
+
+        return $user->setRaw($raw)->map([
             'id' => $subject,
             'name' => $name,
             'email' => $email,

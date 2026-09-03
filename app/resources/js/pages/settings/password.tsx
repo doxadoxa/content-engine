@@ -5,19 +5,72 @@ import PasswordInput from '@/components/password-input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
-import { edit } from '@/routes/password';
+import { edit, link } from '@/routes/password';
 import { update } from '@/routes/user-password';
 
 /**
- * Set a password, or change one.
+ * Change a password — or, for an account that has never had one, ask for one.
  *
- * Which of the two it is depends on whether this account has ever had one: an
- * account created through Google has not, and the current-password field would
- * be an unanswerable question rather than a check — see
- * `App\Actions\Fortify\UpdateUserPassword`, which drops the rule for exactly
- * these accounts.
+ * Two different screens rather than one form with a field removed. An account
+ * created through Google has no current password to prove, and the answer to
+ * that is not to stop asking: a session on its own is not evidence of anything
+ * durable, and a password minted from a borrowed one outlives the session being
+ * revoked. So it asks for the emailed link instead, which proves the inbox —
+ * the same proof anybody who forgot their password gives. See
+ * `App\Actions\Fortify\UpdateUserPassword` and `PasswordController::sendLink`.
  */
-export default function Password({ hasPassword }: { hasPassword: boolean }) {
+export default function Password({
+    hasPassword,
+    status,
+}: {
+    hasPassword: boolean;
+    status?: string;
+}) {
+    if (!hasPassword) {
+        return (
+            <>
+                <Head title="Password settings" />
+
+                <div className="space-y-6">
+                    <Heading
+                        variant="small"
+                        title="Password"
+                        description="You sign in with Google, so there is no password on this account"
+                    />
+
+                    <div className="max-w-lg space-y-6">
+                        <p className="text-sm text-muted-foreground">
+                            You can add one, so that your email address and a
+                            password work here too. We will email you a link to
+                            set it — being signed in is not enough on its own,
+                            because a password is the thing that would still
+                            work if this session were not yours.
+                        </p>
+
+                        <Form {...link.form()}>
+                            {({ processing }) => (
+                                <Button
+                                    type="submit"
+                                    variant="secondary"
+                                    disabled={processing}
+                                >
+                                    {processing && <Spinner />}
+                                    Email me a link to set a password
+                                </Button>
+                            )}
+                        </Form>
+
+                        {status && (
+                            <p className="text-sm text-muted-foreground">
+                                {status}
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </>
+        );
+    }
+
     return (
         <>
             <Head title="Password settings" />
@@ -26,11 +79,7 @@ export default function Password({ hasPassword }: { hasPassword: boolean }) {
                 <Heading
                     variant="small"
                     title="Password"
-                    description={
-                        hasPassword
-                            ? 'Use a long, random password to keep your account secure'
-                            : 'You sign in with Google. Set a password to be able to sign in with your email address as well'
-                    }
+                    description="Use a long, random password to keep your account secure"
                 />
 
                 <Form
@@ -52,22 +101,18 @@ export default function Password({ hasPassword }: { hasPassword: boolean }) {
                 >
                     {({ processing, errors, recentlySuccessful }) => (
                         <>
-                            {hasPassword && (
-                                <div className="grid gap-2">
-                                    <Label htmlFor="current_password">
-                                        Current password
-                                    </Label>
-                                    <PasswordInput
-                                        id="current_password"
-                                        name="current_password"
-                                        required
-                                        autoComplete="current-password"
-                                    />
-                                    <InputError
-                                        message={errors.current_password}
-                                    />
-                                </div>
-                            )}
+                            <div className="grid gap-2">
+                                <Label htmlFor="current_password">
+                                    Current password
+                                </Label>
+                                <PasswordInput
+                                    id="current_password"
+                                    name="current_password"
+                                    required
+                                    autoComplete="current-password"
+                                />
+                                <InputError message={errors.current_password} />
+                            </div>
 
                             <div className="grid gap-2">
                                 <Label htmlFor="password">
@@ -100,9 +145,7 @@ export default function Password({ hasPassword }: { hasPassword: boolean }) {
                             <div className="flex items-center gap-4">
                                 <Button type="submit" disabled={processing}>
                                     {processing && <Spinner />}
-                                    {hasPassword
-                                        ? 'Save password'
-                                        : 'Set password'}
+                                    Save password
                                 </Button>
 
                                 {recentlySuccessful && (
