@@ -6,6 +6,8 @@ namespace App\Providers;
 
 use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
+use App\Actions\Fortify\UpdateUserPassword;
+use App\Actions\Fortify\UpdateUserProfileInformation;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -22,6 +24,21 @@ class FortifyServiceProvider extends ServiceProvider
     {
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
         Fortify::createUsersUsing(CreateNewUser::class);
+
+        /*
+         * These two were missing, and their absence was not quiet in the way a
+         * missing binding usually is.
+         *
+         * `Fortify::*Using()` is the *only* thing that binds these contracts —
+         * Fortify's own provider binds none of them — and both features are
+         * enabled in `config/fortify.php`. So the routes existed, the screens
+         * rendered, and submitting either one resolved a contract with no
+         * implementation: `Target [UpdatesUserPasswords] is not instantiable`,
+         * a 500 on every attempt to change a password or a name. The actions
+         * themselves were written and correct; nothing ever asked for them.
+         */
+        Fortify::updateUserPasswordsUsing(UpdateUserPassword::class);
+        Fortify::updateUserProfileInformationUsing(UpdateUserProfileInformation::class);
 
         $this->configureViews();
         $this->configureRateLimiting();
