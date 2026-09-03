@@ -8,6 +8,8 @@ use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Actions\Fortify\UpdateUserProfileInformation;
+use App\Enums\SocialLoginProvider;
+use App\Http\Controllers\Auth\SocialLoginController;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -36,6 +38,10 @@ class FortifyServiceProvider extends ServiceProvider
          * implementation: `Target [UpdatesUserPasswords] is not instantiable`,
          * a 500 on every attempt to change a password or a name. The actions
          * themselves were written and correct; nothing ever asked for them.
+         *
+         * Found while adding Google sign-in, because an account that arrives
+         * through Google has no password and the only way for it to get one is
+         * the screen this had broken.
          */
         Fortify::updateUserPasswordsUsing(UpdateUserPassword::class);
         Fortify::updateUserProfileInformationUsing(UpdateUserProfileInformation::class);
@@ -56,6 +62,7 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::loginView(fn (Request $request) => Inertia::render('auth/login', [
             'canResetPassword' => Features::enabled(Features::resetPasswords()),
             'status' => $request->session()->get('status'),
+            ...$this->socialProps($request),
         ]));
 
         Fortify::requestPasswordResetLinkView(fn (Request $request) => Inertia::render('auth/forgot-password', [
@@ -70,14 +77,44 @@ class FortifyServiceProvider extends ServiceProvider
 
         Fortify::confirmPasswordView(fn () => Inertia::render('auth/confirm-password'));
 
-        Fortify::registerView(fn () => Inertia::render('auth/register', [
+        Fortify::registerView(fn (Request $request) => Inertia::render('auth/register', [
             'passwordRules' => Password::defaults()->toPasswordRulesString(),
             'trialDays' => (int) config('billing.trial.days', 3),
+            ...$this->socialProps($request),
         ]));
 
         Fortify::verifyEmailView(fn (Request $request) => Inertia::render('auth/verify-email', [
             'status' => $request->session()->get('status'),
         ]));
+    }
+
+    /**
+     * What the two entry screens need to know about signing in with somebody
+     * else's account.
+     *
+     * The same two props on both, from one place, because they are one
+     * decision: which providers this installation actually has credentials for,
+     * and what to say if coming back from one of them went wrong. An
+     * installation with no Google client renders no Google button — rather than
+     * a button that leads to Google's own error page, which is a dead end with
+     * our name on it.
+     *
+     * @return array<string, mixed>
+     */
+    private function socialProps(Request $request): array
+    {
+        $providers = [];
+
+        foreach (SocialLoginProvider::cases() as $provider) {
+            if ($provider->isConfigured()) {
+                $providers[] = ['key' => $provider->value, 'label' => $provider->label()];
+            }
+        }
+
+        return [
+            'socialProviders' => $providers,
+            'socialError' => $request->session()->get(SocialLoginController::SESSION_ERROR),
+        ];
     }
 
     private function configureRateLimiting(): void

@@ -8,7 +8,16 @@ import { Spinner } from '@/components/ui/spinner';
 import { edit } from '@/routes/password';
 import { update } from '@/routes/user-password';
 
-export default function Password() {
+/**
+ * Set a password, or change one.
+ *
+ * Which of the two it is depends on whether this account has ever had one: an
+ * account created through Google has not, and the current-password field would
+ * be an unanswerable question rather than a check — see
+ * `App\Actions\Fortify\UpdateUserPassword`, which drops the rule for exactly
+ * these accounts.
+ */
+export default function Password({ hasPassword }: { hasPassword: boolean }) {
     return (
         <>
             <Head title="Password settings" />
@@ -17,7 +26,11 @@ export default function Password() {
                 <Heading
                     variant="small"
                     title="Password"
-                    description="Use a long, random password to keep your account secure"
+                    description={
+                        hasPassword
+                            ? 'Use a long, random password to keep your account secure'
+                            : 'You sign in with Google. Set a password to be able to sign in with your email address as well'
+                    }
                 />
 
                 <Form
@@ -39,21 +52,27 @@ export default function Password() {
                 >
                     {({ processing, errors, recentlySuccessful }) => (
                         <>
-                            <div className="grid gap-2">
-                                <Label htmlFor="current_password">
-                                    Current password
-                                </Label>
-                                <PasswordInput
-                                    id="current_password"
-                                    name="current_password"
-                                    required
-                                    autoComplete="current-password"
-                                />
-                                <InputError message={errors.current_password} />
-                            </div>
+                            {hasPassword && (
+                                <div className="grid gap-2">
+                                    <Label htmlFor="current_password">
+                                        Current password
+                                    </Label>
+                                    <PasswordInput
+                                        id="current_password"
+                                        name="current_password"
+                                        required
+                                        autoComplete="current-password"
+                                    />
+                                    <InputError
+                                        message={errors.current_password}
+                                    />
+                                </div>
+                            )}
 
                             <div className="grid gap-2">
-                                <Label htmlFor="password">New password</Label>
+                                <Label htmlFor="password">
+                                    {hasPassword ? 'New password' : 'Password'}
+                                </Label>
                                 <PasswordInput
                                     id="password"
                                     name="password"
@@ -81,7 +100,9 @@ export default function Password() {
                             <div className="flex items-center gap-4">
                                 <Button type="submit" disabled={processing}>
                                     {processing && <Spinner />}
-                                    Save password
+                                    {hasPassword
+                                        ? 'Save password'
+                                        : 'Set password'}
                                 </Button>
 
                                 {recentlySuccessful && (
