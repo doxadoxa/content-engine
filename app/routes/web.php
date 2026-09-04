@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\PullContentController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\ArticleController;
 use App\Http\Controllers\AssistantController;
+use App\Http\Controllers\Auth\SocialLoginController;
 use App\Http\Controllers\BillingCheckoutController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\BrandBriefController;
@@ -77,6 +78,31 @@ Route::get('/', fn (PlanCatalog $plans) => Inertia::render('marketing', [
 Route::get('terms', [LegalController::class, 'terms'])->name('legal.terms');
 Route::get('privacy', [LegalController::class, 'privacy'])->name('legal.privacy');
 Route::get('cookies', [LegalController::class, 'cookies'])->name('legal.cookies');
+
+/*
+ * Signing in with an outside account (see `SocialLoginController`).
+ *
+ * `{provider}` is bound to the `SocialLoginProvider` enum, so an unknown
+ * provider is a 404 from the router rather than a branch in the controller —
+ * and adding the second one is a case on the enum and a button, not a pair of
+ * routes.
+ *
+ * Behind `guest`, because both halves of this are a way *in*: somebody already
+ * signed in who lands here has followed a stale link, and the right answer is
+ * the screen they were going to anyway.
+ *
+ * Throttled by IP, for the reason registration is: the callback exchanges a
+ * code at Google on every hit and can end in a new account, and an account is
+ * the first step towards a trial that spends real money at a provider. Ten a
+ * minute rather than registration's five an hour, because this path is also
+ * where people who *already* have an account come back through, and a limit
+ * tight enough to stop signup abuse here would lock a shared office out of
+ * signing in.
+ */
+Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
+    Route::get('auth/{provider}/redirect', [SocialLoginController::class, 'redirect'])->name('oauth.redirect');
+    Route::get('auth/{provider}/callback', [SocialLoginController::class, 'callback'])->name('oauth.callback');
+});
 
 /*
  * Whether this deployment has a social presence at all (config/social.php).

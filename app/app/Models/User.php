@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Cashier\Billable;
@@ -70,6 +71,35 @@ class User extends Authenticatable implements MustVerifyEmail
     public function belongsToAnyProject(): bool
     {
         return $this->projects()->exists();
+    }
+
+    /**
+     * The outside providers this account can arrive through.
+     *
+     * A `HasMany` although one provider is supported today and the schema
+     * allows one identity per provider: the plural is what the second provider
+     * needs, and the singular would have to be unpicked from every caller the
+     * day it arrives.
+     *
+     * @return HasMany<OauthIdentity, $this>
+     */
+    public function oauthIdentities(): HasMany
+    {
+        return $this->hasMany(OauthIdentity::class);
+    }
+
+    /**
+     * Whether this account can be signed into with a password at all.
+     *
+     * False for somebody who has only ever come through Google, and the
+     * settings screens have to ask before offering them a form that starts by
+     * demanding a current password they do not have. Reads the raw attribute
+     * rather than the `hashed` cast, which would happily hash a null on the way
+     * past and answer the wrong question.
+     */
+    public function hasPassword(): bool
+    {
+        return is_string($this->getRawOriginal('password')) && $this->getRawOriginal('password') !== '';
     }
 
     /**
