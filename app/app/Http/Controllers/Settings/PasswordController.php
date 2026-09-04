@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Password;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -33,7 +34,8 @@ class PasswordController extends Controller
     }
 
     /**
-     * Email a first password to somebody who has never had one.
+     * Email a first password to somebody who has never had one, and end the
+     * session on the way out.
      *
      * The ordinary reset flow, aimed at the address already on the account. It
      * exists as its own route because Fortify's `/forgot-password` is behind
@@ -46,20 +48,41 @@ class PasswordController extends Controller
      * The link proves the inbox, which is the same proof this application
      * accepts from anybody who has forgotten their password.
      *
-     * The answer is the same either way, and deliberately vague about whether
-     * anything was sent — the broker throttles per address (see
-     * `config/auth.php`), and a screen that said "already sent one, wait" would
-     * be reporting on somebody else's inbox as readily as on your own.
+     * **And why it signs them out.** The link goes to `password.reset`, which
+     * Fortify puts behind `guest` — both the form and the submission. Sending
+     * it to somebody who stays signed in produces a link that bounces them to
+     * the dashboard with no explanation when they click it in the same browser,
+     * which is the whole advertised flow failing silently. Ending the session
+     * here is the smaller of the two honest answers; the other is a second
+     * reset form of our own, behind `auth`, duplicating Fortify's.
+     *
+     * It also costs nothing worth keeping. Signing back in is one press of the
+     * Google button, and a session that was not theirs to begin with is exactly
+     * the thing this ends.
      */
     public function sendLink(Request $request): RedirectResponse
     {
         /** @var User $user */
         $user = $request->user();
 
-        if (! $user->hasPassword()) {
-            Password::broker()->sendResetLink(['email' => $user->email]);
+        if ($user->hasPassword()) {
+            // A stale tab: this screen is only offered to accounts without one,
+            // and the form is the way to change a password that exists. Nothing
+            // sent, and no logout for somebody who did not ask for one.
+            return back();
         }
 
-        return back()->with('status', 'If this account can take a password, a link to set one is on its way to '.$user->email.'.');
+        $email = $user->email;
+
+        Password::broker()->sendResetLink(['email' => $email]);
+
+        Auth::guard('web')->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->route('login')->with(
+            'status',
+            'A link to set a password is on its way to '.$email.'. We signed you out here, because that link only opens when you are.'
+        );
     }
 }

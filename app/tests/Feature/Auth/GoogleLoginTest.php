@@ -13,6 +13,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Password;
 use Inertia\Testing\AssertableInertia as Assert;
 use Laravel\Socialite\Facades\Socialite;
 use Laravel\Socialite\Two\InvalidStateException;
@@ -468,7 +469,7 @@ final class GoogleLoginTest extends TestCase
     }
 
     #[Test]
-    public function it_emails_a_first_password_link_to_an_account_that_has_none(): void
+    public function it_emails_a_first_password_link_and_ends_the_session(): void
     {
         Notification::fake();
 
@@ -478,24 +479,57 @@ final class GoogleLoginTest extends TestCase
         $user = User::query()->sole();
 
         $this->post('/settings/password/link')
-            ->assertRedirect()
+            ->assertRedirect(route('login'))
             ->assertSessionHas('status');
 
         Notification::assertSentTo($user, ResetPassword::class);
+
+        // The link is the point of the whole exercise and Fortify puts it
+        // behind `guest`, so a session left open here is a link that bounces
+        // its own recipient to the dashboard.
+        $this->assertGuest();
     }
 
     #[Test]
-    public function it_does_not_email_a_link_to_an_account_that_already_has_a_password(): void
+    public function the_emailed_link_actually_opens(): void
+    {
+        $this->fakeGoogleReturns($this->googleUser());
+        $this->get('/auth/google/callback?code=good&state=good');
+
+        $user = User::query()->sole();
+        $token = Password::broker()->createToken($user);
+
+        $this->post('/settings/password/link');
+
+        // The assertion this whole fix exists for: signed out, the reset form
+        // opens rather than redirecting away. Before the logout it answered a
+        // 302 to the dashboard.
+        $this->get('/reset-password/'.$token)->assertOk();
+
+        $this->post('/reset-password', [
+            'token' => $token,
+            'email' => $user->email,
+            'password' => 'a-long-enough-password',
+            'password_confirmation' => 'a-long-enough-password',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertTrue($user->fresh()->hasPassword());
+    }
+
+    #[Test]
+    public function it_does_not_email_a_link_or_sign_out_an_account_that_has_a_password(): void
     {
         Notification::fake();
 
-        // Not an error page — the answer is the same either way, so nothing
-        // here reports on the state of an account. It just does not send.
-        $this->actingAs(User::factory()->create())
+        // A stale tab. Nothing sent, and nobody logged out for asking.
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
             ->post('/settings/password/link')
             ->assertRedirect();
 
         Notification::assertNothingSent();
+        $this->assertAuthenticatedAs($user);
     }
 
     #[Test]

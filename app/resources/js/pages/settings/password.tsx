@@ -47,6 +47,18 @@ export default function Password({
                             work if this session were not yours.
                         </p>
 
+                        {/*
+                         * Said before the button, not discovered after it. The
+                         * link Fortify sends only opens for a signed-out
+                         * browser, so asking for one ends this session — and a
+                         * button that logs you out without warning is a worse
+                         * surprise than a sentence.
+                         */}
+                        <p className="text-sm text-muted-foreground">
+                            Asking for the link signs you out here. Getting back
+                            in is one press of the Google button.
+                        </p>
+
                         <Form {...link.form()}>
                             {({ processing }) => (
                                 <Button
