@@ -42,6 +42,19 @@ return [
         // Must match a redirect URI registered on the OAuth client exactly,
         // including scheme and port. Google compares it as a string.
         'redirect' => env('GOOGLE_REDIRECT_URI', env('APP_URL').'/integrations/google/callback'),
+        /*
+         * Where Google returns people who signed *in* with it, which is a
+         * different flow and therefore a different registered redirect URI —
+         * the integration above asks for Search Console and Analytics scopes
+         * and keeps a refresh token; sign-in asks for a name and an address and
+         * keeps neither.
+         *
+         * Null by default, and the controller builds the URL from the route
+         * when it is: one fewer variable to drift out of step with the route
+         * table. Set it only where the public URL is not the one `route()`
+         * would build.
+         */
+        'auth_redirect' => env('GOOGLE_AUTH_REDIRECT_URI'),
     ],
 
     /*
