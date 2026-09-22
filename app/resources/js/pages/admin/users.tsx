@@ -1,4 +1,5 @@
 import { Head, Link, router } from '@inertiajs/react';
+import { AdminTabs } from '@/components/admin-tabs';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -65,6 +66,8 @@ export default function AdminUsers({ q, users }: Props) {
                     description="Who has signed up, and which projects they can reach."
                 />
 
+                <AdminTabs current="users" />
+
                 <Input
                     type="search"
                     placeholder="Search by name or email"
@@ -88,6 +91,43 @@ export default function AdminUsers({ q, users }: Props) {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
+                                    {users.data.length === 0 && (
+                                        <TableRow>
+                                            <TableCell
+                                                colSpan={3}
+                                                className="h-28 text-center text-muted-foreground"
+                                            >
+                                                {/*
+                                                 * An empty page is not an empty table. Paging past
+                                                 * the last page — after somebody else removed rows,
+                                                 * or on a stale back button — also arrives here, and
+                                                 * `Pagination` renders nothing once there is only one
+                                                 * page left, so saying "none yet" would strand a
+                                                 * reader on a deployment that is full.
+                                                 */}
+                                                {users.total === 0 ? (
+                                                    q === '' ? (
+                                                        'No accounts yet.'
+                                                    ) : (
+                                                        'No account matches that search.'
+                                                    )
+                                                ) : (
+                                                    <>
+                                                        Nothing on this page.{' '}
+                                                        <Link
+                                                            href={usersRoute({
+                                                                query: { q },
+                                                            })}
+                                                            className="underline underline-offset-4"
+                                                        >
+                                                            Back to the first
+                                                            page
+                                                        </Link>
+                                                    </>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
                                     {users.data.map((user) => (
                                         <TableRow key={user.id}>
                                             <TableCell>

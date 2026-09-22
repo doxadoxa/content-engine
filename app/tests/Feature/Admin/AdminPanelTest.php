@@ -483,6 +483,61 @@ final class AdminPanelTest extends TestCase
     }
 
     #[Test]
+    public function every_screen_the_panel_navigates_to_opens_for_an_administrator(): void
+    {
+        // `AdminTabs` sends an administrator to these four addresses, so all
+        // four have to answer. That is the whole of what this asserts: the tab
+        // row itself is React, and nothing in this suite renders React — there
+        // is no SSR and no JavaScript test runner, so deleting the tabs from a
+        // page leaves every test here passing. The route side is held by the
+        // type checker instead, because the tabs' hrefs come from the
+        // Wayfinder helpers generated from `routes/admin.php`.
+        //
+        // `/admin/users` had no render coverage at all before this.
+        foreach ([
+            '/admin' => 'admin/overview',
+            '/admin/projects' => 'admin/projects',
+            '/admin/users' => 'admin/users',
+            '/admin/subscriptions' => 'admin/subscriptions',
+        ] as $path => $component) {
+            $this->actingAs($this->admin)
+                ->get($path)
+                ->assertOk()
+                ->assertInertia(fn (AssertableInertia $page) => $page->component($component));
+        }
+    }
+
+    #[Test]
+    public function the_panel_opens_on_a_deployment_that_has_no_projects_at_all(): void
+    {
+        // The state production is actually in, which nothing else here covers
+        // — every other test in this file runs with a project and a
+        // subscription already made in `setUp`. What it proves is that the
+        // panel answers rather than divides by zero somewhere on the way. The
+        // empty-state rows written for this case are React and are not
+        // rendered here; `margins` being empty is the prop they key off.
+        ProjectSubscription::query()->delete();
+        Project::query()->delete();
+
+        $this->actingAs($this->admin)
+            ->get('/admin')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('admin/overview')
+                ->where('counts.projects', 0)
+                ->where('margins', [])
+            );
+
+        $this->actingAs($this->admin)
+            ->get('/admin/projects')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('admin/projects')
+                ->where('projects.data', [])
+            );
+    }
+
+    #[Test]
     public function horizon_is_opened_by_the_same_flag_as_the_panel(): void
     {
         // The email allow-list was a bootstrap mechanism, never a permission

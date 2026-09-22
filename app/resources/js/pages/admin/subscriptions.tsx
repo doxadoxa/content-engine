@@ -1,5 +1,6 @@
 import { Form, Head, Link, router } from '@inertiajs/react';
 import { AlertTriangle } from 'lucide-react';
+import { AdminTabs } from '@/components/admin-tabs';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -81,6 +82,8 @@ export default function AdminSubscriptions({
                     description="What we believe, beside what Stripe last told us."
                 />
 
+                <AdminTabs current="subscriptions" />
+
                 <div className="flex flex-wrap gap-2">
                     <FilterLink current={status} value="" label="All" />
                     {statuses.map((option) => (
@@ -110,6 +113,47 @@ export default function AdminSubscriptions({
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
+                                    {subscriptions.data.length === 0 && (
+                                        <TableRow>
+                                            <TableCell
+                                                colSpan={6}
+                                                className="h-28 text-center text-muted-foreground"
+                                            >
+                                                {/*
+                                                 * An empty page is not an empty table. Paging past
+                                                 * the last page — after somebody else removed rows,
+                                                 * or on a stale back button — also arrives here, and
+                                                 * `Pagination` renders nothing once there is only one
+                                                 * page left, so saying "none yet" would strand a
+                                                 * reader on a deployment that is full.
+                                                 */}
+                                                {subscriptions.total === 0 ? (
+                                                    status === '' ? (
+                                                        'No subscriptions yet.'
+                                                    ) : (
+                                                        'No subscription has that status.'
+                                                    )
+                                                ) : (
+                                                    <>
+                                                        Nothing on this page.{' '}
+                                                        <Link
+                                                            href={subscriptionsRoute(
+                                                                {
+                                                                    query: {
+                                                                        status,
+                                                                    },
+                                                                },
+                                                            )}
+                                                            className="underline underline-offset-4"
+                                                        >
+                                                            Back to the first
+                                                            page
+                                                        </Link>
+                                                    </>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
                                     {subscriptions.data.map((row) => (
                                         <TableRow key={row.id}>
                                             <TableCell>

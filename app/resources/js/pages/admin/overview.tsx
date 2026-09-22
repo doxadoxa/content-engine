@@ -1,5 +1,6 @@
 import { Head, Link } from '@inertiajs/react';
 import { AlertTriangle, Coins, TrendingUp, Users } from 'lucide-react';
+import { AdminTabs } from '@/components/admin-tabs';
 import { Badge } from '@/components/ui/badge';
 import {
     Card,
@@ -102,6 +103,8 @@ export default function AdminOverview({
                     description="What every project is paying, and what every project is costing."
                 />
 
+                <AdminTabs current="overview" />
+
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <Stat
                         icon={Coins}
@@ -183,6 +186,17 @@ export default function AdminOverview({
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
+                                    {margins.length === 0 && (
+                                        <TableRow>
+                                            <TableCell
+                                                colSpan={5}
+                                                className="h-28 text-center text-muted-foreground"
+                                            >
+                                                No project has a subscription
+                                                yet.
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
                                     {margins.map((row) => {
                                         const rowCost =
                                             row.cost_micros / 10_000;
