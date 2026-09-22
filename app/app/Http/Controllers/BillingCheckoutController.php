@@ -89,19 +89,30 @@ class BillingCheckoutController extends Controller
         $payer = $subscription?->payer;
 
         if ($subscription?->stripe_id !== null) {
-            $renewal = $this->changes->atRenewal($subscription, $plan);
-            if ($renewal && ! $request->boolean('acknowledge_downgrade')) {
+            // Refused before taking the lock too, so an unconfirmed downgrade
+            // never waits on one. The decision itself is made again under the
+            // lock: this copy of the subscription is already stale by the time
+            // the lock is granted, and a concurrent change between the two
+            // would otherwise pick the wrong branch — an unconfirmed downgrade
+            // applied at once, or a schedule for a plan nobody is on any more.
+            if ($this->changes->atRenewal($subscription, $plan) && ! $request->boolean('acknowledge_downgrade')) {
                 throw ValidationException::withMessages(['plan' => 'Review the renewal date and scheduled articles, then confirm the lower allowance.']);
             }
             $lock = Cache::lock('billing-plan-change:'.$project->getKey(), 60);
             if (! $lock->get()) {
                 return back()->with('billing', ['code' => 'plan_change_busy', 'message' => 'A plan change is already being confirmed. Refresh in a moment.', 'metric' => null]);
             }
+            $renewal = false;
             try {
                 $subscription->refresh();
                 if ($subscription->plan === $plan->key && $subscription->plan_version === $plan->version && $subscription->pending_plan === null) {
                     return back();
                 }
+                $renewal = $this->changes->atRenewal($subscription, $plan);
+                if ($renewal && ! $request->boolean('acknowledge_downgrade')) {
+                    throw ValidationException::withMessages(['plan' => 'Review the renewal date and scheduled articles, then confirm the lower allowance.']);
+                }
+                $payer = $subscription->payer;
                 if (! $payer instanceof User) {
                     throw new \RuntimeException('The recorded billing owner is unavailable.');
                 }
@@ -113,6 +124,10 @@ class BillingCheckoutController extends Controller
                 } elseif (! $this->provider->changePlan($payer, $project, $plan)) {
                     throw new \RuntimeException('The provider could not confirm the change.');
                 }
+            } catch (ValidationException $e) {
+                // The downgrade confirmation is an answer the person still has
+                // to give, not a provider failure to report as one.
+                throw $e;
             } catch (Throwable $e) {
                 report($e);
 

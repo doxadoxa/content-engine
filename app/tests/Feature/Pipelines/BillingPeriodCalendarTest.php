@@ -21,6 +21,7 @@ use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
+use App\Models\User;
 use App\Pipelines\Core\PipelineRunner;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Steps\Planning\PlanningWindow;
@@ -294,6 +295,25 @@ final class BillingPeriodCalendarTest extends TestCase
         $this->assertSame(0, (int) $run->steps()->sum('cost_micros'));
         $this->expectException(ValidationException::class);
         app(PipelineRunner::class)->start('generation', $project, [], $item->id);
+    }
+
+    public function test_articles_asked_for_by_hand_take_separate_slots(): void
+    {
+        $project = $this->project('growth');
+        $owner = User::factory()->create();
+        $owner->projects()->attach($project, ['role' => 'owner']);
+        $this->actingAs($owner)->withSession(['project_id' => $project->id]);
+
+        foreach (['how often to deep clean a rented flat', 'what a move out clean includes'] as $prompt) {
+            $this->post('/content/articles', ['prompt' => $prompt])->assertRedirect();
+        }
+
+        // Two requests, two instants. Landing both on tomorrow morning is what
+        // made `publish:approved` send them out together.
+        $at = ArticleSchedule::acrossProjects()->where('project_id', $project->id)
+            ->orderBy('publish_at')->pluck('publish_at')->map(fn ($value): string => Carbon::parse($value)->toIso8601String())->all();
+        $this->assertCount(2, $at);
+        $this->assertNotSame($at[0], $at[1]);
     }
 
     private function project(string $plan = 'starter', string $start = '2026-09-29T12:00:00Z', string $end = '2026-10-29T12:00:00Z', string $timezone = 'Europe/Lisbon'): Project

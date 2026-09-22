@@ -32,7 +32,9 @@ final class NativePageController extends Controller
         $zip = new ZipArchive;
         try {
             abort_unless($zip->open($path, ZipArchive::OVERWRITE) === true, 503, 'The plugin download could not be prepared.');
-            foreach (['avyo-receiver.php', 'receiver.php'] as $file) {
+            // Every file the plugin bootstrap requires, or activation fatals
+            // on the missing include. Keep in step with packages/wordpress-receiver/package.sh.
+            foreach (['avyo-receiver.php', 'receiver.php', 'articles.php'] as $file) {
                 abort_unless($zip->addFile(base_path('packages/wordpress-receiver/plugin/'.$file), 'avyo-receiver/'.$file), 503);
             }
             abort_unless($zip->close(), 503);

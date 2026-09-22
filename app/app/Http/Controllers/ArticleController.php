@@ -81,6 +81,10 @@ class ArticleController extends Controller
                 if (ArticleWorkflow::capacity($project) === 0) {
                     throw ValidationException::withMessages(['prompt' => 'Your calendar already contains this period’s article allowance.']);
                 }
+                $slot = ArticleWorkflow::nextOpenSlot($project);
+                if ($slot === null) {
+                    throw ValidationException::withMessages(['prompt' => 'Every publication slot left in this period is taken. Move or cancel a scheduled article to make room.']);
+                }
                 $item = ContentItem::query()->create([
                     'locale' => $project->default_locale,
                     // The planner picks a shape per topic from the research; a typed
@@ -93,7 +97,7 @@ class ArticleController extends Controller
                     'title' => $title,
                     'target_query' => $query,
                 ]);
-                app(ArticleSchedules::class)->scheduleNew($item, Carbon::tomorrow($project->timezone)->setTime(9, 0));
+                app(ArticleSchedules::class)->scheduleNew($item, $slot);
                 $this->runner->start('generation', $project, [], $item->getKey());
 
                 return $item;

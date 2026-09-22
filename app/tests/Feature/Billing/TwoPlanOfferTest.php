@@ -242,6 +242,25 @@ final class TwoPlanOfferTest extends TestCase
         $this->assertSame(10, app(Entitlements::class)->for($project)->used(Metric::Articles));
     }
 
+    public function test_a_landed_scheduled_change_releases_the_schedule_it_no_longer_needs(): void
+    {
+        [$project] = $this->project('growth');
+        $subscription = ProjectSubscription::query()->where('project_id', $project->id)->firstOrFail();
+        $subscription->fill(['pending_plan' => 'starter', 'pending_plan_version' => 4, 'pending_plan_at' => $subscription->period_ends_at, 'stripe_schedule_id' => 'sched_test'])->save();
+        // Stripe reports the new price at the renewal, and still names the
+        // schedule: its final phase has a month left to run. Nothing is pending
+        // any more, so the subscription must not stay schedule-managed for it.
+        app(StripeWebhook::class)->handle(['id' => 'evt_landed', 'type' => 'customer.subscription.updated', 'data' => ['object' => [
+            'id' => 'sub_test', 'customer' => 'cus_test', 'status' => 'active', 'schedule' => 'sched_test',
+            'current_period_start' => $subscription->period_ends_at->getTimestamp(),
+            'current_period_end' => $subscription->period_ends_at->copy()->addMonth()->getTimestamp(),
+            'metadata' => ['project_id' => $project->id, 'plan' => 'starter', 'plan_version' => '4'],
+        ]]]);
+        $this->assertSame('starter', $subscription->refresh()->plan);
+        $this->assertNull($subscription->pending_plan);
+        $this->assertContains($project->id, $this->provider()->canceledChanges);
+    }
+
     private function provider(): FakeBillingProvider
     {
         $provider = app(BillingProvider::class);

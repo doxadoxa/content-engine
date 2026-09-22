@@ -16,6 +16,7 @@ use App\Models\Project;
 use App\Pipelines\Steps\Planning\PlanningWindow;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 final class ArticleWorkflow
 {
@@ -82,6 +83,35 @@ final class ArticleWorkflow
         }
 
         return $open;
+    }
+
+    /**
+     * Where a single article asked for by hand should go.
+     *
+     * Not "tomorrow at nine", which is what asking twice used to mean: both
+     * articles landed on the same instant, and `publish:approved` sent them
+     * out together — the burst the pacing exists to prevent. The planner
+     * already answers this question with {@see openSlots()}, so it is asked
+     * rather than answered a second time here.
+     *
+     * Null when the period is full. A caller must refuse rather than stack
+     * another article onto a slot that is already taken.
+     */
+    public static function nextOpenSlot(Project $project): ?Carbon
+    {
+        try {
+            $window = PlanningWindow::forProject($project);
+        } catch (ValidationException) {
+            // No confirmed billing period to pace across. Older plans have no
+            // slots of their own, so they keep the fixed morning they had.
+            return Carbon::tomorrow($project->timezone)->setTime(9, 0);
+        }
+
+        if ($window->periodStart === null) {
+            return Carbon::tomorrow($project->timezone)->setTime(9, 0);
+        }
+
+        return self::openSlots($project, $window)[0] ?? null;
     }
 
     /** Remaining first approvals, less work already being prepared for them. */

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Billing;
 
+use App\Billing\Contracts\BillingProvider;
 use App\Enums\BillingStatus;
 use App\Enums\OnboardingStatus;
 use App\Models\PipelineRun;
@@ -16,6 +17,7 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * What Stripe tells us, turned into what this application already understands.
@@ -37,7 +39,7 @@ use Illuminate\Support\Facades\Log;
  */
 class StripeWebhook
 {
-    public function __construct(private readonly Subscriptions $subscriptions) {}
+    public function __construct(private readonly Subscriptions $subscriptions, private readonly BillingProvider $provider) {}
 
     /**
      * @param  array<string, mixed>  $payload
@@ -247,6 +249,12 @@ class StripeWebhook
 
         if ($subscription->pending_plan === $plan->key && $subscription->pending_plan_version === $plan->version) {
             $subscription->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null])->save();
+            // The scheduled change has landed, so the schedule has no work
+            // left — but `release` only fires at the end of its final phase, a
+            // month away, and until then Stripe treats the subscription as
+            // schedule-managed and refuses portal plan changes against it.
+            // Released here instead, once there is nothing pending to protect.
+            $this->releaseSettledSchedule($project, $subscription);
         }
 
         if (array_key_exists('schedule', $object)) {
@@ -266,6 +274,34 @@ class StripeWebhook
         $this->settle($project, $status);
 
         return $outcome;
+    }
+
+    /**
+     * Let go of a schedule whose change has already taken effect.
+     *
+     * After the commit, and never fatal: this runs inside the event's claim
+     * transaction, and a provider call there would hold it open across the
+     * network — while a release that fails is a tidying step to repeat, not a
+     * reason to hand Stripe a 500 and have the whole event redelivered.
+     */
+    private function releaseSettledSchedule(Project $project, ProjectSubscription $subscription): void
+    {
+        $payer = $subscription->payer;
+
+        if ($subscription->stripe_schedule_id === null || ! $payer instanceof User) {
+            return;
+        }
+
+        DB::afterCommit(function () use ($project, $payer): void {
+            try {
+                $this->provider->cancelPlanChange($payer, $project);
+            } catch (Throwable $e) {
+                Log::warning('Could not release a settled billing schedule', [
+                    'project' => $project->getKey(),
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
     }
 
     private function changeWithinPeriod(Project $project, Plan $plan): string

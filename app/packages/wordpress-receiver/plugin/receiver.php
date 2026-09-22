@@ -45,7 +45,17 @@ final class Avyo_Receiver
     public static function permission($request)
     {
         if (! is_ssl() && ! in_array(wp_get_environment_type(), ['local', 'development'], true)) {
-            return self::error('avyo_https_required', 'Use HTTPS for this connection.', 403);
+            // A forwarded header is a diagnosis, never a permission: anyone can
+            // send one, and trusting it here would hand every plaintext request
+            // the answer it asked for. WordPress only learns the real scheme
+            // once wp-config sets HTTPS from the proxy's header, so a site
+            // behind one is told exactly that instead of being left to guess.
+            $forwarded = isset($_SERVER['HTTP_X_FORWARDED_PROTO'])
+                && strtolower(explode(',', (string) $_SERVER['HTTP_X_FORWARDED_PROTO'])[0]) === 'https';
+
+            return self::error('avyo_https_required', $forwarded
+                ? 'This request arrived over HTTPS at a proxy, but WordPress still sees it as plain HTTP. Set $_SERVER[\'HTTPS\'] = \'on\' from HTTP_X_FORWARDED_PROTO in wp-config.php, above the wp-settings.php require.'
+                : 'Use HTTPS for this connection.', 403);
         }
         $post = get_post((int) $request['id']);
         if (! is_user_logged_in() || ! $post || ! current_user_can('edit_post', $post->ID)) {
@@ -250,6 +260,13 @@ final class Avyo_Receiver
         if (! self::transactional()) {
             return self::error('avyo_storage_unsupported', 'InnoDB is required before changes can be accepted.', 422);
         }
+        // The transaction covers this site's own rows: a refused result leaves
+        // the post, its metadata and its terms exactly as they were. What it
+        // cannot take back is what other plugins do on `save_post` while the
+        // write is still uncommitted — a cache purge, a sitemap rebuild, an
+        // outgoing webhook. Those observe a change that then reverts, which is
+        // why the contract below requires the public page to be fetched rather
+        // than the API's answer to be believed.
         self::statement('START TRANSACTION');
         try {
             // Core WordPress edits acquire this same row lock when they write.

@@ -394,8 +394,21 @@ final class NativePagePublicationTest extends TestCase
         $file = $response->baseResponse->getFile()->getPathname();
         $zip = new \ZipArchive;
         $this->assertTrue($zip->open($file));
-        $this->assertSame(2, $zip->numFiles);
-        $this->assertSame(file_get_contents(base_path('packages/wordpress-receiver/plugin/receiver.php')), $zip->getFromName('avyo-receiver/receiver.php'));
+        // Every file the bootstrap includes, read from the bootstrap itself: a
+        // download missing one activates into a fatal on the missing require,
+        // and a count written out by hand here would not notice a new include.
+        $bootstrap = (string) file_get_contents(base_path('packages/wordpress-receiver/plugin/avyo-receiver.php'));
+        preg_match_all("/require_once __DIR__\\.'\\/([^']+)'/", $bootstrap, $matches);
+        $required = ['avyo-receiver.php', ...$matches[1]];
+        $this->assertContains('articles.php', $required);
+        $this->assertSame(count($required), $zip->numFiles);
+        foreach ($required as $name) {
+            $this->assertSame(
+                file_get_contents(base_path('packages/wordpress-receiver/plugin/'.$name)),
+                $zip->getFromName('avyo-receiver/'.$name),
+                "The download is missing {$name}, which the plugin bootstrap requires.",
+            );
+        }
         $zip->close();
         unlink($file);
     }

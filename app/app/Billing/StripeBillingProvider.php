@@ -173,14 +173,21 @@ class StripeBillingProvider implements BillingProvider
         if ($remoteSchedule === null && ($local->stripe_schedule_generation === null || $local->stripe_schedule_id !== null)) {
             $local->fill(['stripe_schedule_generation' => (string) Str::ulid(), 'stripe_schedule_id' => null])->save();
         }
+        // Held here rather than read back off the row afterwards. A
+        // `customer.subscription.updated` carrying `schedule: null` can land
+        // while the create below is in flight, and the webhook clears the
+        // generation when it does — leaving a schedule whose only proof of
+        // ownership, its idempotency key, no longer exists. Writing the pair
+        // back together restores it.
+        $generation = (string) $local->stripe_schedule_generation;
         $schedule = $remoteSchedule !== null
             ? SubscriptionSchedule::retrieve($remoteSchedule, $options)
             : SubscriptionSchedule::create(['from_subscription' => $remote->id], [
-                ...$options, 'idempotency_key' => 'avyo-schedule-'.$local->stripe_schedule_generation,
+                ...$options, 'idempotency_key' => 'avyo-schedule-'.$generation,
             ]);
         // Persist the provider identity before configuring its phases. A timeout
         // can then be retried against the same schedule, never a second subscription.
-        $local->fill(['stripe_schedule_id' => $schedule->id])->save();
+        $local->forceFill(['stripe_schedule_id' => $schedule->id, 'stripe_schedule_generation' => $generation])->save();
         $phases = $schedule->phases;
         $current = null;
         foreach ($phases as $phase) {
