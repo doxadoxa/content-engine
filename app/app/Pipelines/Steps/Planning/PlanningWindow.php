@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Planning;
 
+use App\Billing\Entitlements;
+use App\Enums\BillingStatus;
+use App\Models\ArticlePlanningPeriod;
+use App\Models\Project;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The stretch of days a plan covers.
@@ -32,6 +37,10 @@ final readonly class PlanningWindow
         public Carbon $month,
         public Carbon $start,
         public Carbon $end,
+        public ?Carbon $periodStart = null,
+        public ?Carbon $periodEnd = null,
+        public ?int $articleLimit = null,
+        public ?int $pacingLimit = null,
     ) {}
 
     /**
@@ -66,6 +75,95 @@ final readonly class PlanningWindow
         $next = $tomorrow->copy()->addMonth()->startOfMonth();
 
         return new self(month: $next->copy(), start: $next->copy(), end: $next->copy()->endOfMonth());
+    }
+
+    /** V4 uses confirmed billing instants; calendar months are only display buckets. */
+    public static function forProject(Project $project, ?string $requested = null, ?string $expectedPeriod = null): self
+    {
+        $entitlements = app(Entitlements::class);
+        $entitlements->forget($project);
+        $entitlement = $entitlements->for($project);
+        $subscription = $entitlement->subscription;
+        if (($subscription->plan_version ?? 0) < 4) {
+            return self::resolve($requested);
+        }
+        $period = $subscription->period_started_at === null ? null : ArticlePlanningPeriod::acrossProjects()->where('project_id', $project->id)
+            ->where('period_started_at', $subscription->period_started_at->copy()->utc())->first();
+        $timezone = $period->timezone ?? $project->timezone;
+        $start = $subscription->period_started_at?->copy()->setTimezone($timezone);
+        $end = ($subscription->status === BillingStatus::Trialing ? $subscription->trial_ends_at : $subscription->period_ends_at)?->copy()->setTimezone($timezone);
+        $now = Carbon::now($timezone);
+        if ($start === null || $end === null || $start->greaterThan($now) || $end->lessThanOrEqualTo($now) || $end->lessThanOrEqualTo($start)
+            || ($expectedPeriod !== null && ! $start->equalTo(Carbon::parse($expectedPeriod)))) {
+            throw ValidationException::withMessages(['planning' => 'A current confirmed billing period is required before planning articles.']);
+        }
+        if ($requested !== null) {
+            $month = Carbon::parse($requested, $timezone)->startOfMonth();
+            if ($month->greaterThanOrEqualTo($end) || $month->copy()->addMonth()->lessThanOrEqualTo($start)) {
+                throw ValidationException::withMessages(['planning' => 'Only the current confirmed billing period can be planned.']);
+            }
+        }
+
+        $limit = $entitlement->limit('articles');
+        $defaultCadence = $entitlement->plan?->weeklyTarget() ?? 7;
+        $days = $start->copy()->startOfDay()->diffInDays($end->copy()->startOfDay());
+        $paced = $project->weekly_target >= $defaultCadence ? $limit
+            : min($limit ?? PHP_INT_MAX, max(1, (int) round($project->weekly_target * $days / 7)));
+
+        return new self($start->copy()->startOfMonth(), $start->copy()->addDay()->startOfDay(), $end->copy(), $start, $end, $limit, $paced);
+    }
+
+    /** @return array<string, string> */
+    public function input(): array
+    {
+        return ['month' => $this->month->toDateString(), ...($this->periodStart === null ? [] : ['article_period_started_at' => $this->periodStart->toIso8601String()])];
+    }
+
+    /**
+     * Fixed allowance spread across the actual period, with at most two slots
+     * per local day (30 articles must also fit a 28-day billing period).
+     * Elapsed slots are not moved into a catch-up burst.
+     *
+     * @return list<Carbon>
+     */
+    public function publicationSlots(): array
+    {
+        if ($this->periodStart === null || $this->periodEnd === null || ($this->pacingLimit ?? 0) <= 0) {
+            return [];
+        }
+        $morning = [];
+        $afternoon = [];
+        for ($day = $this->start->copy(); $day->lessThan($this->periodEnd); $day->addDay()) {
+            $at = $day->copy()->setTime(9, 0);
+            if ($at->lessThan($this->periodEnd)) {
+                $morning[] = $at;
+            }
+            $at = $day->copy()->setTime(15, 0);
+            if ($at->lessThan($this->periodEnd)) {
+                $afternoon[] = $at;
+            }
+        }
+        $count = min($this->pacingLimit, count($morning) + count($afternoon));
+        $slots = self::spread($morning, min($count, count($morning)));
+        $slots = [...$slots, ...self::spread($afternoon, max(0, $count - count($morning)))];
+        usort($slots, fn (Carbon $a, Carbon $b): int => $a->getTimestamp() <=> $b->getTimestamp());
+        $tomorrow = Carbon::tomorrow($this->periodStart->getTimezone());
+
+        return array_values(array_filter($slots, fn (Carbon $slot): bool => $slot->greaterThanOrEqualTo($tomorrow)));
+    }
+
+    /**
+     * @param  list<Carbon>  $slots
+     * @return list<Carbon>
+     */
+    public static function spread(array $slots, int $count): array
+    {
+        $out = [];
+        for ($i = 0; $i < min($count, count($slots)); $i++) {
+            $out[] = $slots[(int) floor($i * count($slots) / $count)];
+        }
+
+        return $out;
     }
 
     /** Days the window covers, both ends included. */

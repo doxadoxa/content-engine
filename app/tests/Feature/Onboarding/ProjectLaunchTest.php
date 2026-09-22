@@ -90,6 +90,7 @@ final class ProjectLaunchTest extends TestCase
 
         $project = Project::factory()->onboarding()->create();
         app(ProjectLaunch::class)->begin($project);
+        $this->researchedIdea($project);
 
         // Through the event rather than by calling advance() directly, which is
         // the whole point: every other test here reaches past the wiring, and
@@ -113,6 +114,7 @@ final class ProjectLaunchTest extends TestCase
         $project = Project::factory()->onboarding()->create();
         $launch = app(ProjectLaunch::class);
         $launch->begin($project);
+        $this->researchedIdea($project);
 
         $launch->advance($this->finished($project, 'research'));
 
@@ -129,35 +131,50 @@ final class ProjectLaunchTest extends TestCase
 
         $project = Project::factory()->onboarding()->create();
 
-        app(CurrentProject::class)->run($project, function () use ($project): void {
-            ContentItem::factory()->count(5)->create([
-                'state' => ContentItemState::Idea,
-                'locale' => $project->default_locale,
-                'content_plan_id' => null,
-                'scheduled_for' => now()->addDays(1),
-            ]);
-        });
-
-        // Ideas that are not on a plan are not launch material: the chain
-        // drafts what the planner scheduled, not everything ever researched.
-        $this->assertSame(0, $this->generationRuns());
-
-        app(CurrentProject::class)->run($project, function () use ($project): void {
-            $plan = $project->contentPlans()->create([
-                'month' => now()->startOfMonth(),
-            ]);
-
-            ContentItem::query()->update(['content_plan_id' => $plan->getKey()]);
-        });
-
         $launch = app(ProjectLaunch::class);
         $launch->begin($project);
-        $launch->advance($this->finished($project, 'planning'));
+
+        $planId = '';
+        $plannedIds = [];
+        $unplannedId = '';
+        app(CurrentProject::class)->run($project, function () use ($project, &$planId, &$plannedIds, &$unplannedId): void {
+            // `begin()` also starts the optional Studio proposal, which owns
+            // this calendar's plan. Reuse that plan so the test mirrors the
+            // single monthly plan the launch flow keeps in production.
+            $plan = ContentPlan::query()->firstOrCreate([
+                'month' => now()->startOfMonth(),
+            ]);
+            $planId = $plan->getKey();
+
+            $plannedIds = ContentItem::factory()->count(5)->create([
+                'state' => ContentItemState::Idea,
+                'locale' => $project->default_locale,
+                'content_plan_id' => $plan->getKey(),
+                'scheduled_for' => now()->addDays(1),
+            ])->pluck('id')->all();
+
+            $unplannedId = ContentItem::factory()->create([
+                'state' => ContentItemState::Idea,
+                'locale' => $project->default_locale,
+                'scheduled_for' => now()->addDays(1),
+            ])->getKey();
+        });
+
+        // Planned ideas are the launch material. The planner must never be
+        // invoked with already-scheduled unplanned ideas, because its capacity
+        // guard correctly reads those dates as a full calendar.
+        $this->assertSame(0, $this->generationRuns());
+        $finished = $this->finished($project, 'planning');
+        $finished->forceFill(['context' => ['planning.plan_id' => $planId]])->save();
+        $launch->advance($finished);
 
         // Three, not five: enough that the dashboard has something real inside
         // the hour, not so many that an unopened project spends a month's
         // budget before anybody looks at it.
         $this->assertSame(3, $this->generationRuns());
+        $draftedIds = PipelineRun::acrossProjects()->where('pipeline', 'generation')->pluck('content_item_id')->all();
+        $this->assertEmpty(array_diff($draftedIds, $plannedIds));
+        $this->assertNotContains($unplannedId, $draftedIds);
     }
 
     #[Test]
@@ -356,12 +373,22 @@ final class ProjectLaunchTest extends TestCase
         return PipelineRun::acrossProjects()->where('pipeline', 'generation')->count();
     }
 
+    private function researchedIdea(Project $project): void
+    {
+        app(CurrentProject::class)->run($project, fn (): ContentItem => ContentItem::factory()->create([
+            'state' => ContentItemState::Idea, 'content_plan_id' => null,
+        ]));
+    }
+
     private function finished(Project $project, string $pipeline): PipelineRun
     {
-        return app(CurrentProject::class)->run($project, fn (): PipelineRun => PipelineRun::query()->create([
-            'pipeline' => $pipeline,
-            'status' => PipelineRunStatus::Completed,
-            'finished_at' => now(),
-        ]));
+        return app(CurrentProject::class)->run($project, function () use ($pipeline): PipelineRun {
+            $run = PipelineRun::query()->where('pipeline', $pipeline)
+                ->whereIn('status', [PipelineRunStatus::Pending, PipelineRunStatus::Running])->first()
+                ?? new PipelineRun(['pipeline' => $pipeline]);
+            $run->forceFill(['status' => PipelineRunStatus::Completed, 'finished_at' => now()])->save();
+
+            return $run;
+        });
     }
 }

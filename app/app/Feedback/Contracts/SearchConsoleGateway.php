@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Feedback\Contracts;
 
 use App\Feedback\BrandDemand;
+use App\Feedback\Measurements\ReadResult;
 use App\Feedback\UnitMetrics;
 use App\Models\Project;
 use Illuminate\Support\Carbon;
@@ -23,6 +24,9 @@ use Illuminate\Support\Carbon;
  */
 interface SearchConsoleGateway
 {
+    /** @param list<string> $urls */
+    public function pageReport(Project $project, array $urls, Carbon $from, Carbon $to, bool $queries = false): ReadResult;
+
     public function name(): string;
 
     /** Whether this project has somewhere to read from. */

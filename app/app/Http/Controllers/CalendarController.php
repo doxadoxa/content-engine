@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\ArticleSchedule;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
+use App\Models\PipelineRun;
 use App\Support\Content\ContentItemProps;
+use App\Support\Content\ManagerContent;
+use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -22,8 +26,9 @@ use Inertia\Response;
  */
 class CalendarController extends Controller
 {
-    public function __invoke(Request $request): Response
+    public function __invoke(Request $request, CurrentProject $current): Response
     {
+        $timezone = $current->get()->timezone ?? 'UTC';
         $requested = $request->query('month');
 
         if ($requested !== null) {
@@ -38,13 +43,17 @@ class CalendarController extends Controller
         }
 
         $month = isset($parsed)
-            ? Carbon::instance($parsed)->startOfMonth()
-            : $this->monthWorthOpening();
+            ? Carbon::parse($parsed->format('Y-m-d'), $timezone)->startOfMonth()
+            : $this->monthWorthOpening($timezone);
+        $from = $month->copy()->utc();
+        $until = $month->copy()->addMonth()->utc();
 
         $units = ContentItem::query()
             ->roots()
-            ->with(['localeVariants', 'derivatives'])
-            ->whereBetween('scheduled_for', [$month->toDateString(), $month->copy()->endOfMonth()->toDateString()])
+            ->with(['localeVariants', 'derivatives', 'articleSchedule.delivery', 'project.channels'])
+            ->where(fn ($query) => $query
+                ->whereHas('articleSchedule', fn ($schedule) => $schedule->where('status', '!=', 'canceled')->where('publish_at', '>=', $from)->where('publish_at', '<', $until))
+                ->orWhere(fn ($planned) => $planned->whereDoesntHave('articleSchedule')->whereBetween('scheduled_for', [$month->toDateString(), $month->copy()->endOfMonth()->toDateString()])))
             ->orderBy('scheduled_for')
             ->get();
 
@@ -52,6 +61,10 @@ class CalendarController extends Controller
 
         return Inertia::render('calendar/index', [
             'month' => $month->toDateString(),
+            'timezone' => $current->get()->timezone ?? 'UTC',
+            'mode' => $current->get()?->autopublish ? 'automatic' : 'review_first',
+            'article_workflow' => $current->get() === null ? null : ManagerContent::workflow($current->get()),
+            'planning' => PipelineRun::query()->inFlight()->whereIn('pipeline', ['research', 'planning'])->exists(),
             'label' => $month->format('F Y'),
             'previous' => $month->copy()->subMonth()->toDateString(),
             'next' => $month->copy()->addMonth()->toDateString(),
@@ -69,15 +82,16 @@ class CalendarController extends Controller
             // publishing in three languages showed every article three times.
             // The card already carries a "3 langs" badge; it was being drawn on
             // each of the three.
-            'units' => $this->oneCardPerTopic($units),
+            'units' => $this->oneCardPerTopic($units, $timezone),
             'unscheduled' => ContentItem::query()
                 ->roots()
-                ->whereNull('scheduled_for')
-                ->with(['localeVariants', 'derivatives'])
+                ->where(fn ($query) => $query->where(fn ($unscheduled) => $unscheduled->whereDoesntHave('articleSchedule')->whereNull('scheduled_for'))->orWhereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'canceled')))
+                ->whereNotIn('state', ['published', 'refreshing'])
+                ->with(['localeVariants', 'derivatives', 'articleSchedule.delivery', 'project.channels'])
                 ->orderByDesc('topic_volume')
                 ->limit(25)
                 ->get()
-                ->map(fn (ContentItem $item): array => ContentItemProps::summary($item))
+                ->map(fn (ContentItem $item): array => [...ContentItemProps::summary($item), 'calendar_date' => null])
                 ->all(),
         ]);
     }
@@ -90,12 +104,15 @@ class CalendarController extends Controller
      * default lands on an empty grid — which reads as an engine that produced
      * nothing, next to a Content list that plainly has four articles in it.
      */
-    private function monthWorthOpening(): Carbon
+    private function monthWorthOpening(string $timezone): Carbon
     {
-        $thisMonth = Carbon::now()->startOfMonth();
+        $thisMonth = Carbon::now($timezone)->startOfMonth();
+        if (ArticleSchedule::query()->where('status', '!=', 'canceled')->where('publish_at', '>=', $thisMonth->copy()->utc())->where('publish_at', '<', $thisMonth->copy()->addMonth()->utc())->exists()) {
+            return $thisMonth;
+        }
 
         $hasThisMonth = ContentItem::query()
-            ->roots()
+            ->roots()->whereDoesntHave('articleSchedule')
             ->whereBetween('scheduled_for', [
                 $thisMonth->toDateString(),
                 $thisMonth->copy()->endOfMonth()->toDateString(),
@@ -107,15 +124,17 @@ class CalendarController extends Controller
         }
 
         $next = ContentItem::query()
-            ->roots()
+            ->roots()->whereDoesntHave('articleSchedule')
             ->whereNotNull('scheduled_for')
             ->where('scheduled_for', '>=', $thisMonth->toDateString())
             ->orderBy('scheduled_for')
             ->value('scheduled_for');
 
-        return $next === null
-            ? $thisMonth
-            : Carbon::parse((string) $next)->startOfMonth();
+        $scheduled = ArticleSchedule::query()->where('status', '!=', 'canceled')->where('publish_at', '>=', $thisMonth->copy()->utc())->orderBy('publish_at')->value('publish_at');
+        $scheduledDate = $scheduled === null ? null : Carbon::parse((string) $scheduled, 'UTC')->setTimezone($timezone)->toDateString();
+        $nextDate = collect([$next, $scheduledDate])->filter()->sort()->first();
+
+        return $nextDate === null ? $thisMonth : Carbon::parse((string) $nextDate, $timezone)->startOfMonth();
     }
 
     /**
@@ -128,16 +147,18 @@ class CalendarController extends Controller
      * @param  Collection<int, ContentItem>  $units
      * @return list<array<string, mixed>>
      */
-    private function oneCardPerTopic(Collection $units): array
+    private function oneCardPerTopic(Collection $units, string $timezone): array
     {
         $grouped = $units
-            ->groupBy(fn (ContentItem $item): string => (string) ($item->locale_group_id ?? $item->getKey()))
-            ->map(function (Collection $group): array {
+            ->sortBy(fn (ContentItem $item): string => $item->articleSchedule?->publish_at->setTimezone($timezone)->format('Y-m-d H:i') ?? $item->scheduled_for?->toDateString() ?? '')
+            ->groupBy(fn (ContentItem $item): string => (string) ($item->locale_group_id ?? $item->getKey()).'|'.($item->articleSchedule?->publish_at->setTimezone($timezone)->toDateString() ?? $item->scheduled_for?->toDateString() ?? ''))
+            ->map(function (Collection $group) use ($timezone): array {
                 /** @var ContentItem $lead */
                 $lead = $group->sortBy('created_at')->first();
 
                 return [
                     ...ContentItemProps::summary($lead),
+                    'calendar_date' => $lead->articleSchedule?->publish_at->setTimezone($timezone)->toDateString() ?? $lead->scheduled_for?->toDateString(),
                     'locales' => $group->pluck('locale')->unique()->sort()->values()->all(),
                 ];
             })

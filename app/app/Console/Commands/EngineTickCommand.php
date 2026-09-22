@@ -6,19 +6,24 @@ namespace App\Console\Commands;
 
 use App\Billing\Entitlements;
 use App\Billing\Metric;
-use App\Content\ArticleScore;
 use App\Enums\ContentItemState;
 use App\Enums\ProjectStatus;
 use App\Media\HeroImage;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\SitePage;
 use App\Pipelines\Core\PipelineRunner;
+use App\Pipelines\Steps\Planning\PlanningWindow;
+use App\Publishing\Articles\ArticleApproval;
+use App\Support\Engine\ArticleWorkflow;
+use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
@@ -110,10 +115,9 @@ class EngineTickCommand extends Command
         {--project= : Only this project, by slug or id}
         {--dry : Say what would start, start nothing}';
 
-    protected $description = 'Start whatever each project is due: research, planning, drafting, social, publishing';
+    protected $description = 'Start due research, planning, drafting and publishing';
 
     public function __construct(
-        private readonly ArticleScore $score,
         private readonly Entitlements $entitlements,
     ) {
         parent::__construct();
@@ -166,7 +170,7 @@ class EngineTickCommand extends Command
 
             $refusal = $this->entitlements
                 ->for($project)
-                ->refusal(self::QUOTA_FOR[$work['pipeline']] ?? null);
+                ->refusal($work['pipeline'] === 'planning' && ArticleWorkflow::usesBillingPeriod($project) ? null : (self::QUOTA_FOR[$work['pipeline']] ?? null));
 
             if ($refusal !== null) {
                 // Said out loud, like the project-level skip. An engine that
@@ -186,6 +190,12 @@ class EngineTickCommand extends Command
             }
 
             try {
+                if ($work['pipeline'] === 'planning') {
+                    app(MonthPlanner::class)->start($project, $work['month'] ?? null);
+                    $started++;
+
+                    continue;
+                }
                 $runner->start(
                     $work['pipeline'],
                     $project,
@@ -222,7 +232,21 @@ class EngineTickCommand extends Command
      */
     private function due(Project $project): array
     {
+        // Work on existing pages is selected from evidence and reviewed by a
+        // person. A legacy weekly target must not create articles or rewrites.
+        if (! ArticleWorkflow::enabled($project)) {
+            return $this->dueMeasurements($project);
+        }
+
         $work = [];
+        $billingWindow = null;
+        if (ArticleWorkflow::usesBillingPeriod($project)) {
+            try {
+                $billingWindow = PlanningWindow::forProject($project);
+            } catch (ValidationException) {
+                return $this->dueMeasurements($project);
+            }
+        }
 
         // 1. Anything with a date close enough to need writing. The lead time
         //    is what gives a human room to approve before the day it is due.
@@ -238,7 +262,18 @@ class EngineTickCommand extends Command
             ->inState(ContentItemState::Idea)
             ->whereNotNull('content_plan_id')
             ->whereNotNull('scheduled_for')
-            ->where('scheduled_for', '<=', Carbon::today()->addDays(self::DRAFT_LEAD_DAYS)->toDateString())
+            ->when($billingWindow === null, fn ($query) => $query->where('scheduled_for', '<=', Carbon::today()->addDays(self::DRAFT_LEAD_DAYS)->toDateString()))
+            ->when($billingWindow !== null, function ($query) use ($project): void {
+                $from = Carbon::today($project->timezone);
+                $to = $from->copy()->addDays(self::DRAFT_LEAD_DAYS)->endOfDay();
+                $query->where(function ($due) use ($from, $to): void {
+                    $due->whereHas('articleSchedule', fn ($schedule) => $schedule->whereIn('status', ['active', 'blocked'])
+                        ->whereBetween('publish_at', [$from->copy()->utc(), $to->copy()->utc()]))
+                        ->orWhere(function ($unscheduled) use ($from, $to): void {
+                            $unscheduled->whereDoesntHave('articleSchedule')->whereBetween('scheduled_for', [$from->toDateString(), $to->toDateString()]);
+                        });
+                });
+            })
             ->orderBy('scheduled_for')
             ->get();
 
@@ -253,7 +288,7 @@ class EngineTickCommand extends Command
         // 2. Social, for published articles that were promised derivatives and
         //    have none. Published only: a social post links to the article, and
         //    repurpose refuses a draft outright.
-        $toRepurpose = ContentItem::query()
+        $toRepurpose = ContentItem::query()->when(! config('social.enabled'), fn ($query) => $query->whereRaw('1 = 0'))
             ->roots()
             ->inState(ContentItemState::Published)
             ->whereNotNull('body_markdown')
@@ -275,12 +310,27 @@ class EngineTickCommand extends Command
             return $work;
         }
 
+        if (ArticleWorkflow::capacity($project) === 0) {
+            return $this->dueMeasurements($project);
+        }
+
         // Nothing is due today, so the rest is about not running out.
         $spareIdeas = ContentItem::query()
             ->roots()
             ->inState(ContentItemState::Idea)
             ->whereNull('content_plan_id')
             ->count();
+
+        if ($billingWindow !== null) {
+            $capacity = ArticleWorkflow::calendarCapacity($project, $billingWindow);
+            if ($capacity > 0 && ! $this->ranWithin($project, 'planning', 12)) {
+                // MonthPlanner researches first if needed and pins this exact
+                // confirmed period. Never pre-spend an unconfirmed renewal.
+                return [['pipeline' => 'planning', 'why' => 'preparing this billing period’s remaining article dates']];
+            }
+
+            return $this->dueMeasurements($project);
+        }
 
         $plannedAhead = ContentItem::query()
             ->roots()
@@ -320,24 +370,20 @@ class EngineTickCommand extends Command
             return [['pipeline' => 'research', 'why' => 'idea pool is thin, researching']];
         }
 
-        // 5. Feedback, weekly. Only worth running once something is live.
-        $hasLive = ContentItem::query()->roots()->inState(ContentItemState::Published)->exists();
+        return $this->dueMeasurements($project);
+    }
+
+    /** @return list<array{pipeline: string, why: string}> */
+    private function dueMeasurements(Project $project): array
+    {
+        $hasLive = ContentItem::query()->roots()->inState(ContentItemState::Published)->exists()
+            || SitePage::query()->exists();
 
         if ($hasLive && ! $this->ranWithin($project, 'feedback', 24 * 7)) {
-            return [['pipeline' => 'feedback', 'why' => 'reading what the published work did']];
+            return [['pipeline' => 'feedback', 'why' => 'reading search and purchase performance']];
         }
 
-        // 6. Visibility, weekly, and last of everything.
-        //
-        // Last because it is the most expensive item here per run and the least
-        // urgent: a sweep is sixty paid calls to third-party models, measured at
-        // roughly a dollar, and nothing downstream waits on the result. A
-        // project that needs an article written today should get the article.
-        //
-        // Unlike feedback it does not wait for something to be published.
-        // Being absent from every assistant answer is most worth knowing
-        // *before* a year of writing rather than after.
-        if (! $this->ranWithin($project, 'visibility', 24 * 7)) {
+        if (! ArticleWorkflow::usesBillingPeriod($project) && ! $this->ranWithin($project, 'visibility', 24 * 7)) {
             return [['pipeline' => 'visibility', 'why' => 'checking what the assistants say about the brand']];
         }
 
@@ -402,7 +448,7 @@ class EngineTickCommand extends Command
     {
         // YMYL never auto-approves whatever the flag says — the wizard refuses
         // to set it, and a row edited by hand should not get past this either.
-        if (! $project->autopublish || $project->is_ymyl) {
+        if (! ArticleWorkflow::enabled($project) || ! $project->autopublish || $project->is_ymyl) {
             return 0;
         }
 
@@ -417,29 +463,22 @@ class EngineTickCommand extends Command
             ->roots()
             ->inState(ContentItemState::Draft)
             ->whereNotNull('body_markdown')
+            ->whereHas('articleSchedule', fn ($query) => $query->where('mode', 'automatic')->whereIn('status', ['active', 'blocked']))
             ->limit(self::MAX_STARTS)
             ->get();
 
         $approved = 0;
 
         foreach ($drafts as $draft) {
-            $scored = $this->score->for($draft->loadMissing('assets'));
-
-            if (! $scored['publishable']) {
-                // Publishing without review is a privilege, not a bypass. An
-                // article that fails a check the style guide calls
-                // non-negotiable waits for a human whatever the setting says —
-                // otherwise the verdict is a number nobody acts on.
-                Log::info('An article was held back from auto-approval', [
-                    'unit' => $draft->slug,
-                    'blocking' => $scored['blocking'],
+            try {
+                if (app(ArticleApproval::class)->approve($draft, automatic: true)) {
+                    $approved++;
+                }
+            } catch (ValidationException $exception) {
+                Log::info('An article is waiting for review or allowance', [
+                    'unit' => $draft->slug, 'reason' => $exception->getMessage(),
                 ]);
-
-                continue;
             }
-
-            $draft->approve();
-            $approved++;
         }
 
         return $approved;
@@ -492,6 +531,7 @@ class EngineTickCommand extends Command
     {
         return PipelineRun::query()
             ->whereIn('pipeline', self::CONTOUR)
+            ->forActiveProduct()
             ->inFlight()
             ->exists();
     }

@@ -4,55 +4,8 @@ declare(strict_types=1);
 
 return [
 
-    /*
-    |--------------------------------------------------------------------------
-    | Which assistants to ask
-    |--------------------------------------------------------------------------
-    |
-    | DataForSEO fronts each one separately, and each takes a model name.
-    |
-    | Pick the model a *customer* gets, not a cheap one. This measured
-    | `gpt-4.1-mini` on the reasoning that it "measures what an assistant says
-    | about a brand, not how clever the assistant is" — which is backwards. The
-    | question is what somebody sees when they ask ChatGPT, and nobody is served
-    | a mini model from early 2025. Different models cite different sources;
-    | that is the entire premise of the thing being measured, so the model is
-    | the measurement rather than a line item.
-    |
-    | `gpt-5.6-terra` is the flagship a person is served when they open ChatGPT.
-    | There is no plain `gpt-5.6` to ask for — DataForSEO carries 5.6 only as
-    | `terra`, `sol` and `luna`, with identical capability flags on all three, so
-    | the API cannot tell you which is the consumer default and the name has to
-    | come from knowing the product. Gemini's Flash and Perplexity's `sonar` are
-    | their consumer defaults; Sonnet is Claude's.
-    |
-    | Measured on one Portuguese prompt: gpt-5.3-chat-latest $0.036/8 citations,
-    | gemini-3.6-flash $0.035/32, claude-sonnet-5 $0.073/11, sonar $0.005/20.
-    | About $0.15 per prompt across the panel, so a five-prompt three-language
-    | sweep is roughly $2.
-    |
-    | The names are the vendor's own and guessing them costs a whole sweep:
-    | `gemini-2.0-flash` and `claude-3-5-haiku-20241022` are perfectly real model
-    | names, neither is on DataForSEO's list, and half the panel silently
-    | answered nothing for a run while the score looked healthy. Check
-    | `/v3/ai_optimization/{platform}/llm_responses/models` before changing one.
-    |
-    | **And check it again on a name that used to work.** The measurement above
-    | was taken with `gpt-5.3-chat-latest`, which DataForSEO accepted on 7 and 8
-    | August for 28 answers and rejects today: no 5.3 is on its list any more,
-    | and nothing on it carries a `-chat-latest` suffix. A model name here is not
-    | a constant, it is a vendor's inventory, and it goes out from under this
-    | file without warning.
-    |
-    | What makes that expensive is {@see \App\Visibility\VisibilityReport}, which
-    | reads the freshest answer per prompt *per assistant* inside a 30-day
-    | window. A platform that has stopped answering therefore keeps contributing
-    | its last good reading rather than dropping out — so on 19 August the score
-    | was three assistants measured that morning and ChatGPT measured eleven days
-    | earlier, and nothing on the screen said so. Not a sweep that fails loudly;
-    | a number that quietly stops being about today for one assistant at a time.
-    |
-    */
+    // API sample models, not claims about consumer-app defaults. Inventory is checked before purchase.
+    'stable_sampling' => true,
 
     'platforms' => [
         'chat_gpt' => ['model' => env('VISIBILITY_MODEL_CHATGPT', 'gpt-5.6-terra'), 'label' => 'ChatGPT'],

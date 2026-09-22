@@ -26,6 +26,11 @@ class FakeLlmVisibility implements LlmVisibilityGateway
     /** @var list<string> */
     private array $platforms = ['chat_gpt', 'gemini', 'claude', 'perplexity'];
 
+    /** @var array<string, list<array<string, mixed>>> */
+    private array $inventories = [];
+
+    private ?\Closure $inventoryRead = null;
+
     private bool $configured = true;
 
     private bool $failing = false;
@@ -75,6 +80,28 @@ class FakeLlmVisibility implements LlmVisibilityGateway
         return $this;
     }
 
+    public function willReturn(string $platform, string $prompt, ?LlmAnswer $answer): self
+    {
+        $this->scripted[$platform.'|'.$prompt] = $answer;
+
+        return $this;
+    }
+
+    /** @param list<array<string, mixed>> $models */
+    public function withModels(string $platform, array $models): self
+    {
+        $this->inventories[$platform] = $models;
+
+        return $this;
+    }
+
+    public function whenReadingModels(\Closure $callback): self
+    {
+        $this->inventoryRead = $callback;
+
+        return $this;
+    }
+
     /** Every assistant throws — the "it is not four outages, it is us" case. */
     public function failEverything(): self
     {
@@ -83,7 +110,18 @@ class FakeLlmVisibility implements LlmVisibilityGateway
         return $this;
     }
 
-    public function ask(string $platform, string $prompt, ?string $countryIso = null): ?LlmAnswer
+    /** @return list<array<string, mixed>> */
+    public function models(string $platform): array
+    {
+        if ($this->inventoryRead !== null) {
+            ($this->inventoryRead)($platform);
+        }
+
+        return $this->inventories[$platform] ?? [['model_name' => (string) config("visibility.platforms.{$platform}.model", 'fake-model'), 'web_search_supported' => true, 'task_post_supported' => false]];
+    }
+
+    /** @param array<string, mixed> $settings */
+    public function ask(string $platform, string $prompt, ?string $countryIso = null, array $settings = []): ?LlmAnswer
     {
         $this->asked[] = ['platform' => $platform, 'prompt' => $prompt, 'country' => $countryIso];
 

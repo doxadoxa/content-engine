@@ -6,12 +6,18 @@ namespace App\Http\Controllers;
 
 use App\Enums\ContentItemType;
 use App\Models\ContentItem;
+use App\Models\Project;
 use App\Pipelines\Core\PipelineRunner;
+use App\Publishing\Articles\ArticleSchedules;
+use App\Support\Engine\ArticleWorkflow;
 use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Throwable;
 
@@ -69,23 +75,32 @@ class ArticleController extends Controller
         // `state` is not fillable and is not set here: the column defaults to
         // `idea`, and the state machine owns every move out of it. Assigning it
         // by hand would be the one write that did not go through the machine.
-        $item = ContentItem::query()->create([
-            'locale' => $project->default_locale,
-            // The planner picks a shape per topic from the research; a typed
-            // one has nothing to pick from, so it gets the plainest of them and
-            // the unit card is where it gets changed. Guessing a comparison or
-            // a listicle out of one sentence would be a worse default than the
-            // honest one.
-            'type' => ContentItemType::Explainer,
-            'slug' => Str::slug(Str::limit($query, 60, '')).'-'.Str::lower(Str::random(4)),
-            'title' => $title,
-            'target_query' => $query,
-        ]);
-
         try {
-            $this->runner->start('generation', $project, [], $item->getKey());
+            $item = DB::transaction(function () use ($project, $query, $title): ContentItem {
+                Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+                if (ArticleWorkflow::capacity($project) === 0) {
+                    throw ValidationException::withMessages(['prompt' => 'Your calendar already contains this period’s article allowance.']);
+                }
+                $item = ContentItem::query()->create([
+                    'locale' => $project->default_locale,
+                    // The planner picks a shape per topic from the research; a typed
+                    // one has nothing to pick from, so it gets the plainest of them and
+                    // the unit card is where it gets changed. Guessing a comparison or
+                    // a listicle out of one sentence would be a worse default than the
+                    // honest one.
+                    'type' => ContentItemType::Explainer,
+                    'slug' => Str::slug(Str::limit($query, 60, '')).'-'.Str::lower(Str::random(4)),
+                    'title' => $title,
+                    'target_query' => $query,
+                ]);
+                app(ArticleSchedules::class)->scheduleNew($item, Carbon::tomorrow($project->timezone)->setTime(9, 0));
+                $this->runner->start('generation', $project, [], $item->getKey());
+
+                return $item;
+            });
+        } catch (ValidationException $exception) {
+            throw $exception;
         } catch (Throwable) {
-            $item->delete();
 
             return $this->say('error', 'The engine could not start writing that. Try again in a moment.');
         }
@@ -96,12 +111,18 @@ class ArticleController extends Controller
     /**
      * A month of articles, chosen from the research.
      *
-     * Refused rather than queued while one is in flight — see
-     * {@see MonthPlanner}, which holds the lock this check has to happen under
-     * and which the assistant's `plan_month` tool shares.
+     * Reuses the existing work while a run is in flight. {@see MonthPlanner}
+     * makes that decision under the project lock for this button and the
+     * assistant's `plan_month` tool.
      */
-    public function plan(): RedirectResponse
+    public function plan(Request $request): RedirectResponse
     {
+        $validated = $request->validate(['month' => ['sometimes', 'nullable', 'date_format:Y-m-d']]);
+        $month = isset($validated['month']) ? Carbon::parse($validated['month'])->startOfMonth() : null;
+        if ($month !== null && $month->lessThan(Carbon::today()->startOfMonth())) {
+            throw ValidationException::withMessages(['month' => 'Choose this month or a later month.']);
+        }
+
         $project = $this->current->get();
 
         if ($project === null) {
@@ -109,14 +130,16 @@ class ArticleController extends Controller
         }
 
         try {
-            $run = $this->planner->start($project);
+            $run = $this->planner->start($project, $month?->toDateString());
+        } catch (ValidationException $exception) {
+            throw $exception;
         } catch (Throwable) {
             return $this->say('error', 'The planner could not start. Try again in a moment.');
         }
 
-        return $run === null
-            ? $this->say('info', 'A month is already being planned.')
-            : $this->say('success', 'Planning the next month. This takes a few minutes.');
+        return $this->say('success', $run->pipeline === 'research'
+                ? 'Researching useful topics for your calendar. Planning follows when research is ready.'
+                : 'Planning your content calendar. This takes a few minutes.');
     }
 
     /**

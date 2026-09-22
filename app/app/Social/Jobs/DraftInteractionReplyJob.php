@@ -59,6 +59,10 @@ class DraftInteractionReplyJob implements ShouldQueue
 
     public function handle(CurrentProject $current, PipelineRunner $runner): void
     {
+        if (! config('social.enabled')) {
+            return;
+        }
+
         $interaction = Interaction::acrossProjects()->find($this->interactionId);
 
         if ($interaction === null) {

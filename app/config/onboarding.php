@@ -15,7 +15,7 @@ return [
     | after somebody has read what it produced rather than starting at volume.
     */
     'defaults' => [
-        'weekly_target' => 3,
-        'derivative_channels' => ['linkedin', 'x'],
+        'weekly_target' => 7,
+        'derivative_channels' => [],
     ],
 ];

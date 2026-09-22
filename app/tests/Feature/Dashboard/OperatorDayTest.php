@@ -20,6 +20,7 @@ use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\WebhookPublisher;
@@ -102,6 +103,7 @@ final class OperatorDayTest extends TestCase
         $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
 
         $draft = $this->draft();
+        $this->scheduleForReview($draft);
 
         // The queue.
         $this->actingAs($this->operator)
@@ -128,7 +130,7 @@ final class OperatorDayTest extends TestCase
             ->post(route('content.approve', $draft))
             ->assertRedirect();
 
-        // Published, because a channel on this project auto-publishes.
+        // Published only after approval, because this explicit review-first schedule is due.
         $this->assertSame(ContentItemState::Published, $draft->refresh()->state);
 
         // And visible in the delivery log.
@@ -158,7 +160,7 @@ final class OperatorDayTest extends TestCase
     }
 
     #[Test]
-    public function automatic_publishing_targets_only_verified_automatic_channels(): void
+    public function scheduled_publishing_reaches_only_the_chosen_verified_channel(): void
     {
         Http::fake([
             'receiver.test/*' => Http::response(['public_url' => 'https://example.test/x']),
@@ -177,6 +179,7 @@ final class OperatorDayTest extends TestCase
         ]);
 
         $draft = $this->draft();
+        $this->scheduleForReview($draft);
 
         $this->actingAs($this->operator)->post(route('content.approve', $draft));
 
@@ -205,6 +208,7 @@ final class OperatorDayTest extends TestCase
         ]);
 
         $draft = $this->draft();
+        $this->scheduleForReview($draft);
         $this->actingAs($this->operator)->post(route('content.approve', $draft));
         $this->assertSame(ContentItemState::Published, $draft->refresh()->state);
 
@@ -258,7 +262,7 @@ final class OperatorDayTest extends TestCase
     }
 
     #[Test]
-    public function only_a_draft_can_be_approved(): void
+    public function a_published_article_cannot_be_approved_again(): void
     {
         $unit = ContentItem::factory()->published()->create();
 
@@ -876,6 +880,17 @@ final class OperatorDayTest extends TestCase
             ->get(route('approvals.index'))
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page->has('drafts.data', 1));
+    }
+
+    private function scheduleForReview(ContentItem $draft): void
+    {
+        $at = now($this->project->timezone)->addMinute()->startOfMinute();
+        app(ArticleSchedules::class)->save($this->operator, $draft, [
+            'expected_version' => null, 'local_date' => $at->toDateString(), 'local_time' => $at->format('H:i'),
+            'mode' => 'review_first', 'channel_id' => $this->channel->id,
+        ]);
+        Http::assertNothingSent();
+        $this->travelTo($at->utc());
     }
 
     /** @param array<string, mixed> $attributes */

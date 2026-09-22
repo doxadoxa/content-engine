@@ -45,6 +45,10 @@ final class PlanningPipelineTest extends TestCase
     {
         parent::setUp();
 
+        // Most cases explicitly plan September and assert a whole month's
+        // capacity. Partial-month cases below set their own clock.
+        $this->travelTo(Carbon::parse('2026-08-31 12:00:00'));
+
         $this->project = Project::factory()->multilingual()->create([
             'weekly_target' => 2,
         ]);

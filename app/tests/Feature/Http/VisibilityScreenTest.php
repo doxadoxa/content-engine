@@ -12,6 +12,8 @@ use App\Support\Tenancy\CurrentProject;
 use App\Visibility\VisibilityReport;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -94,6 +96,86 @@ final class VisibilityScreenTest extends TestCase
                 ->where('by_locale.1.locale', 'ru')
                 ->where('by_locale.1.score', 100)
                 ->where('summary.score', 50));
+    }
+
+    #[Test]
+    public function exact_questions_show_the_same_latest_provider_outcomes_as_the_score_without_buying_checks(): void
+    {
+        Queue::fake();
+        Http::fake();
+        $prompt = LlmPrompt::factory()->for($this->project)->create([
+            'text' => 'Which cleaning companies serve Lisbon?', 'locale' => 'en', 'intent' => 'buying',
+        ]);
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'chat_gpt', 'mentioned' => true, 'asked_on' => Carbon::today()->subDays(3),
+        ]);
+        foreach (['chat_gpt' => false, 'gemini' => true, 'claude' => null] as $platform => $mentioned) {
+            LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+                'platform' => $platform, 'mentioned' => $mentioned, 'asked_on' => Carbon::today()->subDay(),
+            ]);
+        }
+
+        $this->actingAs($this->user)->get('/visibility')->assertOk()->assertInertia(fn ($page) => $page
+            ->where('summary.score', 50)->where('summary.answered', 2)
+            ->has('prompts', 1)->where('prompts.0.text', $prompt->text)->where('prompts.0.locale', 'en')
+            ->where('prompts.0.intent', 'buying')->has('prompts.0.checks', 4)
+            ->where('prompts.0.checks.0.platform', 'chat_gpt')->where('prompts.0.checks.0.label', 'ChatGPT')
+            ->where('prompts.0.checks.0.mentioned', false)->where('prompts.0.checks.0.status', 'answered')
+            ->where('prompts.0.checks.0.asked_on', Carbon::today()->subDay()->toDateString())
+            ->where('prompts.0.checks.1.mentioned', true)->where('prompts.0.checks.1.status', 'answered')
+            ->where('prompts.0.checks.2.mentioned', null)->where('prompts.0.checks.2.status', 'no_answer')
+            ->where('prompts.0.checks.3.mentioned', null)->where('prompts.0.checks.3.status', 'not_checked')
+            ->where('prompts.0.checks.3.asked_on', null));
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function legacy_evidence_uses_the_same_latest_answer_as_the_score_and_filters_unsafe_citations(): void
+    {
+        $prompt = LlmPrompt::factory()->for($this->project)->create([
+            'text' => 'Which cleaning companies serve Lisbon?', 'locale' => 'en',
+        ]);
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'chat_gpt', 'mentioned' => true,
+            'asked_on' => Carbon::today()->subDay(), 'excerpt' => 'An older response.',
+            'citations' => [['url' => 'https://older.example.test', 'title' => 'Old source']],
+        ]);
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'chat_gpt', 'mentioned' => false,
+            'asked_on' => Carbon::today(), 'excerpt' => 'Latest recorded response.',
+            'citations' => [
+                ['url' => 'https://safe.example.test/source', 'title' => 'Safe source'],
+                ['url' => 'javascript:alert(1)', 'title' => 'Unsafe'],
+                ['url' => 'data:text/html,unsafe', 'title' => 'Unsafe data'],
+            ],
+        ]);
+
+        $this->actingAs($this->user)->get('/visibility')->assertOk()->assertInertia(fn ($page) => $page
+            ->where('summary.score', 0)
+            ->where('prompts.0.checks.0.mentioned', false)
+            ->where('prompts.0.checks.0.excerpt', 'Latest recorded response.')
+            ->has('prompts.0.checks.0.citations', 1)
+            ->where('prompts.0.checks.0.citations.0.url', 'https://safe.example.test/source'));
+    }
+
+    #[Test]
+    public function a_blank_latest_legacy_excerpt_is_exposed_as_unavailable_not_an_older_response(): void
+    {
+        $prompt = LlmPrompt::factory()->for($this->project)->create(['text' => 'one', 'locale' => 'en']);
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'chat_gpt', 'mentioned' => true,
+            'asked_on' => Carbon::today()->subDay(), 'excerpt' => 'Old answer',
+        ]);
+        LlmVisibilityAnswer::factory()->for($this->project)->for($prompt, 'prompt')->create([
+            'platform' => 'chat_gpt', 'mentioned' => false,
+            'asked_on' => Carbon::today(), 'excerpt' => " \n ",
+        ]);
+
+        $this->actingAs($this->user)->get('/visibility')->assertOk()->assertInertia(fn ($page) => $page
+            ->where('summary.score', 0)
+            ->where('prompts.0.checks.0.excerpt', null)
+            ->count('prompts.0.checks.0.citations', 0));
     }
 
     /**

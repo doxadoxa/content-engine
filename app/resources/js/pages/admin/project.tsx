@@ -54,9 +54,17 @@ type Props = {
         pipeline_micros: number;
         assistant_micros: number;
         total_micros: number;
+        completeness: string;
     };
-    currency: string;
-    plans: { key: string; name: string; price_cents: number }[];
+    cost_currency: string;
+    monthly_plan_fee_cents: number;
+    contribution_micros: number | null;
+    plans: {
+        key: string;
+        name: string;
+        price_cents: number;
+        currency: string;
+    }[];
     members: { id: number; name: string; email: string; role: string | null }[];
     actions: {
         id: string;
@@ -81,20 +89,22 @@ export default function AdminProject({
     entitlement,
     subscription,
     spend,
-    currency,
+    cost_currency,
+    monthly_plan_fee_cents,
+    contribution_micros,
     plans,
     members,
     actions,
 }: Props) {
-    const money = (cents: number) =>
+    const money = (cents: number, currency: string) =>
         new Intl.NumberFormat(undefined, {
             style: 'currency',
             currency: currency.toUpperCase(),
             maximumFractionDigits: 2,
+            currencyDisplay: 'code',
         }).format(cents / 100);
 
     const base = `${projectsRoute().url}/${project.id}`;
-    const paying = entitlement.plan?.price_cents ?? 0;
     const costing = spend.total_micros / 10_000;
 
     return (
@@ -130,19 +140,43 @@ export default function AdminProject({
                 />
 
                 <div className="grid gap-4 sm:grid-cols-3">
-                    <Figure label="Pays" value={money(paying)} hint="a month" />
                     <Figure
-                        label="Costs"
-                        value={money(costing)}
-                        hint="this month, both doors"
+                        label="Active plan fee"
+                        value={
+                            entitlement.plan
+                                ? money(
+                                      monthly_plan_fee_cents,
+                                      entitlement.plan.currency,
+                                  )
+                                : 'No plan'
+                        }
+                        hint="monthly list fee; not a receipt"
                     />
                     <Figure
-                        label="Margin"
-                        value={money(paying - costing)}
+                        label="Recorded usage"
+                        value={money(costing, cost_currency)}
                         hint={
-                            costing > paying
-                                ? 'costs more than it pays'
-                                : 'this month'
+                            spend.completeness === 'complete'
+                                ? 'Known usage this month'
+                                : 'Known subtotal; some charges remain unknown'
+                        }
+                    />
+                    <Figure
+                        label="Usage contribution"
+                        value={
+                            contribution_micros === null
+                                ? 'Unavailable'
+                                : money(
+                                      contribution_micros / 10_000,
+                                      cost_currency,
+                                  )
+                        }
+                        hint={
+                            contribution_micros === null
+                                ? spend.completeness === 'complete'
+                                    ? 'Different currencies; no exchange rate applied'
+                                    : 'Some provider charges remain unknown'
+                                : 'Plan fee less usage to date; excludes support and overhead'
                         }
                     />
                 </div>
@@ -184,7 +218,11 @@ export default function AdminProject({
                                                             key={plan.key}
                                                             value={plan.key}
                                                         >
-                                                            {plan.name}
+                                                            {plan.name} ·{' '}
+                                                            {money(
+                                                                plan.price_cents,
+                                                                plan.currency,
+                                                            )}
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>

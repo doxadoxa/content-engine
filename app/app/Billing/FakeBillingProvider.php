@@ -35,6 +35,12 @@ class FakeBillingProvider implements BillingProvider
     /** @var list<array{payer: int, project: string, plan: string}> */
     public array $planChanges = [];
 
+    /** @var list<array{project: string, plan: string}> */
+    public array $scheduledChanges = [];
+
+    /** @var list<string> */
+    public array $canceledChanges = [];
+
     /**
      * Whether there is an existing subscription to change.
      *
@@ -89,6 +95,23 @@ class FakeBillingProvider implements BillingProvider
         ];
 
         return true;
+    }
+
+    public function schedulePlanChange(User $payer, Project $project, Plan $plan): string
+    {
+        if (! $this->canChangePlan) {
+            throw new \RuntimeException('No subscription to change.');
+        }
+        $this->scheduledChanges[] = ['project' => $project->getKey(), 'plan' => $plan->key];
+
+        return 'sub_sched_test_'.$project->getKey();
+    }
+
+    public function cancelPlanChange(User $payer, Project $project): bool
+    {
+        $this->canceledChanges[] = $project->getKey();
+
+        return $this->canChangePlan;
     }
 
     public function extendTrial(User $payer, Project $project, DateTimeInterface $until): bool

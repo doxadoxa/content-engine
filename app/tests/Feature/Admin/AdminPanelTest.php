@@ -15,11 +15,15 @@ use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
+use App\Models\ProviderSpendRecord;
 use App\Models\User;
+use App\Pipelines\Steps\AiAccuracy\CheckAccuracy;
+use App\Support\Metering\ProjectSpend;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -43,6 +47,7 @@ final class AdminPanelTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config(['billing.version' => 1, 'billing.default_plan' => 'medium']);
 
         $this->admin = User::factory()->create(['is_admin' => true]);
         $this->project = Project::factory()->create(['name' => 'Cleaning Point']);
@@ -125,10 +130,81 @@ final class AdminPanelTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
                 // Medium, from the project factory's subscription.
-                ->where('revenue_cents', 9_900)
+                ->where('revenue_by_currency.0.currency', 'eur')
+                ->where('revenue_by_currency.0.cents', 9_900)
+                ->where('contribution_micros', null)
+                ->where('cost_currency', 'usd')
                 ->where('cost_micros', 3_000_000)
                 ->where('margins.0.name', 'Cleaning Point')
             );
+    }
+
+    #[Test]
+    public function mixed_plan_versions_keep_revenue_currencies_and_never_invent_an_exchange_rate(): void
+    {
+        config(['billing.version' => 2, 'billing.default_plan' => 'local-search']);
+        $dollar = Project::factory()->create(['name' => 'Dollar project']);
+        ProjectSubscription::query()->where('project_id', $dollar->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
+        foreach ([[$this->project, 3_000_000], [$dollar, 1_000_000]] as [$project, $cost]) {
+            $run = PipelineRun::factory()->for($project)->create();
+            PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => $cost]);
+        }
+        $this->actingAs($this->admin)->get('/admin')->assertOk()->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('revenue_by_currency', [['currency' => 'eur', 'cents' => 9_900], ['currency' => 'usd', 'cents' => 8_900]])
+            ->where('cost_currency', 'usd')->where('cost_micros', 4_000_000)->where('contribution_micros', null)
+            ->where('margins.0.currency', 'eur')->where('margins.0.contribution_micros', null)
+            ->where('margins.1.currency', 'usd')->where('margins.1.contribution_micros', 88_000_000));
+        $this->get('/admin/projects')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('projects.data.0.currency', 'eur')->where('projects.data.1.currency', 'usd')->where('cost_currency', 'usd'));
+        $this->get('/admin/subscriptions')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('subscriptions.data', function ($rows) use ($dollar): bool {
+                /** @var list<array<string,mixed>> $rows */
+                $byProject = collect($rows)->keyBy('project_id');
+
+                return $byProject->get($this->project->id)['currency'] === 'eur' && $byProject->get($dollar->id)['currency'] === 'usd';
+            }));
+        $this->get('/admin/projects/'.$this->project->id)->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('entitlement.plan.currency', 'eur')->where('monthly_plan_fee_cents', 9_900)->where('cost_currency', 'usd')->where('contribution_micros', null)
+            ->where('plans.1.currency', 'usd'));
+        $this->get('/admin/projects/'.$dollar->id)->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('entitlement.plan.currency', 'usd')->where('monthly_plan_fee_cents', 8_900)->where('contribution_micros', 88_000_000));
+        $legacy = ProjectSubscription::query()->where('project_id', $this->project->id)->firstOrFail();
+        $this->assertSame(1, $legacy->plan_version);
+        $this->assertSame(9_900, $legacy->plan()->priceCents);
+    }
+
+    #[Test]
+    public function dollar_only_monthly_fees_have_a_known_usage_contribution_without_treating_trial_price_as_receipts(): void
+    {
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
+        $run = PipelineRun::factory()->for($this->project)->create();
+        PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => 3_000_000]);
+        $this->actingAs($this->admin)->get('/admin')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('revenue_by_currency', [['currency' => 'usd', 'cents' => 8_900]])->where('contribution_micros', 86_000_000));
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['status' => 'trialing', 'trial_ends_at' => now()->addDays(7)]);
+        $this->get('/admin')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('revenue_by_currency', [])->where('margins.0.price_cents', 0)->where('contribution_micros', -3_000_000));
+        $this->get('/admin/projects/'.$this->project->id)->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('monthly_plan_fee_cents', 0)->where('contribution_micros', -3_000_000));
+    }
+
+    #[Test]
+    public function unknown_provider_charges_make_dollar_contributions_unavailable_everywhere(): void
+    {
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
+        app(CurrentProject::class)->run($this->project, function (): void {
+            $run = PipelineRun::factory()->create(['pipeline' => 'ai_accuracy', 'input' => ['assessment_id' => (string) Str::ulid()]]);
+            PipelineStep::factory()->for($run, 'pipelineRun')->create(['step_key' => CheckAccuracy::key(), 'cost_micros' => 1_000_000]);
+            ProviderSpendRecord::query()->create(['pipeline_run_id' => $run->id, 'step_key' => CheckAccuracy::key(), 'status' => 'pending', 'provider' => 'synthetic', 'model' => 'synthetic-unpriced', 'role' => 'fact_check', 'price_list_version' => 1, 'request_hash' => hash('sha256', 'pending')]);
+        });
+        $this->actingAs($this->admin)->get('/admin')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('cost_micros', 1_000_000)->where('cost_complete', false)->where('contribution_micros', null)
+            ->where('margins.0.currency', 'usd')->where('margins.0.cost_complete', false)->where('margins.0.contribution_micros', null));
+        $this->get('/admin/projects')->assertInertia(fn (AssertableInertia $page) => $page->where('projects.data.0.cost_complete', false));
+        $this->get('/admin/projects/'.$this->project->id)->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('spend.unknown_provider_attempts', 1)->where('spend.completeness', 'incomplete')->where('contribution_micros', null));
+        $summary = ProjectSpend::summaries([$this->project->id], now()->startOfMonth())[$this->project->id];
+        $this->assertSame(ProjectSpend::for($this->project, now()->startOfMonth())->toArray(), $summary);
     }
 
     #[Test]

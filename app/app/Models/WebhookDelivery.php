@@ -25,6 +25,9 @@ use Illuminate\Support\Str;
  * @property string $channel_id
  * @property string|null $content_item_id
  * @property string $delivery_id
+ * @property string|null $article_schedule_id
+ * @property int|null $article_schedule_version
+ * @property Carbon|null $article_attempt_started_at
  * @property string|null $dispatch_key
  * @property DeliveryStatus $status
  * @property int|null $response_code
@@ -50,6 +53,9 @@ class WebhookDelivery extends Model
         'content_item_id',
         'delivery_id',
         'dispatch_key',
+        'article_schedule_id',
+        'article_schedule_version',
+        'article_attempt_started_at',
         'status',
         'response_code',
         'latency_ms',
@@ -102,6 +108,8 @@ class WebhookDelivery extends Model
     {
         return [
             'status' => DeliveryStatus::class,
+            'article_schedule_version' => 'integer',
+            'article_attempt_started_at' => 'datetime',
             'payload_snapshot' => 'array',
             'response_code' => 'integer',
             'latency_ms' => 'integer',

@@ -1,8 +1,6 @@
-import { Form } from '@inertiajs/react';
+import { Form, usePage } from '@inertiajs/react';
 import { useState } from 'react';
-import { DutyHoursField } from '@/components/duty-hours-field';
 import type { DutyHoursValue } from '@/components/duty-hours-field';
-import { FeedUrlsField } from '@/components/feed-urls-field';
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,6 +37,8 @@ export type ProjectFormValues = {
     weekly_target: number;
     research_seeds: string[];
     minimum_volume: number | null;
+    autopublish: boolean;
+    article_scheduling_enabled: boolean;
 };
 
 type Props = {
@@ -62,15 +62,21 @@ export function ProjectForm({
     submitLabel,
 }: Props) {
     const isEdit = project !== undefined;
+    const { auth } = usePage().props;
+    const owner = auth.project?.role === 'owner';
+    const [publicationMode, setPublicationMode] = useState<string | undefined>(
+        project?.article_scheduling_enabled
+            ? project.autopublish
+                ? 'automatic'
+                : 'review_first'
+            : undefined,
+    );
 
     const [name, setName] = useState(project?.name ?? '');
     const [slug, setSlug] = useState(project?.slug ?? '');
     const [slugTouched, setSlugTouched] = useState(isEdit);
 
     const [market, setMarket] = useState(project?.market ?? 'us');
-    const [weeklyTarget, setWeeklyTarget] = useState(
-        String(project?.weekly_target ?? 3),
-    );
     const [seeds, setSeeds] = useState<string[]>(project?.research_seeds ?? []);
     const [minimumVolume, setMinimumVolume] = useState(
         project?.minimum_volume === null ||
@@ -92,12 +98,6 @@ export function ProjectForm({
     );
 
     const [timezone, setTimezone] = useState(project?.timezone ?? 'UTC');
-    const [dutyHours, setDutyHours] = useState<DutyHoursValue>(
-        project?.duty_hours ?? {},
-    );
-    const [feedUrls, setFeedUrls] = useState<string[]>(
-        project?.feed_urls ?? [],
-    );
 
     return (
         <Form
@@ -105,8 +105,9 @@ export function ProjectForm({
             method={action.method}
             transform={(data) => ({
                 ...data,
-                duty_hours: dutyHours,
-                feed_urls: feedUrls,
+                ...(owner && publicationMode !== undefined
+                    ? { autopublish: publicationMode === 'automatic' }
+                    : {}),
                 locales: extraLocales
                     .split(',')
                     .map((locale) => locale.trim())
@@ -173,7 +174,10 @@ export function ProjectForm({
                         </CardContent>
                     </Card>
 
-                    <Card className={workspacePanelClass}>
+                    <Card
+                        id="article-publishing"
+                        className={workspacePanelClass}
+                    >
                         <CardHeader>
                             <CardTitle>Publishing</CardTitle>
                             <CardDescription>
@@ -182,6 +186,38 @@ export function ProjectForm({
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="grid gap-4 sm:grid-cols-2">
+                            {owner && (
+                                <div className="grid gap-2 sm:col-span-2">
+                                    <Label htmlFor="publication-mode">
+                                        New articles
+                                    </Label>
+                                    <Select
+                                        value={publicationMode}
+                                        onValueChange={setPublicationMode}
+                                    >
+                                        <SelectTrigger id="publication-mode">
+                                            <SelectValue placeholder="Choose how new articles publish" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="automatic">
+                                                Publish automatically on
+                                                schedule
+                                            </SelectItem>
+                                            <SelectItem value="review_first">
+                                                Let me review before publishing
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-sm text-muted-foreground">
+                                        Save your preference to apply it to new
+                                        articles. Existing articles keep their
+                                        individual schedules. Your website
+                                        connection must be ready before anything
+                                        publishes.
+                                    </p>
+                                    <InputError message={errors.autopublish} />
+                                </div>
+                            )}
                             <div className="grid gap-2">
                                 <Label htmlFor="timezone">Time zone</Label>
                                 <Select
@@ -268,38 +304,6 @@ export function ProjectForm({
                                 </p>
                                 <InputError message={errors['locales.0']} />
                             </div>
-
-                            <div className="sm:col-span-2">
-                                <DutyHoursField
-                                    value={dutyHours}
-                                    onChange={setDutyHours}
-                                    timezone={timezone}
-                                    // Any depth: the shape rules live on
-                                    // `duty_hours.*.*.*`, so a bad pair
-                                    // reports against a key nobody can point
-                                    // an input at.
-                                    error={
-                                        Object.entries(errors).find(([key]) =>
-                                            key.startsWith('duty_hours'),
-                                        )?.[1]
-                                    }
-                                />
-                            </div>
-
-                            <div className="sm:col-span-2">
-                                <FeedUrlsField
-                                    value={feedUrls}
-                                    onChange={setFeedUrls}
-                                    // As above: the rules live on
-                                    // `feed_urls.*`, so a bad address reports
-                                    // against an index, not against the field.
-                                    error={
-                                        Object.entries(errors).find(([key]) =>
-                                            key.startsWith('feed_urls'),
-                                        )?.[1]
-                                    }
-                                />
-                            </div>
                         </CardContent>
                     </Card>
 
@@ -307,9 +311,9 @@ export function ProjectForm({
                         <CardHeader>
                             <CardTitle>Research</CardTitle>
                             <CardDescription>
-                                What Avyo researches and how much content it
-                                plans. Check these settings when a project comes
-                                back with too few ideas.
+                                Choose the market and topics Avyo researches.
+                                Useful page improvements depend on evidence
+                                relevant to your business.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-4">
@@ -330,27 +334,6 @@ export function ProjectForm({
                                         for, for example pt or us.
                                     </p>
                                     <InputError message={errors.market} />
-                                </div>
-
-                                <div className="grid gap-2">
-                                    <Label htmlFor="weekly_target">
-                                        Articles per week
-                                    </Label>
-                                    <Input
-                                        id="weekly_target"
-                                        name="weekly_target"
-                                        type="number"
-                                        min={1}
-                                        max={14}
-                                        value={weeklyTarget}
-                                        required
-                                        onChange={(event) =>
-                                            setWeeklyTarget(event.target.value)
-                                        }
-                                    />
-                                    <InputError
-                                        message={errors.weekly_target}
-                                    />
                                 </div>
 
                                 <div className="grid gap-2 sm:col-span-2">

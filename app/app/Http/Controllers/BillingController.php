@@ -8,6 +8,7 @@ use App\Billing\Entitlements;
 use App\Billing\Metric;
 use App\Billing\Plan;
 use App\Billing\PlanCatalog;
+use App\Billing\PlanChanges;
 use App\Models\Project;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
@@ -33,6 +34,7 @@ class BillingController extends Controller
         private readonly CurrentProject $current,
         private readonly Entitlements $entitlements,
         private readonly PlanCatalog $plans,
+        private readonly PlanChanges $changes,
     ) {}
 
     public function __invoke(): Response
@@ -45,8 +47,18 @@ class BillingController extends Controller
 
         return Inertia::render('billing/index', [
             'entitlement' => $entitlement->toArray(),
-            'currency' => (string) config('billing.currency', 'eur'),
+            'currency' => $entitlement->plan->currency ?? 'usd',
             'trial_days' => $this->plans->trialDays(),
+            'subscription_details' => $entitlement->subscription === null ? null : [
+                'period_started_at' => $entitlement->subscription->periodStart()->toIso8601String(),
+                'is_legacy' => $entitlement->plan !== null && $entitlement->plan->version < $this->plans->currentVersion(),
+                'is_custom' => $entitlement->plan !== null && ! $entitlement->plan->selfServe && $entitlement->plan->key !== 'trial',
+                'limits' => $entitlement->plan === null ? [] : $this->readableLimits($entitlement->plan),
+            ],
+            'pending_change' => $entitlement->subscription?->pending_plan === null ? null : [
+                'name' => $this->plans->get($entitlement->subscription->pending_plan, $entitlement->subscription->pending_plan_version)->name,
+                'effective_at' => $entitlement->subscription->pending_plan_at?->toIso8601String(),
+            ],
 
             // Whether to draw the buttons at all. The routes behind them are
             // owner-only, so an operator shown a "Choose Medium" button would
@@ -67,7 +79,10 @@ class BillingController extends Controller
                 fn (Plan $plan): array => [
                     ...$plan->toArray(),
                     'limits' => $this->readableLimits($plan),
-                    'current' => $plan->key === $entitlement->plan?->key,
+                    'change' => $this->changes->preview($entitlement->subscription, $plan),
+                    'ai_frequency_days' => $plan->limit('ai_frequency_days'),
+                    'ai_questions' => $plan->limit('ai_questions'),
+                    'current' => $plan->key === $entitlement->plan?->key && $plan->version === $entitlement->plan->version,
                 ],
                 $this->plans->selfServe(),
             ),
@@ -101,7 +116,13 @@ class BillingController extends Controller
     {
         $rows = [];
 
-        foreach (Metric::cases() as $metric) {
+        foreach ([Metric::Articles, Metric::ContentPlans, Metric::PageImprovements, Metric::SiteAudits, Metric::AssistantTurns] as $metric) {
+            if (! array_key_exists($metric->value, $plan->limits())) {
+                continue;
+            }
+            if ($plan->version === 2 && in_array($metric, [Metric::Articles, Metric::ContentPlans], true)) {
+                continue;
+            }
             $rows[] = [
                 'key' => $metric->value,
                 'label' => ucfirst($metric->label()),
@@ -109,7 +130,14 @@ class BillingController extends Controller
             ];
         }
 
-        foreach (['locales' => 'Languages', 'seats' => 'Seats', 'channels' => 'Publishing channels'] as $key => $label) {
+        if ($plan->version >= 4) {
+            $rows[] = ['key' => 'ai_answers', 'label' => 'AI answer attempts', 'value' => $plan->limit('ai_answers')];
+        }
+
+        foreach (['tracked_pages' => 'Monitored pages', 'locales' => 'Languages', 'seats' => 'Team members', 'channels' => 'Website connections'] as $key => $label) {
+            if (! array_key_exists($key, $plan->limits())) {
+                continue;
+            }
             $rows[] = ['key' => $key, 'label' => $label, 'value' => $plan->limit($key)];
         }
 

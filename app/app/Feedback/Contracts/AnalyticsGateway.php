@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Feedback\Contracts;
 
+use App\Feedback\Measurements\ReadResult;
 use App\Feedback\ProjectAudience;
 use App\Feedback\UnitEngagement;
 use App\Models\Project;
@@ -20,6 +21,9 @@ use Illuminate\Support\Carbon;
  */
 interface AnalyticsGateway
 {
+    /** @param list<string> $urls */
+    public function landingPurchases(Project $project, array $urls, Carbon $from, Carbon $to): ReadResult;
+
     public function name(): string;
 
     public function isConfiguredFor(Project $project): bool;

@@ -40,18 +40,9 @@ $overrides = [
     'DB_DATABASE' => 'content_engine_test',
     'DB_URL' => '',
 
-    // The social presence stays on for the suite. It ships off (see
-    // config/social.php) because a deployment without a Meta app has nothing
-    // for it to do, but "off" is a deployment's answer and not a fact about the
-    // code: phases 12.1–12.6 are most of what the suite covers, and a default
-    // that reached the tests would turn several hundred of them green by
-    // deleting the feature they exercise. The off state has its own tests —
-    // tests/Feature/Social/FeaturePresenceTest.php — which set this back to
-    // false before the application boots, because the switch is read while
-    // config and routes are being built and cannot be moved afterwards.
-    //
-    // Set here rather than in phpunit.xml's <env> for the reason at the top of
-    // this file: inside the container those values lose to $_SERVER.
+    // Explicit legacy coverage for archived social workflows. Production and
+    // local environments ignore this flag; FeaturePresenceTest boots with it
+    // off to exercise the focused product and its queued-work boundaries.
     'SOCIAL_PRESENCE_ENABLED' => 'true',
 
     // No renderer, unless a test asks for one.

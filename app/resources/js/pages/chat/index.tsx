@@ -1,5 +1,5 @@
 import { Head, Link } from '@inertiajs/react';
-import { MessagesSquare, Plus } from 'lucide-react';
+import { MessagesSquare, ArrowLeft } from 'lucide-react';
 import type { ChatSummary } from '@/components/chat-thread';
 import { Button } from '@/components/ui/button';
 import {
@@ -8,7 +8,7 @@ import {
     workspacePanelClass,
 } from '@/components/workspace-page';
 import { index as chatIndex, show as showChat } from '@/routes/assistant';
-import { index as homeIndex } from '@/routes/home';
+import { index as contentIndex } from '@/routes/content';
 
 type Props = { threads: ChatSummary[] };
 
@@ -28,12 +28,15 @@ export default function ChatIndex({ threads }: Props) {
                 <WorkspaceHeader
                     eyebrow="AI assistant"
                     title="Chats"
-                    description="Every chat with Avyo, newest first."
+                    description="Your discussions about website improvements, newest first."
                     actions={
                         <Button asChild variant="outline">
-                            <Link href={homeIndex()}>
-                                <Plus className="size-4" aria-hidden="true" />
-                                New chat
+                            <Link href={contentIndex()}>
+                                <ArrowLeft
+                                    className="size-4"
+                                    aria-hidden="true"
+                                />
+                                Choose content to discuss
                             </Link>
                         </Button>
                     }
@@ -44,11 +47,11 @@ export default function ChatIndex({ threads }: Props) {
                         className={`${workspacePanelClass} px-5 py-10 text-center`}
                     >
                         <p className="text-sm text-muted-foreground">
-                            No chats yet. Ask something from the box on Home to
-                            start one.
+                            No discussions yet. Open an article or plan and ask
+                            about the work you are reviewing.
                         </p>
                         <Button asChild className="mt-5">
-                            <Link href={homeIndex()}>Go to Home</Link>
+                            <Link href={contentIndex()}>Open content</Link>
                         </Button>
                     </section>
                 ) : (

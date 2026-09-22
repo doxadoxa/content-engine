@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Billing\Contracts\BillingProvider;
-use App\Billing\Plan;
 use App\Billing\PlanCatalog;
 use App\Billing\Subscriptions;
 use App\Enums\BillingStatus;
@@ -40,8 +39,6 @@ class BillingReconcileCommand extends Command
 
     public function handle(BillingProvider $provider, Subscriptions $subscriptions, PlanCatalog $catalog): int
     {
-        $plans = $catalog->all();
-
         $dry = (bool) $this->option('dry');
 
         $rows = ProjectSubscription::query()
@@ -90,8 +87,8 @@ class BillingReconcileCommand extends Command
             // projection healthy while the customer was being charged for one
             // tier and served another — until some later subscription webhook
             // happened along.
-            $theirPlan = $theirs->priceId === null ? null : $this->planFor($plans, $theirs->priceId);
-            $planMoved = $theirPlan !== null && $theirPlan !== $subscription->plan;
+            $theirPlan = $theirs->priceId === null ? null : $catalog->forStripePrice($theirs->priceId, $catalog->has($subscription->plan, $subscription->plan_version) ? $catalog->get($subscription->plan, $subscription->plan_version) : null);
+            $planMoved = $theirPlan !== null && ($theirPlan->key !== $subscription->plan || $theirPlan->version !== $subscription->plan_version);
 
             if ($theirs->status === $subscription->status && ! $movedOn && ! $planMoved) {
                 continue;
@@ -102,7 +99,7 @@ class BillingReconcileCommand extends Command
             $was = $subscription->status->value;
             $now = $theirs->status->value;
             $what = match (true) {
-                $planMoved => "{$subscription->plan} → {$theirPlan}",
+                $planMoved => "{$subscription->plan} v{$subscription->plan_version} → {$theirPlan->key} v{$theirPlan->version}",
                 $movedOn && $was === $now => 'period',
                 default => "{$was} → {$now}",
             };
@@ -127,6 +124,11 @@ class BillingReconcileCommand extends Command
                 $subscription->refresh();
             }
 
+            if ($planMoved) {
+                $subscriptions->changeWithinPeriod($project, $theirPlan);
+                $subscription->refresh();
+            }
+
             $subscription->fill([
                 // Stripe's own word, unmapped. Writing our reduced vocabulary
                 // into a column documented as holding the provider's would
@@ -137,7 +139,7 @@ class BillingReconcileCommand extends Command
                 // The plan follows the price Stripe is actually charging. The
                 // overrides go with the old arrangement, exactly as they do
                 // when a plan changes through any other door.
-                ...($planMoved ? ['plan' => $theirPlan, 'limit_overrides' => []] : []),
+                ...($planMoved ? ['plan' => $theirPlan->key, 'plan_version' => $theirPlan->version, 'limit_overrides' => [], 'pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null] : []),
             ])->save();
 
             // And the status through the transitions rather than as a column,
@@ -175,26 +177,6 @@ class BillingReconcileCommand extends Command
             : ($dry ? "{$drifted} would be corrected." : "{$drifted} corrected."));
 
         return self::SUCCESS;
-    }
-
-    /**
-     * Which of our plans a Stripe price is.
-     *
-     * By price rather than by metadata, because this is the path for when the
-     * metadata-carrying webhook never arrived — the price is the only thing
-     * Stripe will tell us on demand.
-     *
-     * @param  list<Plan>  $plans
-     */
-    private function planFor(array $plans, string $priceId): ?string
-    {
-        foreach ($plans as $plan) {
-            if ($plan->stripePrice === $priceId) {
-                return $plan->key;
-            }
-        }
-
-        return null;
     }
 
     /**

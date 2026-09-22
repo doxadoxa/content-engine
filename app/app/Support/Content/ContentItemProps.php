@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Support\Content;
 
 use App\Models\ContentItem;
+use App\Publishing\Articles\ArticleSchedules;
 
 /**
  * One shape for a content unit across every screen that lists one.
@@ -22,6 +23,7 @@ final class ContentItemProps
     {
         return [
             'id' => $item->getKey(),
+            'publication' => app(ArticleSchedules::class)->props($item),
             'title' => $item->title,
             'slug' => $item->slug,
             'locale' => $item->locale,

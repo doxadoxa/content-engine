@@ -6,12 +6,14 @@ namespace App\Http\Controllers;
 
 use App\Billing\Contracts\BillingProvider;
 use App\Billing\PlanCatalog;
+use App\Billing\PlanChanges;
 use App\Billing\TrialEligibility;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use InvalidArgumentException;
@@ -37,6 +39,7 @@ class BillingCheckoutController extends Controller
         private readonly BillingProvider $provider,
         private readonly PlanCatalog $plans,
         private readonly TrialEligibility $trials,
+        private readonly PlanChanges $changes,
     ) {}
 
     /** Start paying for this project. */
@@ -47,7 +50,13 @@ class BillingCheckoutController extends Controller
 
         $validated = $request->validate([
             'plan' => ['required', 'string'],
+            'plan_version' => ['nullable', 'integer'],
+            'acknowledge_downgrade' => ['sometimes', 'accepted'],
         ]);
+
+        if (isset($validated['plan_version']) && (int) $validated['plan_version'] !== $this->plans->currentVersion()) {
+            throw ValidationException::withMessages(['plan' => 'The available offer changed. Reload its current price and allowance before continuing.']);
+        }
 
         try {
             $plan = $this->plans->get((string) $validated['plan']);
@@ -80,29 +89,44 @@ class BillingCheckoutController extends Controller
         $payer = $subscription?->payer;
 
         if ($subscription?->stripe_id !== null) {
-            // And no fallback from here. Whatever went wrong, opening a
-            // checkout for a project Stripe is already charging for is the one
-            // outcome worse than refusing.
+            $renewal = $this->changes->atRenewal($subscription, $plan);
+            if ($renewal && ! $request->boolean('acknowledge_downgrade')) {
+                throw ValidationException::withMessages(['plan' => 'Review the renewal date and scheduled articles, then confirm the lower allowance.']);
+            }
+            $lock = Cache::lock('billing-plan-change:'.$project->getKey(), 60);
+            if (! $lock->get()) {
+                return back()->with('billing', ['code' => 'plan_change_busy', 'message' => 'A plan change is already being confirmed. Refresh in a moment.', 'metric' => null]);
+            }
             try {
-                $changed = $payer instanceof User
-                    && $this->provider->changePlan($payer, $project, $plan);
+                $subscription->refresh();
+                if ($subscription->plan === $plan->key && $subscription->plan_version === $plan->version && $subscription->pending_plan === null) {
+                    return back();
+                }
+                if (! $payer instanceof User) {
+                    throw new \RuntimeException('The recorded billing owner is unavailable.');
+                }
+                if ($renewal) {
+                    if ($subscription->pending_plan !== $plan->key || $subscription->pending_plan_version !== $plan->version) {
+                        $schedule = $this->provider->schedulePlanChange($payer, $project, $plan);
+                        $subscription->fill(['pending_plan' => $plan->key, 'pending_plan_version' => $plan->version, 'pending_plan_at' => $subscription->period_ends_at, 'stripe_schedule_id' => $schedule])->save();
+                    }
+                } elseif (! $this->provider->changePlan($payer, $project, $plan)) {
+                    throw new \RuntimeException('The provider could not confirm the change.');
+                }
             } catch (Throwable $e) {
                 report($e);
-                $changed = false;
-            }
 
-            if (! $changed) {
                 return back()->with('billing', [
                     'code' => 'plan_change_failed',
-                    'message' => 'We could not change the plan just now. Nothing has changed.',
+                    'message' => 'We could not confirm the plan change. Refresh billing to check its status before trying again.',
                     'metric' => null,
                 ]);
+            } finally {
+                $lock->release();
             }
-
-            Inertia::flash('toast', [
-                'type' => 'success',
-                'message' => "This project is on {$plan->name} now. Stripe will settle the difference on your next invoice.",
-            ]);
+            Inertia::flash('toast', ['type' => 'success', 'message' => $renewal
+                ? "{$plan->name} is scheduled for your next renewal. Your current allowance stays until then."
+                : "{$plan->name} was requested. Billing updates after Stripe confirms; usage already counted stays counted."]);
 
             return back();
         }
@@ -142,6 +166,33 @@ class BillingCheckoutController extends Controller
         // which is the one thing the client understands as "leave this
         // application".
         return Inertia::location($url);
+    }
+
+    public function cancelChange(Request $request): Response
+    {
+        $project = $this->projectOrFail();
+        $this->userOrFail($request);
+        $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->firstOrFail();
+        $lock = Cache::lock('billing-plan-change:'.$project->getKey(), 60);
+        if (! $lock->get()) {
+            return back()->withErrors(['plan' => 'A plan change is already being confirmed.']);
+        }
+        try {
+            $payer = $subscription->payer;
+            if (! $payer instanceof User || ! $this->provider->cancelPlanChange($payer, $project)) {
+                throw new \RuntimeException('The provider could not confirm cancellation.');
+            }
+            $subscription->refresh()->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null, 'stripe_schedule_id' => null, 'stripe_schedule_generation' => null])->save();
+            Inertia::flash('toast', ['type' => 'success', 'message' => 'Your current plan will continue at renewal.']);
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->withErrors(['plan' => 'We could not confirm cancellation of the scheduled change. Refresh and try again.']);
+        } finally {
+            $lock->release();
+        }
+
+        return back();
     }
 
     /** Change the card, the plan, or their mind. */

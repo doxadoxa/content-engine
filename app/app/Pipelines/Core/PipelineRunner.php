@@ -6,8 +6,11 @@ namespace App\Pipelines\Core;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\ModelCatalog;
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Enums\PipelineRunStatus;
 use App\Enums\PipelineStepStatus;
+use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep as StepRecord;
 use App\Models\Project;
@@ -15,11 +18,14 @@ use App\Pipelines\Contracts\Step;
 use App\Pipelines\Events\PipelineRunFinished;
 use App\Pipelines\Exceptions\InvalidPipelineDefinition;
 use App\Pipelines\Jobs\RunStepJob;
+use App\Pipelines\Steps\Planning\PlanningWindow;
+use App\Support\Engine\ArticleWorkflow;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
@@ -71,6 +77,16 @@ class PipelineRunner
      */
     public function start(string $pipelineKey, Project $project, array $input = [], ?string $contentItemId = null): PipelineRun
     {
+        $workItemId = $contentItemId ?? ($input['content_item_id'] ?? null);
+
+        if (($reason = $this->retirementReason($pipelineKey, is_string($workItemId) ? $workItemId : null, (string) $project->getKey())) !== null) {
+            throw ValidationException::withMessages(['pipeline' => $reason]);
+        }
+
+        if ($pipelineKey === 'planning' && ArticleWorkflow::usesBillingPeriod($project)) {
+            $input = [...$input, ...PlanningWindow::forProject($project, $input['month'] ?? null, $input['article_period_started_at'] ?? null)->input()];
+        }
+
         $definition = $this->registry->get($pipelineKey);
         $graph = StepGraph::for($definition);
 
@@ -176,6 +192,10 @@ class PipelineRunner
 
     private function dispatchReadyUnderTenant(PipelineRun $run): void
     {
+        if ($this->cancelRetiredRun($run)) {
+            return;
+        }
+
         if ($this->stoppedStatus($run->getKey())?->isTerminal() === true) {
             return;
         }
@@ -229,6 +249,10 @@ class PipelineRunner
 
     private function executeWhileLocked(PipelineRun $run, string $stepKey): ?PendingStepRetry
     {
+        if ($this->cancelRetiredRun($run)) {
+            return null;
+        }
+
         if ($this->stoppedStatus($run->getKey())?->isTerminal() === true) {
             return null;
         }
@@ -296,6 +320,10 @@ class PipelineRunner
 
     private function abandonUnderTenant(PipelineRun $run, string $stepKey, Throwable $e): void
     {
+        if ($this->cancelRetiredRun($run)) {
+            return;
+        }
+
         $record = $run->steps()->where('step_key', $stepKey)->first();
 
         if ($record === null || $record->status->isSettled()) {
@@ -412,6 +440,10 @@ class PipelineRunner
 
     private function resumeUnderTenant(PipelineRun $run): void
     {
+        if ($this->cancelRetiredRun($run)) {
+            return;
+        }
+
         $graph = $this->graphOrNull($run);
 
         // Nothing this build can do will move it. Resuming is the one path that
@@ -908,6 +940,78 @@ class PipelineRunner
         }
 
         return $status === null ? null : PipelineRunStatus::tryFrom((string) $status);
+    }
+
+    private function retirementReason(string $key, ?string $itemId, string $projectId): ?string
+    {
+        if (in_array($key, ['research', 'planning', 'generation'], true)) {
+            $unit = $itemId === null ? null : ContentItem::acrossProjects()->where('project_id', $projectId)->whereKey($itemId)->first();
+            if ($unit?->isSocial() !== true) {
+                $project = Project::query()->whereKey($projectId)->first();
+                $entitlements = app(Entitlements::class);
+                if ($project !== null) {
+                    $entitlements->forget($project);
+                }
+                if ($project === null || ! ArticleWorkflow::enabled($project)) {
+                    return 'This subscription does not include article creation.';
+                }
+                if (ArticleWorkflow::usesBillingPeriod($project)) {
+                    try {
+                        PlanningWindow::forProject($project);
+                    } catch (ValidationException $exception) {
+                        return $exception->getMessage();
+                    }
+                }
+                $alreadyCounted = $unit !== null && DB::table('article_approval_records')
+                    ->where('project_id', $projectId)->where('content_item_id', $unit->id)->exists();
+                $metric = $key === 'planning' || $alreadyCounted ? null : Metric::Articles;
+                if (($refusal = $entitlements->for($project)->refusal($metric)) !== null) {
+                    return $refusal->message;
+                }
+            }
+        }
+
+        if (config('social.enabled')) {
+            return null;
+        }
+
+        $social = str_starts_with($key, 'social_')
+            || in_array($key, ['repurpose', 'content_studio'], true)
+            || ($itemId !== null && ContentItem::acrossProjects()
+                ->where('project_id', $projectId)->whereKey($itemId)->social()->exists());
+
+        return $social ? 'Social publishing is retired.' : null;
+    }
+
+    /** Stop queued or recoverable retired work without erasing completed steps or costs. */
+    private function cancelRetiredRun(PipelineRun $run): bool
+    {
+        $workItemId = $run->content_item_id ?? ($run->input['content_item_id'] ?? null);
+        $reason = $this->retirementReason($run->pipeline, is_string($workItemId) ? $workItemId : null, $run->project_id);
+        $period = $run->input['article_period_started_at'] ?? $run->context['article_plan_period'] ?? null;
+        if ($reason === null && is_string($period) && in_array($run->pipeline, ['planning', 'research'], true)) {
+            try {
+                PlanningWindow::forProject($run->project, expectedPeriod: $period);
+            } catch (ValidationException $exception) {
+                $reason = $exception->getMessage();
+            }
+        }
+
+        if ($reason === null) {
+            return false;
+        }
+
+        PipelineRun::query()->whereKey($run->getKey())
+            ->whereIn('status', [PipelineRunStatus::Pending, PipelineRunStatus::Running, PipelineRunStatus::Failed])
+            ->update([
+                'status' => PipelineRunStatus::Cancelled,
+                'finished_at' => now(),
+                'error' => json_encode(['message' => $reason]),
+            ]);
+
+        $run->refresh();
+
+        return true;
     }
 
     private function elapsedMs(StepRecord $record): int

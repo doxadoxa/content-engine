@@ -51,5 +51,9 @@ interface LlmVisibilityGateway
      * `$countryIso` steers the model's own web search, so "best cleaning
      * service" is answered about the country the project sells in.
      */
-    public function ask(string $platform, string $prompt, ?string $countryIso = null): ?LlmAnswer;
+    /** @return list<array<string, mixed>> */
+    public function models(string $platform): array;
+
+    /** @param array<string, mixed> $settings */
+    public function ask(string $platform, string $prompt, ?string $countryIso = null, array $settings = []): ?LlmAnswer;
 }

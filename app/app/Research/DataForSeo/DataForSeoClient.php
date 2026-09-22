@@ -64,6 +64,20 @@ class DataForSeoClient
         return $this->unwrap($this->send('post', $path, [$task], $timeout), $path);
     }
 
+    /** @param array<string, mixed> $task */
+    public function postTask(string $path, array $task, ?int $timeout = null): DataForSeoTask
+    {
+        $body = $this->send('post', $path, [$task], $timeout);
+        $results = $this->unwrap($body, $path);
+        $envelope = $body['tasks'][0] ?? [];
+
+        return new DataForSeoTask($results,
+            is_string($envelope['id'] ?? null) ? $envelope['id'] : null,
+            is_numeric($envelope['cost'] ?? null) ? (float) $envelope['cost'] : null,
+            is_array($envelope['data'] ?? null) ? $envelope['data'] : [],
+        );
+    }
+
     /**
      * @return list<array<string, mixed>>
      */

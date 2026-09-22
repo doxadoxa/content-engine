@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Pipelines\Exceptions\RetryableStepFailure;
+use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Visibility\BrandPresence;
 use App\Visibility\DataForSeoLlmVisibility;
 use Illuminate\Support\Facades\Http;
@@ -131,7 +132,7 @@ final class LlmVisibilityTest extends TestCase
         // Citations hang off each section rather than off the answer, so both
         // have to be walked together or half of them are lost.
         $this->assertNotNull($answer);
-        $this->assertSame('First part. Second part.', $answer->text);
+        $this->assertSame("First part. \n\nSecond part.", $answer->text);
         $this->assertCount(2, $answer->citations);
     }
 
@@ -195,16 +196,15 @@ final class LlmVisibilityTest extends TestCase
     }
 
     #[Test]
-    public function a_prompt_is_cut_to_the_endpoints_limit(): void
+    public function an_overlong_prompt_is_refused_before_purchase(): void
     {
-        $this->fakeAnswer([['items' => [['sections' => [['text' => 'ok']]]]]]);
-
-        app(DataForSeoLlmVisibility::class)->ask('chat_gpt', str_repeat('a', 900));
-
-        // The belt, not the braces: GeneratePrompts already refuses anything
-        // over 300 characters, because truncating a prompt changes the question
-        // being measured rather than shortening it.
-        $this->assertSame(500, mb_strlen(Http::recorded()[0][0]->data()[0]['user_prompt']));
+        Http::fake();
+        try {
+            app(DataForSeoLlmVisibility::class)->ask('chat_gpt', str_repeat('a', 900));
+            $this->fail('The exact question must not be truncated.');
+        } catch (TerminalStepFailure) {
+            Http::assertNothingSent();
+        }
     }
 
     #[Test]

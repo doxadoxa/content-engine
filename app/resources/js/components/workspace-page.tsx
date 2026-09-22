@@ -58,8 +58,8 @@ export function WorkspaceHeader({
     actions,
 }: WorkspaceHeaderProps) {
     return (
-        <header className="flex min-w-0 flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
+        <header className="flex min-w-0 flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <div className="min-w-0 sm:flex-[1_1_24rem]">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
                     <span>{eyebrow}</span>
                     {context && (
@@ -81,7 +81,7 @@ export function WorkspaceHeader({
                 )}
             </div>
             {actions && (
-                <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+                <div className="flex w-full max-w-full min-w-0 shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                     {actions}
                 </div>
             )}

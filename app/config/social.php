@@ -3,60 +3,17 @@
 declare(strict_types=1);
 
 /*
-|--------------------------------------------------------------------------
-| Social presence
-|--------------------------------------------------------------------------
-|
-| Product rules, not deployment settings — which is why almost nothing here
-| reads env(). A ceiling that a deployment can raise from its own environment
-| is not a ceiling; it is a suggestion, and the one thing §5 is unambiguous
-| about is that the budget is a ceiling and never a plan. "Недобор допустим, перебор —
-| нет": an empty slot is a valid result of a planning run (§4.3), and the
-| instinct of a content engine to fill a calendar is exactly what burns an
-| account.
-|
-| The numbers that are the platform's rather than ours are marked as such. Those
-| are facts about Threads that we are allowed to learn from the API at runtime;
-| the rest are decisions.
-|
-| Two settings do read env(), and each says on its own line why it is not a
-| product rule: `enabled`, which is whether this installation runs the feature
-| at all, and `threads.reply_to_foreign`, which records something about the
-| platform we have not been able to verify.
-|
-*/
+ * Historical social rules. The product is focused on SEO/GEO; only explicitly
+ * enabled tests exercise these archived workflows. Stored posts, media, costs
+ * and delivery history remain available for audit and migration.
+ */
 
 return [
 
-    /*
-    |--------------------------------------------------------------------------
-    | Whether this deployment runs the social presence at all
-    |--------------------------------------------------------------------------
-    |
-    | The exception to the paragraph above, and the reason it is an exception is
-    | worth stating rather than leaving to be inferred: everything else in this
-    | file is a product rule — what the engine believes about publishing to
-    | Threads — and a deployment has no standing to disagree with it. This is a
-    | deployment question. Whether a Meta app exists, whether an operator ever
-    | connected an account, whether anybody here wants a presence on Threads:
-    | none of that is something §1–§11 can answer, because the answer is
-    | different per installation and changes when somebody signs up for
-    | something.
-    |
-    | Off, the feature is absent rather than idle. Five contours stop being
-    | scheduled, the webhook and the OAuth routes stop existing, Threads is not
-    | offered as a channel type, and the two screens that only make sense with a
-    | connected account are not in the navigation. An installation with no
-    | Threads app should not run hourly to discover that, nor offer an operator
-    | doors that open onto empty rooms.
-    |
-    | Default off, because that is the truthful default: a fresh installation
-    | has no Meta app. Turning it on is documented in `.env.example` beside the
-    | credentials it needs.
-    |
-    */
-
-    'enabled' => (bool) env('SOCIAL_PRESENCE_ENABLED', false),
+    // Social is retired from the product. Retain the implementation solely to
+    // validate historical records and transports in the explicit legacy suite.
+    // An old deployment variable must never reactivate jobs after an upgrade.
+    'enabled' => env('APP_ENV') === 'testing' && (bool) env('SOCIAL_PRESENCE_ENABLED', false),
 
     /*
     |--------------------------------------------------------------------------

@@ -6,9 +6,11 @@ namespace Tests\Feature\Engine;
 
 use App\Enums\ContentItemState;
 use App\Enums\PipelineRunStatus;
+use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Support\Tenancy\CurrentProject;
 use Closure;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -282,13 +284,14 @@ final class EngineTickTest extends TestCase
     #[Test]
     public function a_project_that_publishes_without_review_approves_its_own_drafts(): void
     {
-        $project = $this->project(['autopublish' => true]);
+        $project = $this->project(['autopublish' => true, 'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
 
         $draft = $this->inProject($project, fn (): ContentItem => ContentItem::factory()->create([
             'state' => ContentItemState::Draft,
             'body_markdown' => $this->publishableBody(),
         ]));
 
+        $this->automaticSchedule($project, $draft);
         $this->tick();
 
         // The wizard has offered this since onboarding existed and nothing read
@@ -300,7 +303,7 @@ final class EngineTickTest extends TestCase
     #[Test]
     public function an_article_that_fails_a_critical_check_is_held_back(): void
     {
-        $project = $this->project(['autopublish' => true]);
+        $project = $this->project(['autopublish' => true, 'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
 
         $draft = $this->inProject($project, fn (): ContentItem => ContentItem::factory()->create([
             'state' => ContentItemState::Draft,
@@ -313,6 +316,7 @@ final class EngineTickTest extends TestCase
                 .'Furthermore, we empower you to leverage a myriad of solutions.',
         ]));
 
+        $this->automaticSchedule($project, $draft);
         $this->tick();
 
         $this->assertSame(ContentItemState::Draft, $draft->refresh()->state);
@@ -321,13 +325,14 @@ final class EngineTickTest extends TestCase
     #[Test]
     public function a_money_or_health_project_is_never_auto_approved(): void
     {
-        $project = $this->project(['autopublish' => true, 'is_ymyl' => true]);
+        $project = $this->project(['autopublish' => true, 'is_ymyl' => true, 'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
 
         $draft = $this->inProject($project, fn (): ContentItem => ContentItem::factory()->create([
             'state' => ContentItemState::Draft,
             'body_markdown' => $this->publishableBody(),
         ]));
 
+        $this->automaticSchedule($project, $draft);
         $this->tick();
 
         $this->assertSame(ContentItemState::Draft, $draft->refresh()->state);
@@ -448,5 +453,14 @@ final class EngineTickTest extends TestCase
     private function inProject(Project $project, Closure $work): mixed
     {
         return app(CurrentProject::class)->run($project, $work);
+    }
+
+    private function automaticSchedule(Project $project, ContentItem $draft): void
+    {
+        $this->inProject($project, function () use ($draft): void {
+            $draft->update(['factcheck' => ['passed' => true]]);
+            $channel = Channel::factory()->create(['verified_at' => now(), 'autopublish' => true]);
+            app(ArticleSchedules::class)->scheduleNew($draft, now()->addDay(), $channel);
+        });
     }
 }

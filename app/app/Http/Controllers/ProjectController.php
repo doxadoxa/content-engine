@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -82,7 +83,17 @@ class ProjectController extends Controller
             $data['duty_hours'] = DutyHours::fromArray(is_array($submitted) ? $submitted : null)->toArray();
         }
 
-        $project->update($data);
+        DB::transaction(function () use ($request, $project, $data): void {
+            $locked = Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+            if (array_key_exists('autopublish', $data)) {
+                /** @var User $actor */
+                $actor = $request->user();
+                abort_unless($actor->projects()->whereKey($locked->id)->wherePivot('role', 'owner')->exists(), 403);
+                $data['onboarding'] = [...$locked->onboarding,
+                    'article_automation_started_at' => $locked->onboarding['article_automation_started_at'] ?? now()->toIso8601String()];
+            }
+            $locked->update($data);
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => "{$project->name} updated."]);
 
@@ -146,6 +157,8 @@ class ProjectController extends Controller
             'slug' => $project->slug,
             'status' => $project->status->value,
             'timezone' => $project->timezone,
+            'autopublish' => $project->autopublish,
+            'article_scheduling_enabled' => is_string($project->onboarding['article_automation_started_at'] ?? null),
             'duty_hours' => $project->dutyHours()->toArray(),
             'feed_urls' => $project->feedUrls(),
             'default_locale' => $project->default_locale,

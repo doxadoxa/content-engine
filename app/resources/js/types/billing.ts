@@ -1,5 +1,7 @@
-/** The five things a plan counts. Mirrors `App\Billing\Metric`. */
+/** The things a plan counts. Mirrors `App\Billing\Metric`. */
 export type BillingMetric =
+    | 'ai_answers'
+    | 'page_improvements'
     | 'articles'
     | 'social_posts'
     | 'site_audits'
@@ -41,7 +43,13 @@ export type BillingUsage = {
  * inside the onboarding wizard.
  */
 export type Billing = {
-    plan: { key: string; name: string; price_cents: number } | null;
+    plan: {
+        key: string;
+        name: string;
+        price_cents: number;
+        currency: string;
+        version: number;
+    } | null;
     status: BillingStatus | null;
     may_generate: boolean;
     refusal: BillingRefusal | null;

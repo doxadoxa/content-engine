@@ -41,6 +41,8 @@ final readonly class ProjectSpend
     private function __construct(
         public int $pipelineMicros,
         public int $assistantMicros,
+        /** @var array{recovered_provider_micros:int, unknown_provider_attempts:int, ambiguous_provider_records:int, completeness:string, limitations:list<string>} */
+        public array $providerEvidence,
     ) {}
 
     public static function for(Project $project, DateTimeInterface $since, ?DateTimeInterface $until = null): self
@@ -48,6 +50,7 @@ final readonly class ProjectSpend
         return new self(
             pipelineMicros: self::pipelines($project, $since, $until),
             assistantMicros: self::assistant($project, $since, $until),
+            providerEvidence: ProviderSpend::for($project, $since, $until),
         );
     }
 
@@ -61,16 +64,17 @@ final readonly class ProjectSpend
 
     public function totalMicros(): int
     {
-        return $this->pipelineMicros + $this->assistantMicros;
+        return $this->pipelineMicros + $this->assistantMicros + $this->providerEvidence['recovered_provider_micros'];
     }
 
-    /** @return array{pipeline_micros: int, assistant_micros: int, total_micros: int} */
+    /** @return array{pipeline_micros:int, assistant_micros:int, total_micros:int, recovered_provider_micros:int, unknown_provider_attempts:int, ambiguous_provider_records:int, completeness:string, limitations:list<string>} */
     public function toArray(): array
     {
         return [
             'pipeline_micros' => $this->pipelineMicros,
             'assistant_micros' => $this->assistantMicros,
             'total_micros' => $this->totalMicros(),
+            ...$this->providerEvidence,
         ];
     }
 
@@ -106,31 +110,28 @@ final readonly class ProjectSpend
      */
     public static function totals(array $projectIds, DateTimeInterface $since): array
     {
+        return array_map(static fn (array $summary): int => $summary['total_micros'], self::summaries($projectIds, $since));
+    }
+
+    /** Full evidence for administrative reports, with one provider reconciliation per project.
+     * @param  list<string>  $projectIds
+     * @return array<string,array{pipeline_micros:int, assistant_micros:int, total_micros:int, recovered_provider_micros:int, unknown_provider_attempts:int, ambiguous_provider_records:int, completeness:string, limitations:list<string>}>
+     */
+    public static function summaries(array $projectIds, DateTimeInterface $since): array
+    {
         if ($projectIds === []) {
             return [];
         }
-
-        $totals = [];
-
-        $steps = PipelineStep::acrossProjects()
-            ->whereIn('project_id', $projectIds)
-            ->where('created_at', '>=', $since)
-            ->groupBy('project_id')
-            ->pluck(DB::raw('sum(cost_micros) as spent'), 'project_id');
-
-        $turns = AssistantMessage::acrossProjects()
-            ->whereIn('project_id', $projectIds)
-            ->where('created_at', '>=', $since)
-            ->groupBy('project_id')
-            ->pluck(DB::raw('sum(cost_micros) as spent'), 'project_id');
-
-        foreach ([$steps, $turns] as $side) {
-            foreach ($side as $projectId => $spent) {
-                $totals[(string) $projectId] = ($totals[(string) $projectId] ?? 0) + (int) $spent;
-            }
+        $steps = PipelineStep::acrossProjects()->whereIn('project_id', $projectIds)->where('created_at', '>=', $since)
+            ->groupBy('project_id')->pluck(DB::raw('sum(cost_micros) as spent'), 'project_id');
+        $turns = AssistantMessage::acrossProjects()->whereIn('project_id', $projectIds)->where('created_at', '>=', $since)
+            ->groupBy('project_id')->pluck(DB::raw('sum(cost_micros) as spent'), 'project_id');
+        $summaries = [];
+        foreach (Project::query()->whereIn('id', $projectIds)->get() as $project) {
+            $summaries[$project->id] = (new self((int) ($steps[$project->id] ?? 0), (int) ($turns[$project->id] ?? 0), ProviderSpend::for($project, $since, null)))->toArray();
         }
 
-        return $totals;
+        return $summaries;
     }
 
     private static function pipelines(Project $project, DateTimeInterface $since, ?DateTimeInterface $until): int

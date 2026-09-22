@@ -242,7 +242,7 @@ final class ChatScreenTest extends TestCase
     }
 
     #[Test]
-    public function refusing_to_plan_twice_says_so_where_a_person_can_see_it(): void
+    public function repeated_planning_shows_the_reused_work_where_a_person_can_see_it(): void
     {
         // Through `Inertia::flash`, which is what this app's toast reads. A
         // plain session flash is shared by nothing and rendered by nothing, so
@@ -256,7 +256,7 @@ final class ChatScreenTest extends TestCase
         // different key never reaches a screen.
         $this->get('/home')
             ->assertOk()
-            ->assertSee('already being planned', escape: false);
+            ->assertSee('Researching useful topics for your calendar', escape: false);
     }
 
     #[Test]

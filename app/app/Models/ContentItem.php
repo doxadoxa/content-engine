@@ -22,6 +22,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -88,6 +89,8 @@ use Illuminate\Support\Str;
  * @property array<string, mixed> $review
  * @property Carbon|null $reviewed_at
  * @property string|null $public_url
+ * @property string|null $article_planning_period_id
+ * @property Carbon|null $planned_publication_at
  * @property Carbon|null $published_at
  */
 class ContentItem extends Model
@@ -101,6 +104,8 @@ class ContentItem extends Model
 
     protected $fillable = [
         'content_plan_id',
+        'article_planning_period_id',
+        'planned_publication_at',
         'content_idea_id',
         'brand_brief_id',
         'parent_id',
@@ -178,6 +183,18 @@ class ContentItem extends Model
         'citations' => '{}',
         'review' => '{}',
     ];
+
+    /** @return BelongsTo<ArticlePlanningPeriod, $this> */
+    public function articlePlanningPeriod(): BelongsTo
+    {
+        return $this->belongsTo(ArticlePlanningPeriod::class);
+    }
+
+    /** @return HasOne<ArticleSchedule, $this> */
+    public function articleSchedule(): HasOne
+    {
+        return $this->hasOne(ArticleSchedule::class);
+    }
 
     public static function booted(): void
     {
@@ -621,6 +638,7 @@ class ContentItem extends Model
             'entities' => 'array',
             'intent' => SearchIntent::class,
             'scheduled_for' => 'date',
+            'planned_publication_at' => 'datetime',
             // The instant, next to the article calendar's date. A social slot
             // stands inside a 60–90 minute duty window (§4.3), which a date
             // cannot express; the two are written together and the date is

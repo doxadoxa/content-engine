@@ -20,7 +20,7 @@ use Illuminate\Support\Carbon;
  * @property int $impressions
  * @property int $clicks
  * @property int|null $position_tenths
- * @property bool $indexed
+ * @property bool|null $indexed
  * @property int|null $sessions
  * @property int|null $engaged_sessions
  * @property int|null $engagement_seconds

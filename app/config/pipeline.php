@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+use App\Pipelines\Definitions\AiAccuracyPipeline;
+use App\Pipelines\Definitions\AiSamplePipeline;
 use App\Pipelines\Definitions\ContentStudioPipeline;
 use App\Pipelines\Definitions\DemoPipeline;
+use App\Pipelines\Definitions\FactMaintenancePipeline;
 use App\Pipelines\Definitions\FeedbackPipeline;
 use App\Pipelines\Definitions\GenerationPipeline;
+use App\Pipelines\Definitions\PageImprovementPipeline;
 use App\Pipelines\Definitions\PlanningPipeline;
 use App\Pipelines\Definitions\RepurposePipeline;
 use App\Pipelines\Definitions\ResearchPipeline;
@@ -36,9 +40,13 @@ return [
         ResearchPipeline::class,
         PlanningPipeline::class,
         GenerationPipeline::class,
+        PageImprovementPipeline::class,
         RepurposePipeline::class,
         FeedbackPipeline::class,
         VisibilityPipeline::class,
+        AiSamplePipeline::class,
+        AiAccuracyPipeline::class,
+        FactMaintenancePipeline::class,
         SocialListenPipeline::class,
         // Weekly, and deliberately not started by `engine:tick`: each contour
         // blocks only itself, and the week's slots feed none of the six the

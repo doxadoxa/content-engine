@@ -11,6 +11,7 @@ use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
 use App\Pipelines\Steps\Research\StoreIdeas;
 use App\Support\Corpus\TopicLibrary;
+use App\Support\Engine\ArticleWorkflow;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -64,7 +65,10 @@ class SelectTopics extends AbstractStep
     public function handle(StepContext $context): StepResult
     {
         $pool = $context->output(GatherIdeas::key(), IdeaPoolPayload::class);
-        $capacity = $this->capacity($context, $this->month($context));
+        $capacity = $this->capacity($context);
+        if ($capacity === 0) {
+            return StepResult::success(new SelectionPayload([], []));
+        }
 
         $published = $this->publishedTopics();
 
@@ -430,21 +434,14 @@ class SelectTopics extends AbstractStep
         return max(1, (int) ceil($capacity / max(1, $clusters)));
     }
 
-    private function capacity(StepContext $context, Carbon $month): int
+    private function capacity(StepContext $context): int
     {
         // From the window, not from the calendar month: half a month left means
         // half a month's articles, and the two steps have to agree or the
         // calendar ends up with more units than dates.
-        return PlanningWindow::resolve($context->get('month'))
-            ->capacityFor($context->project->weeklyTarget());
-    }
+        $cadence = ArticleWorkflow::calendarCapacity($context->project, PlanningWindow::forProject($context->project, $context->get('month'), $context->get('article_period_started_at')));
+        $remaining = ArticleWorkflow::capacity($context->project);
 
-    private function month(StepContext $context): Carbon
-    {
-        $month = $context->get('month');
-
-        return $month === null
-            ? Carbon::now()->addMonth()->startOfMonth()
-            : Carbon::parse((string) $month)->startOfMonth();
+        return $remaining === null ? $cadence : min($cadence, $remaining);
     }
 }

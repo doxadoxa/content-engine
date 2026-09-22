@@ -30,21 +30,24 @@ type Row = {
     billing_status: string | null;
     trial_ends_at: string | null;
     price_cents: number;
+    currency: string | null;
     cost_micros: number;
+    cost_complete: boolean;
 };
 
 type Props = {
     q: string;
-    currency: string;
+    cost_currency: string;
     projects: Paginated<Row>;
 };
 
-export default function AdminProjects({ q, currency, projects }: Props) {
-    const money = (cents: number) =>
+export default function AdminProjects({ q, cost_currency, projects }: Props) {
+    const money = (cents: number, currency: string) =>
         new Intl.NumberFormat(undefined, {
             style: 'currency',
             currency: currency.toUpperCase(),
-            maximumFractionDigits: 0,
+            maximumFractionDigits: 2,
+            currencyDisplay: 'code',
         }).format(cents / 100);
 
     const [query, setQuery] = useDebouncedSearch(q, (value) =>
@@ -88,10 +91,10 @@ export default function AdminProjects({ q, currency, projects }: Props) {
                                         <TableHead>Plan</TableHead>
                                         <TableHead>Engine</TableHead>
                                         <TableHead className="text-right">
-                                            Pays
+                                            Plan price
                                         </TableHead>
                                         <TableHead className="text-right">
-                                            Costs
+                                            Recorded usage
                                         </TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -137,12 +140,24 @@ export default function AdminProjects({ q, currency, projects }: Props) {
                                                 {project.status}
                                             </TableCell>
                                             <TableCell className="text-right tabular-nums">
-                                                {money(project.price_cents)}
+                                                {project.currency
+                                                    ? money(
+                                                          project.price_cents,
+                                                          project.currency,
+                                                      )
+                                                    : 'No plan'}
                                             </TableCell>
                                             <TableCell className="text-right tabular-nums">
                                                 {money(
                                                     project.cost_micros /
                                                         10_000,
+                                                    cost_currency,
+                                                )}
+                                                {!project.cost_complete && (
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Known subtotal; some
+                                                        charges unknown
+                                                    </p>
                                                 )}
                                             </TableCell>
                                         </TableRow>

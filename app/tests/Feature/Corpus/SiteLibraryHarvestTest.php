@@ -57,6 +57,10 @@ final class SiteLibraryHarvestTest extends TestCase
     #[Test]
     public function a_commercial_page_is_read_again_when_the_sitemap_says_it_changed(): void
     {
+        // Keep the unchanged fixture inside the freshness window. Otherwise
+        // the real calendar eventually makes this a TTL refresh test as well.
+        $this->travelTo(Carbon::parse('2026-08-16 12:00:00'));
+
         $changed = $this->page('https://example.test/en/services', SitePageKind::Commercial, [
             'read_at' => Carbon::parse('2026-08-01'),
             'published_at' => Carbon::parse('2026-08-15'),

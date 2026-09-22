@@ -60,7 +60,7 @@ final readonly class Refusal
     {
         return new self(
             'past_due',
-            'The last payment did not go through. Approved work is still being published.',
+            'The last payment did not go through. Update your payment method to resume new work.',
         );
     }
 

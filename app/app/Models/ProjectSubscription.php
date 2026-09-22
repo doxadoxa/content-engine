@@ -48,6 +48,11 @@ use Illuminate\Support\Carbon;
  * @property string|null $stripe_status
  * @property string|null $stripe_price
  * @property Carbon|null $last_event_at
+ * @property string|null $pending_plan
+ * @property int|null $pending_plan_version
+ * @property Carbon|null $pending_plan_at
+ * @property string|null $stripe_schedule_generation
+ * @property string|null $stripe_schedule_id
  * @property bool $paused_by_billing
  */
 class ProjectSubscription extends Model
@@ -74,6 +79,11 @@ class ProjectSubscription extends Model
         'stripe_price',
         'last_event_at',
         'paused_by_billing',
+        'pending_plan',
+        'pending_plan_version',
+        'pending_plan_at',
+        'stripe_schedule_id',
+        'stripe_schedule_generation',
     ];
 
     /**
@@ -201,6 +211,8 @@ class ProjectSubscription extends Model
             'canceled_at' => 'datetime',
             'last_event_at' => 'datetime',
             'paused_by_billing' => 'boolean',
+            'pending_plan_version' => 'integer',
+            'pending_plan_at' => 'datetime',
         ];
     }
 }

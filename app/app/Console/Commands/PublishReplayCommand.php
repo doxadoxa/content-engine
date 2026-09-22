@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\RetiredSocialDelivery;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Console\Command;
 
@@ -27,6 +28,12 @@ class PublishReplayCommand extends Command
 
         if ($delivery === null) {
             $this->components->error('No delivery with that id.');
+
+            return self::FAILURE;
+        }
+
+        if ($current->run($delivery->project_id, fn (): bool => RetiredSocialDelivery::applies($delivery))) {
+            $this->components->error('Social publishing is retired; this delivery cannot be replayed.');
 
             return self::FAILURE;
         }

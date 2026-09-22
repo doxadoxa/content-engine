@@ -1,0 +1,14 @@
+# Independent billing and delivery-cost review
+
+Reviewer: `pilot_discovery`, independent of the billing/economics implementation. Reviewed the versioned plan catalog and Stripe mapping, checkout price verification, first-acceptance allowance, operator effort records and corrections, delivery-cost report, durable checker spending records, sampling execution provenance, and `ProjectSpend` reconciliation.
+
+**Source review approved after fixes.** Two material findings were resolved:
+
+1. New paid workflows could bypass the existing generation entitlement checks. Proposal generation, sampling, answer accuracy and fact maintenance now check access at kickoff and before queued paid work. The shared checker additionally rechecks entitlement before each provider request. Refused calls do not become spending records; historical evidence remains readable.
+2. A legacy duplicate dispatch could attach an answer/check to an empty duplicate run while its real cost was already metered on another run. Treating that mutable pointer as proof of execution could count the bill twice. New sampling answers preserve the actual execution run in immutable metadata; per-call checker receipts already pin their execution run. Multiple legacy matches are explicitly ambiguous and do not create guessed recovered cost. The regression with 100 metered units on the original and zero on the linked duplicate now reports 100, with an ambiguity warning.
+
+The reviewer also checked the follow-up first-acceptance guard: every plan requires publication entitlement before a never-accepted proposal can receive its initial allowance record. A missing or canceled subscription cannot establish a free legacy acceptance and later carry it into the paid package.
+
+Known provider receipts are reconciled with their corresponding step total and only the missing difference is added. Pending, unknown and unpriced attempts remain visible, and they keep the package scenario unknown. Reported checker tokens use the pinned price-list version. Linked spending uses the step's accounting window so adjacent reports do not count the same receipt twice; this is distinct from a provider invoice date. Operator corrections retain earlier records, count only the latest replacement, and enforce tenant/owner boundaries. Unpriced work, owner review time and a price scenario are kept distinct from paid revenue or profit.
+
+The provider author reported 100 tests / 458 assertions for the combined checker, F5 and metering gate, followed by 21 tests / 96 assertions including the duplicate-pointer regression. Root reported 136 billing tests / 466 assertions before the final first-acceptance follow-up. This reviewer inspected the source and regressions rather than rerunning those shared database suites. Final combined gates, authenticated visual verification, actual Stripe configuration, provider-invoice reconciliation and production economics remain separate evidence.

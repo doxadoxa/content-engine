@@ -203,6 +203,12 @@ final readonly class Entitlement
         $out = [];
 
         foreach (Metric::cases() as $metric) {
+            // An excluded or retired feature is not an allowance the manager
+            // used up. Keep its underlying entitlement unchanged.
+            if (($metric === Metric::SocialPosts && ! config('social.enabled'))
+                || $this->allowance?->limit($metric->value) === 0) {
+                continue;
+            }
             if ($this->remaining($metric) === 0) {
                 $out[] = $metric->value;
             }
@@ -250,6 +256,8 @@ final readonly class Entitlement
                 'key' => $this->plan->key,
                 'name' => $this->plan->name,
                 'price_cents' => $this->plan->priceCents,
+                'currency' => $this->plan->currency,
+                'version' => $this->plan->version,
             ],
             'status' => $this->status->value,
             'may_generate' => $this->mayGenerate(),

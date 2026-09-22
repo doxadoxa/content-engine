@@ -25,7 +25,7 @@ export function PlanViews({ active }: { active: 'calendar' | 'list' }) {
             <ViewLink
                 href={contentIndex().url}
                 icon={Rows3}
-                label="List"
+                label="Content"
                 active={active === 'list'}
             />
         </div>

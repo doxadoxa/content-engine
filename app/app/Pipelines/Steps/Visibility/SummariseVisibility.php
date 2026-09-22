@@ -36,6 +36,9 @@ class SummariseVisibility extends AbstractStep
 
     public function handle(StepContext $context): StepResult
     {
+        if (config('visibility.stable_sampling', true)) {
+            return StepResult::skip('Sampling was queued. Each answer and the completed run are reported separately after collection.');
+        }
         $report = VisibilityReport::latest();
 
         $context->remember('visibility.score', $report->score());

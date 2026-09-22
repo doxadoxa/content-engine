@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Billing\Contracts\BillingProvider;
+use App\Billing\Entitlements;
+use App\Billing\Plan;
 use App\Billing\PlanCatalog;
+use App\Billing\PlanSelection;
 use App\Billing\TrialEligibility;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
@@ -24,6 +27,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -50,6 +54,7 @@ class OnboardingController extends Controller
         private readonly TrialEligibility $trials,
         private readonly BillingProvider $provider,
         private readonly PlanCatalog $plans,
+        private readonly PlanSelection $selection,
     ) {}
 
     /** The wizard itself, resuming whatever draft the operator has open. */
@@ -65,11 +70,19 @@ class OnboardingController extends Controller
 
         return Inertia::render('onboarding/wizard', [
             'draft' => $draft === null ? null : $this->toProps($draft),
+            'articlesEnabled' => $this->articleOffer($draft),
+            'selectedPlan' => $this->selection->selected($request, $draft)->toArray(),
+            'plans' => array_map(static fn (Plan $plan): array => $plan->toArray(), $this->plans->selfServe()),
+            'trialDays' => $this->plans->trialDays(),
+            'offerVersion' => ($draft === null ? null : app(Entitlements::class)->for($draft)->plan?->version) ?? $this->plans->currentVersion(),
             'channelTypes' => array_map(static fn (ChannelType $type): array => [
                 'value' => $type->value,
                 'label' => $type->label(),
                 'is_social' => $type->isSocial(),
-            ], ChannelType::cases()),
+            ], array_values(array_filter(
+                ChannelType::cases(),
+                static fn (ChannelType $type): bool => ! $type->isSocial() || (bool) config('social.enabled'),
+            ))),
         ]);
     }
 
@@ -126,6 +139,18 @@ class OnboardingController extends Controller
         $this->authoriseDraft($request, $project);
 
         $validated = $request->validated();
+        if ($validated['step'] === 'market') {
+            $offer = app(Entitlements::class)->for($project)->plan ?? $this->selection->selected($request, $project);
+            $locales = array_unique([(string) $validated['answers']['language'], ...($validated['answers']['extra_languages'] ?? [])]);
+            if ($offer->version >= 4 && $offer->limit('locales') !== null && count($locales) > $offer->limit('locales')) {
+                throw ValidationException::withMessages(['answers.extra_languages' => 'This plan includes one language. Choose the language for your website.']);
+            }
+        }
+        if ($validated['step'] === 'offer') {
+            $plan = $this->selection->validate((string) $validated['answers']['key'], (int) $validated['answers']['version']);
+            $request->session()->put(PlanSelection::SESSION_KEY, $this->selection->identity($plan));
+            $project->weekly_target = $plan->weeklyTarget() ?? 7;
+        }
 
         $project->forceFill([
             'onboarding' => [...$project->onboarding, $validated['step'] => $validated['answers']],
@@ -145,6 +170,12 @@ class OnboardingController extends Controller
 
         /** @var User $user */
         $user = $request->user();
+
+        $selected = $this->selection->selected($request, $project);
+        $plan = $this->selection->validate($selected->key, $selected->version);
+        if ($plan->version >= 4 && count($project->locales) > ($plan->limit('locales') ?? PHP_INT_MAX)) {
+            throw ValidationException::withMessages(['plan' => 'Select one website language before starting this plan.']);
+        }
 
         // Before anything is written, because everything below this line
         // spends money: the brief is a model call, and `begin()` starts
@@ -225,7 +256,6 @@ class OnboardingController extends Controller
         // A project whose checkout is abandoned sits at Launching with no
         // subscription. That is a legible state rather than a stuck one: the
         // banner says there is no card and links to the same checkout.
-        $plan = $this->plans->get((string) config('billing.default_plan', 'medium'));
 
         try {
             return Inertia::location($this->provider->checkoutUrl(
@@ -255,6 +285,14 @@ class OnboardingController extends Controller
         }
     }
 
+    private function articleOffer(?Project $project): bool
+    {
+        $plan = ($project === null ? null : app(Entitlements::class)->for($project)->plan)
+            ?? $this->plans->defaultPlan();
+
+        return $plan->limit('articles') === null || $plan->limit('articles') > 0;
+    }
+
     /**
      * A project exists from step one, so the analysis and the answers have
      * somewhere to live and a closed tab is resumable.
@@ -281,7 +319,9 @@ class OnboardingController extends Controller
                 'locales' => ['en'],
                 'status' => ProjectStatus::Active,
                 'onboarding_status' => OnboardingStatus::Draft,
-                'weekly_target' => (int) config('onboarding.defaults.weekly_target', 3),
+                'weekly_target' => $this->selection->selected(request())->weeklyTarget() ?? 7,
+                'onboarding' => ['offer' => $this->selection->identity($this->selection->selected(request()))],
+                'autopublish' => true,
                 'research_seeds' => [],
             ]);
 
@@ -330,7 +370,7 @@ class OnboardingController extends Controller
                 // A YMYL project cannot opt out of review, whatever the form
                 // sent: the checkbox is disabled in the UI, and a disabled
                 // checkbox is a suggestion rather than a rule.
-                'autopublish' => ! $project->is_ymyl && (bool) ($answers['autopublish'] ?? false),
+                'autopublish' => $this->articleOffer($project) && ! $project->is_ymyl && (bool) ($answers['autopublish'] ?? $project->autopublish),
             ],
             default => [],
         };
@@ -427,6 +467,7 @@ class OnboardingController extends Controller
                     'config' => ['endpoint' => $endpoint],
                     'secret' => (string) ($answers['webhook_secret'] ?? Str::random(48)),
                     'is_enabled' => true,
+                    'autopublish' => $project->autopublish,
                 ],
             );
 
@@ -437,7 +478,7 @@ class OnboardingController extends Controller
             $this->publishers->for(ChannelType::Webhook)->ping($website, $project);
         }
 
-        foreach (array_map('strval', $answers['social'] ?? []) as $type) {
+        foreach (config('social.enabled') ? array_map('strval', $answers['social'] ?? []) : [] as $type) {
             $channelType = ChannelType::tryFrom($type);
 
             if ($channelType === null || ! $channelType->isSocial()) {
@@ -468,6 +509,7 @@ class OnboardingController extends Controller
             'competitors' => $project->competitors,
             'seed_keywords' => $project->research_seeds,
             'weekly_target' => $project->weekly_target,
+            'autopublish' => $project->autopublish,
             'duty_hours' => $project->dutyHours()->toArray(),
             'analysis' => $project->site_analysis,
             'onboarding' => $project->onboarding,

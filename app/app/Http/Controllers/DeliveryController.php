@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Enums\DeliveryStatus;
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\RetiredSocialDelivery;
 use App\Publishing\StrandedDeliveries;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -61,7 +62,7 @@ class DeliveryController extends Controller
                 'channel' => $delivery->channel->name,
                 'content' => $delivery->contentItem?->title,
                 'content_id' => $delivery->content_item_id,
-                'can_replay' => $delivery->status === DeliveryStatus::DeadLetter,
+                'can_replay' => $delivery->status === DeliveryStatus::DeadLetter && ! RetiredSocialDelivery::applies($delivery),
                 // A row nothing is going to attempt. `pending` reads as healthy
                 // — it is what every delivery looks like for its first second —
                 // so without this the one failure with no automatic way out is
@@ -96,6 +97,8 @@ class DeliveryController extends Controller
      */
     public function replay(WebhookDelivery $delivery, ChannelPublisherRegistry $publishers): RedirectResponse
     {
+        abort_if(RetiredSocialDelivery::applies($delivery), 409, 'Social publishing is retired.');
+
         // The screen only offers the button on a dead letter, and the screen is
         // not the guard. A `pending` or `retrying` row is one somebody may
         // still be sending — replaying it is how a Threads root post gets

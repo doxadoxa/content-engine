@@ -72,11 +72,11 @@ class AdminProjectController extends Controller
         /** @var list<string> $ids */
         $ids = $projects->pluck('id')->values()->all();
 
-        $spends = ProjectSpend::totals($ids, $since);
+        $spends = ProjectSpend::summaries($ids, $since);
 
         return Inertia::render('admin/projects', [
             'q' => $search,
-            'currency' => (string) config('billing.currency', 'eur'),
+            'cost_currency' => 'usd',
             'projects' => $projects->through(function (Project $project) use ($subscriptions, $spends): array {
                 $subscription = $subscriptions->get($project->getKey());
 
@@ -90,7 +90,9 @@ class AdminProjectController extends Controller
                     'billing_status' => $subscription?->status->value,
                     'trial_ends_at' => $subscription?->trial_ends_at?->toIso8601String(),
                     'price_cents' => $subscription?->plan()->priceCents ?? 0,
-                    'cost_micros' => $spends[$project->getKey()] ?? 0,
+                    'currency' => $subscription?->plan()->currency,
+                    'cost_micros' => $spends[$project->getKey()]['total_micros'] ?? 0,
+                    'cost_complete' => ($spends[$project->getKey()]['completeness'] ?? 'incomplete') === 'complete',
                 ];
             }),
         ]);
@@ -106,6 +108,9 @@ class AdminProjectController extends Controller
         $entitlement = $this->current->run($project, fn () => $this->entitlements->for($project)->toArray());
 
         $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
+
+        $spend = ProjectSpend::for($project, $since)->toArray();
+        $fee = $subscription?->status === BillingStatus::Active && $subscription->plan !== 'trial' ? $subscription->plan()->priceCents : 0;
 
         return Inertia::render('admin/project', [
             'project' => [
@@ -132,10 +137,12 @@ class AdminProjectController extends Controller
                 'stripe_status' => $subscription->stripe_status,
                 'payer' => $subscription->payer?->email,
             ],
-            'spend' => ProjectSpend::for($project, $since)->toArray(),
-            'currency' => (string) config('billing.currency', 'eur'),
+            'spend' => $spend,
+            'monthly_plan_fee_cents' => $fee,
+            'contribution_micros' => $subscription?->plan()->currency === 'usd' && $spend['completeness'] === 'complete' ? $fee * 10_000 - $spend['total_micros'] : null,
+            'cost_currency' => 'usd',
             'plans' => array_map(
-                fn ($plan): array => ['key' => $plan->key, 'name' => $plan->name, 'price_cents' => $plan->priceCents],
+                fn ($plan): array => ['key' => $plan->key, 'name' => $plan->name, 'price_cents' => $plan->priceCents, 'currency' => $plan->currency],
                 $this->plans->all(),
             ),
             'members' => $project->users()->get()->map(fn (User $user): array => [

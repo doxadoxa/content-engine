@@ -30,7 +30,10 @@ type Margin = {
     plan: string;
     status: string;
     price_cents: number;
+    currency: string;
+    contribution_micros: number | null;
     cost_micros: number;
+    cost_complete: boolean;
     ceiling_micros: number | null;
 };
 
@@ -43,9 +46,11 @@ type Props = {
         past_due: number;
         canceled: number;
     };
-    revenue_cents: number;
+    revenue_by_currency: { currency: string; cents: number }[];
+    contribution_micros: number | null;
     cost_micros: number;
-    currency: string;
+    cost_complete: boolean;
+    cost_currency: string;
     margins: Margin[];
     recent_actions: {
         id: string;
@@ -67,24 +72,23 @@ type Props = {
  */
 export default function AdminOverview({
     counts,
-    revenue_cents,
+    revenue_by_currency,
+    contribution_micros,
     cost_micros,
-    currency,
+    cost_complete,
+    cost_currency,
     margins,
     recent_actions,
 }: Props) {
-    const money = (cents: number) =>
+    const money = (cents: number, currency: string) =>
         new Intl.NumberFormat(undefined, {
             style: 'currency',
             currency: currency.toUpperCase(),
-            maximumFractionDigits: 0,
+            maximumFractionDigits: 2,
+            currencyDisplay: 'code',
         }).format(cents / 100);
 
     const costCents = cost_micros / 10_000;
-    const marginPct =
-        revenue_cents === 0
-            ? null
-            : Math.round(((revenue_cents - costCents) / revenue_cents) * 100);
 
     return (
         <>
@@ -101,21 +105,42 @@ export default function AdminOverview({
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <Stat
                         icon={Coins}
-                        label="Revenue"
-                        value={money(revenue_cents)}
-                        hint={`${counts.active} paying`}
+                        label="Monthly plan fees"
+                        value={
+                            revenue_by_currency
+                                .map((row) => money(row.cents, row.currency))
+                                .join(' + ') || 'No active fees'
+                        }
+                        hint={`${counts.active} active plans · grouped by currency`}
                     />
                     <Stat
                         icon={TrendingUp}
-                        label="Cost"
-                        value={money(costCents)}
-                        hint="models, images, conversation"
+                        label="Recorded usage"
+                        value={money(costCents, cost_currency)}
+                        hint={
+                            cost_complete
+                                ? 'Known model, image and conversation charges'
+                                : 'Known subtotal; some provider charges remain unknown'
+                        }
                     />
                     <Stat
                         icon={TrendingUp}
-                        label="Gross margin"
-                        value={marginPct === null ? '—' : `${marginPct}%`}
-                        hint="revenue less what it cost to serve"
+                        label="Usage contribution"
+                        value={
+                            contribution_micros === null
+                                ? 'Unavailable'
+                                : money(
+                                      contribution_micros / 10_000,
+                                      cost_currency,
+                                  )
+                        }
+                        hint={
+                            contribution_micros === null
+                                ? cost_complete
+                                    ? 'Different currencies; no exchange rate applied'
+                                    : 'Some provider charges remain unknown'
+                                : 'Monthly fees less usage to date; excludes support and overhead'
+                        }
                     />
                     <Stat
                         icon={Users}
@@ -130,12 +155,13 @@ export default function AdminOverview({
                 >
                     <CardHeader className="border-b px-5 py-5 sm:px-6">
                         <CardTitle className="text-base">
-                            Worst margin first
+                            Highest metered usage first
                         </CardTitle>
                         <CardDescription>
-                            The projects eating more than they pay for. No
-                            generic billing dashboard can compute this — it
-                            needs both halves.
+                            Plan fees keep their billing currency. Metered usage
+                            is USD. Cross-currency contributions remain
+                            unavailable; these figures exclude support and
+                            overhead.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="p-0">
@@ -146,13 +172,13 @@ export default function AdminOverview({
                                         <TableHead>Project</TableHead>
                                         <TableHead>Plan</TableHead>
                                         <TableHead className="text-right">
-                                            Pays
+                                            Plan fees
                                         </TableHead>
                                         <TableHead className="text-right">
-                                            Costs
+                                            Recorded usage
                                         </TableHead>
                                         <TableHead className="text-right">
-                                            Margin
+                                            Usage contribution
                                         </TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -161,7 +187,8 @@ export default function AdminOverview({
                                         const rowCost =
                                             row.cost_micros / 10_000;
                                         const underwater =
-                                            rowCost > row.price_cents;
+                                            row.contribution_micros !== null &&
+                                            row.contribution_micros < 0;
 
                                         return (
                                             <TableRow key={row.project_id}>
@@ -179,10 +206,16 @@ export default function AdminOverview({
                                                     </Badge>
                                                 </TableCell>
                                                 <TableCell className="text-right tabular-nums">
-                                                    {money(row.price_cents)}
+                                                    {money(
+                                                        row.price_cents,
+                                                        row.currency,
+                                                    )}
                                                 </TableCell>
                                                 <TableCell className="text-right tabular-nums">
-                                                    {money(rowCost)}
+                                                    {money(
+                                                        rowCost,
+                                                        cost_currency,
+                                                    )}
                                                 </TableCell>
                                                 <TableCell
                                                     className={`text-right tabular-nums ${underwater ? 'text-amber-600 dark:text-amber-400' : ''}`}
@@ -193,10 +226,16 @@ export default function AdminOverview({
                                                             aria-label="Costs more than it pays"
                                                         />
                                                     )}
-                                                    {money(
-                                                        row.price_cents -
-                                                            rowCost,
-                                                    )}
+                                                    {row.contribution_micros ===
+                                                    null
+                                                        ? row.cost_complete
+                                                            ? 'Unavailable · currency differs'
+                                                            : 'Unavailable · charges unknown'
+                                                        : money(
+                                                              row.contribution_micros /
+                                                                  10_000,
+                                                              cost_currency,
+                                                          )}
                                                 </TableCell>
                                             </TableRow>
                                         );

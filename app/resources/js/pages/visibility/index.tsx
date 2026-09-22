@@ -1,575 +1,746 @@
-import { Head } from '@inertiajs/react';
-import { AlertTriangle, Eye, Sparkles } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/components/ui/table';
+import { Head, Link, useForm, usePage, usePoll } from '@inertiajs/react';
+import { useEffect, useRef, useState } from 'react';
+import { resultDate } from '@/components/manager-results';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
     WorkspaceHeader,
     WorkspacePage,
-    workspaceHeroClass,
     workspacePanelClass,
 } from '@/components/workspace-page';
-import { index } from '@/routes/visibility';
+import { SamplingAllowancePanel } from './sampling-allowance';
+import type { SamplingAllowance } from './sampling-allowance';
+import { platformLabel, TrackedQuestions } from './tracked-questions';
+import type { TrackedQuestion } from './tracked-questions';
 
-type LocaleRow = {
-    locale: string;
-    score: number | null;
-    answered: number;
-    mentions: number;
-    prompts: number;
-};
-
-type Props = {
-    summary: {
-        score: number | null;
-        monitored_prompts: number;
-        answered: number;
-        mentions: number;
-        declined: number;
-        money_spent: number;
-        last_asked_on: string | null;
-        configured: boolean;
+type Prompt = { text: string; locale: string; intent: string; purpose: string };
+type Set = {
+    id: string;
+    version: number;
+    change_reason: string;
+    configuration: {
+        prompts: Prompt[];
+        panel: { platform: string; model: string }[];
+        max_answers: number;
     };
-    by_locale: LocaleRow[];
-    by_platform: {
-        platform: string;
-        label: string;
-        score: number | null;
-        answered: number;
-        mentions: number;
-        /** The day this assistant's freshest answers were taken. */
-        last_asked_on: string | null;
-        /** Its freshest reading trails the rest of the panel by enough to say so. */
-        stale: boolean;
-    }[];
-    prompts: {
+};
+type Cell = {
+    id: string;
+    status: string;
+    reason: string | null;
+    specification: {
+        prompt: Prompt;
+        platform: { platform: string; model: string };
+        market: string;
+    };
+    answer: {
         id: string;
-        text: string;
-        locale: string;
-        intent: string;
-        intent_label: string;
-        mentioned_in: string[];
-        answered: number;
-        declined: number;
-    }[];
-    sources: { host: string; citations: number; is_aggregator: boolean }[];
-    competitors: { host: string; citations: number }[];
-    project: { name: string; locales: string[] };
+        received_at: string;
+        resolved_model: string | null;
+        mentioned_in_text: boolean | null;
+        cited_own_site: boolean | null;
+        sent_country: string | null;
+        web_search_reported: boolean | null;
+    } | null;
 };
-
-const INTENT_TONE: Record<string, string> = {
-    buying: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-    comparison:
-        'bg-[#3155a5]/10 text-[#27478a] dark:bg-[#3155a5]/25 dark:text-[#bdc9e8]',
-    learning: 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+type Report = {
+    allowance: SamplingAllowance | null;
+    set: Set | null;
+    method: string;
+    runs: { id: string; created_at: string; status: string }[];
+    selected: {
+        id: string;
+        status: string;
+        set_version: number;
+        set_id: string;
+        expected_cells: number;
+        answered_cells: number;
+        discovery: { answered: number; mentions: number; citations: number };
+        known_cost_micros: number | null;
+        unknown_cost_cells: number;
+        comparison: { reason: string; previous_run_id: string | null };
+        cells: Cell[];
+    } | null;
 };
-
-/**
- * What the assistants say about the brand.
- *
- * The per-locale breakdown sits directly under the headline rather than in a tab,
- * because the headline on its own is the number that misled us: a project can
- * read 0% overall while being named in every Russian answer, and averaging the
- * languages together hides the one that is sending customers.
- */
+const labels: Record<string, string> = {
+    queued: 'Queued',
+    running: 'Checking answers',
+    answered: 'Answer recorded',
+    empty: 'No answer returned',
+    unavailable: 'Unavailable',
+    failed: 'Request refused',
+    indeterminate: 'Outcome unknown',
+    budget_skipped: 'Outside this run’s allowance',
+    complete: 'Check complete',
+    partial: 'Check incomplete',
+};
+const yes = (value: boolean | null) =>
+    value === null ? 'Unknown' : value ? 'Yes' : 'No';
 export default function Visibility({
-    summary,
-    by_locale,
-    by_platform,
-    prompts,
-    sources,
-    competitors,
-    project,
-}: Props) {
-    const unmeasuredLocales = by_locale.filter((row) => row.answered === 0);
+    sampling,
+    legacy,
+    prompts = [],
+}: {
+    sampling: Report;
+    prompts?: TrackedQuestion[];
+    legacy?: {
+        answers: number;
+        mentions: number;
+        score: number | null;
+        last_asked_on: string | null;
+        note: string;
+        providers: {
+            platform: string;
+            label: string;
+            score: number | null;
+            answered: number;
+            mentions: number;
+            last_asked_on: string | null;
+        }[];
+    } | null;
+}) {
+    const owner = usePage().props.auth.project?.role === 'owner';
+    const sample = useForm({
+        request_key: crypto.randomUUID(),
+        set_id: sampling.set?.id ?? '',
+    });
+    const run = sampling.selected;
+    const [editorRequest, setEditorRequest] = useState(0);
+    const [editorOpen, setEditorOpen] = useState(
+        !sampling.set && prompts.length === 0,
+    );
+    const needed =
+        (sampling.set?.configuration.prompts.length ?? 0) *
+        (sampling.set?.configuration.panel.length ?? 0);
+    usePoll(15000, { only: ['sampling', 'prompts', 'legacy'] });
 
     return (
         <>
             <Head title="AI visibility" />
-
             <WorkspacePage>
                 <WorkspaceHeader
-                    eyebrow="AI search"
-                    context={
-                        summary.last_asked_on === null
-                            ? 'Awaiting first sweep'
-                            : `Measured ${summary.last_asked_on}`
-                    }
-                    title="AI visibility"
-                    description="See how often assistants mention your brand and which sources they cite instead."
-                />
-
-                {!summary.configured && (
-                    <Card className="rounded-[1.5rem] border-amber-300 bg-amber-50 shadow-none dark:border-amber-900 dark:bg-amber-950/40">
-                        <CardHeader className="flex-row items-center gap-2">
-                            <AlertTriangle className="size-4 text-amber-600" />
-                            <CardDescription className="text-amber-900 dark:text-amber-200">
-                                AI visibility is not configured, so no prompts
-                                are being checked. Add DataForSEO credentials to
-                                start measuring.
-                            </CardDescription>
-                        </CardHeader>
-                    </Card>
-                )}
-
-                <VisibilityHero
-                    summary={summary}
-                    byLocale={by_locale}
-                    project={project}
-                    unmeasuredLocales={unmeasuredLocales}
-                />
-
-                <Card className={workspacePanelClass}>
-                    <CardHeader className="border-b pb-5">
-                        <CardTitle className="flex items-center gap-2 text-base">
-                            <span className="flex size-8 items-center justify-center rounded-full bg-[#d6533c]/10 text-[#a13220] dark:text-[#f3cf6a]">
-                                <Sparkles
-                                    className="size-4"
-                                    aria-hidden="true"
-                                />
-                            </span>
-                            Monitored prompts
-                        </CardTitle>
-                        <CardDescription>
-                            {summary.last_asked_on
-                                ? `Last asked ${summary.last_asked_on}. Cost so far $${summary.money_spent.toFixed(3)}.`
-                                : 'Not asked yet.'}
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {prompts.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">
-                                No prompts yet. They are written on the first
-                                visibility run, one set per language.
-                            </p>
-                        ) : (
-                            <Table className="min-w-[760px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Prompt</TableHead>
-                                        <TableHead className="w-20">
-                                            Language
-                                        </TableHead>
-                                        <TableHead className="w-36">
-                                            Intent
-                                        </TableHead>
-                                        <TableHead>
-                                            {project.name} mentioned in
-                                        </TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {prompts.map((prompt) => (
-                                        <TableRow key={prompt.id}>
-                                            <TableCell className="max-w-md leading-relaxed whitespace-normal">
-                                                {prompt.text}
-                                            </TableCell>
-                                            <TableCell className="max-w-xs whitespace-normal text-muted-foreground">
-                                                {prompt.locale}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    variant="secondary"
-                                                    className={
-                                                        INTENT_TONE[
-                                                            prompt.intent
-                                                        ]
-                                                    }
-                                                >
-                                                    {prompt.intent_label}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-muted-foreground">
-                                                {prompt.answered === 0
-                                                    ? 'Not asked yet'
-                                                    : prompt.mentioned_in
-                                                            .length === 0
-                                                      ? 'Not mentioned'
-                                                      : prompt.mentioned_in.join(
-                                                            ', ',
-                                                        )}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        )}
-                    </CardContent>
-                </Card>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                    <Card className={workspacePanelClass}>
-                        <CardHeader>
-                            <CardTitle className="text-sm">
-                                Competitor sources
-                            </CardTitle>
-                            <CardDescription>
-                                Sites assistants cite instead of your brand,
-                                excluding directories.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-2">
-                            {competitors.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">
-                                    Nothing yet.
-                                </p>
-                            ) : (
-                                competitors.map((row) => (
-                                    <Bar
-                                        key={row.host}
-                                        label={row.host}
-                                        value={row.citations}
-                                        max={competitors[0].citations}
-                                    />
-                                ))
-                            )}
-                        </CardContent>
-                    </Card>
-
-                    <Card className={workspacePanelClass}>
-                        <CardHeader>
-                            <CardTitle className="text-sm">
-                                Top sources
-                            </CardTitle>
-                            <CardDescription>
-                                All cited sources, including directories. A
-                                directory near the top can be a practical place
-                                to earn a listing.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-2">
-                            {sources.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">
-                                    Nothing yet.
-                                </p>
-                            ) : (
-                                sources.map((row) => (
-                                    <div
-                                        key={row.host}
-                                        className="flex items-center justify-between gap-2 text-sm"
-                                    >
-                                        <span className="truncate">
-                                            {row.host}
-                                            {row.is_aggregator && (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="ml-2 text-[10px]"
-                                                >
-                                                    directory
-                                                </Badge>
-                                            )}
-                                        </span>
-                                        <span className="text-muted-foreground tabular-nums">
-                                            {row.citations}×
-                                        </span>
-                                    </div>
-                                ))
-                            )}
-                        </CardContent>
-                    </Card>
-                </div>
-
-                {by_platform.length > 0 && (
-                    <Card className={workspacePanelClass}>
-                        <CardHeader>
-                            <CardTitle className="text-sm">
-                                By assistant
-                            </CardTitle>
-                            {/*
-                             * Said once at the top as well as per tile, because
-                             * the number this changes the meaning of is the
-                             * headline, and the headline is not in this card.
-                             */}
-                            {by_platform.some((row) => row.stale) && (
-                                <CardDescription className="text-amber-600 dark:text-amber-400">
-                                    Some assistants were last measured earlier
-                                    than the rest, so the headline averages
-                                    readings from different days.
-                                </CardDescription>
-                            )}
-                        </CardHeader>
-                        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                            {by_platform.map((row) => (
-                                <div
-                                    key={row.platform}
-                                    className={`rounded-2xl border p-4 ${
-                                        row.stale
-                                            ? 'border-amber-500/40 bg-amber-500/5'
-                                            : 'bg-muted/20'
-                                    }`}
+                    eyebrow="AI visibility"
+                    title="Your business in AI answers"
+                    description="See which AI services mention your business when potential customers ask for help."
+                    actions={
+                        owner && (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setEditorOpen(true);
+                                        setEditorRequest(
+                                            (request) => request + 1,
+                                        );
+                                    }}
                                 >
-                                    <div className="text-xs text-muted-foreground">
-                                        {row.label}
-                                    </div>
-                                    <div className="text-2xl font-semibold tabular-nums">
-                                        {row.score === null
+                                    Manage future questions
+                                </Button>
+                                {sampling.set && (
+                                    <Button
+                                        disabled={
+                                            sample.processing ||
+                                            (sampling.allowance !== null &&
+                                                (!sampling.allowance
+                                                    .available ||
+                                                    sampling.allowance
+                                                        .remaining < needed ||
+                                                    (sampling.set?.configuration
+                                                        .prompts.length ?? 0) >
+                                                        sampling.allowance
+                                                            .questions))
+                                        }
+                                        onClick={() => {
+                                            sample.transform((data) => ({
+                                                ...data,
+                                                set_id: sampling.set!.id,
+                                            }));
+                                            sample.post('/visibility/sample', {
+                                                onSuccess: () =>
+                                                    sample.setData(
+                                                        'request_key',
+                                                        crypto.randomUUID(),
+                                                    ),
+                                            });
+                                        }}
+                                    >
+                                        Check AI visibility
+                                        {sampling.allowance &&
+                                            ` · ${needed} checks`}
+                                    </Button>
+                                )}
+                            </>
+                        )
+                    }
+                />
+                {legacy && legacy.answers > 0 && (
+                    <section
+                        id="earlier-checks"
+                        className={`${workspacePanelClass} scroll-mt-6 p-6`}
+                    >
+                        <header className="flex flex-wrap items-center justify-between gap-4">
+                            <div>
+                                <h2 className="text-lg font-semibold">
+                                    Earlier AI results
+                                </h2>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                    {legacy.last_asked_on &&
+                                        `Measured ${resultDate(legacy.last_asked_on)} · `}
+                                    {legacy.mentions} mentions in{' '}
+                                    {legacy.answers} recorded answers
+                                </p>
+                            </div>
+                            <p className="text-4xl font-semibold tabular-nums">
+                                {legacy.score === null
+                                    ? '—'
+                                    : `${legacy.score}%`}
+                            </p>
+                        </header>
+                        <div className="mt-5 divide-y rounded-xl border">
+                            {legacy.providers.map((provider) => (
+                                <div
+                                    key={provider.platform}
+                                    className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 p-3 text-sm sm:px-4"
+                                >
+                                    <h3 className="font-medium">
+                                        {provider.label}
+                                    </h3>
+                                    <p className="font-semibold tabular-nums">
+                                        {provider.score === null
                                             ? '—'
-                                            : `${row.score}%`}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                        {row.mentions} of {row.answered} answers
-                                    </div>
-                                    {/*
-                                     * Only where it is behind. A date on every
-                                     * tile is four dates that are the same on
-                                     * every healthy panel, which is noise that
-                                     * teaches people to stop reading them.
-                                     */}
-                                    {row.stale &&
-                                        row.last_asked_on !== null && (
-                                            <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                                                Last answered{' '}
-                                                {row.last_asked_on}, not in the
-                                                latest sweep
-                                            </div>
-                                        )}
+                                            : `${provider.score}%`}
+                                    </p>
+                                    <p className="w-full text-xs text-muted-foreground">
+                                        {provider.mentions} mentions /{' '}
+                                        {provider.answered} answers
+                                        {provider.last_asked_on &&
+                                            ` · ${resultDate(provider.last_asked_on)}`}
+                                    </p>
                                 </div>
                             ))}
-                        </CardContent>
-                    </Card>
+                        </div>
+                        <details className="mt-4 text-xs leading-5 text-muted-foreground">
+                            <summary className="cursor-pointer font-medium text-foreground">
+                                How these results were measured
+                            </summary>
+                            <p className="mt-2">
+                                {legacy.note} Visibility is the share of
+                                recorded answers that named your business.
+                            </p>
+                        </details>
+                    </section>
+                )}
+                <SamplingAllowancePanel allowance={sampling.allowance} />
+                {Object.values(sample.errors).map((error) => (
+                    <p key={error} className="text-sm text-destructive">
+                        {error}
+                    </p>
+                ))}
+                {owner && (
+                    <Questions
+                        key={sampling.set?.id ?? 'new'}
+                        set={sampling.set}
+                        maxQuestions={sampling.allowance?.questions ?? 60}
+                        hasEarlierQuestions={prompts.length > 0}
+                        openRequest={editorRequest}
+                        open={editorOpen}
+                        onOpenChange={setEditorOpen}
+                    />
+                )}
+                {prompts.length > 0 && (
+                    <TrackedQuestions
+                        id="tracked-questions"
+                        title="Questions behind the earlier results"
+                        description="The exact questions used for the earlier AI checks above. Each service’s result shows whether it named your business."
+                        questions={prompts}
+                    />
+                )}
+                {run && (
+                    <TrackedQuestions
+                        id="checked-questions"
+                        title={`Questions in this check · version ${run.set_version}`}
+                        description="These exact questions produced the selected check’s results. Open an answer to see what the AI said."
+                        questions={questionsInRun(run.cells)}
+                    />
+                )}
+                {sampling.set && sampling.set.id !== run?.set_id && (
+                    <TrackedQuestions
+                        id="saved-questions"
+                        title={`Questions saved for future checks · version ${sampling.set.version}`}
+                        description="Your saved question list. Results from earlier versions remain separate."
+                        questions={sampling.set.configuration.prompts.map(
+                            (prompt, index) => ({
+                                ...prompt,
+                                id: `${sampling.set!.id}-${index}`,
+                                checks: sampling.set!.configuration.panel.map(
+                                    ({ platform }) => ({
+                                        platform,
+                                        label: platformLabel(platform),
+                                        mentioned: null,
+                                        status: 'saved',
+                                        asked_on: null,
+                                    }),
+                                ),
+                            }),
+                        )}
+                    />
+                )}
+                <p className="text-sm text-muted-foreground">
+                    Branded accuracy questions check what is said. They are
+                    excluded from discovery visibility counts.
+                </p>
+                <nav
+                    className="flex flex-wrap gap-3"
+                    aria-label="Sampling history"
+                >
+                    {sampling.runs.map((item) => (
+                        <Link
+                            className="rounded border px-3 py-2 text-xs"
+                            href={`/visibility/runs/${item.id}`}
+                            key={item.id}
+                        >
+                            {new Date(item.created_at).toLocaleString()} ·{' '}
+                            {labels[item.status] ?? item.status}
+                        </Link>
+                    ))}
+                </nav>
+                {run ? (
+                    <>
+                        <section className={`${workspacePanelClass} p-5`}>
+                            <h2 className="font-semibold">
+                                Question set {run.set_version} ·{' '}
+                                {labels[run.status] ?? run.status}
+                            </h2>
+                            <p className="mt-3 text-sm">
+                                {run.answered_cells} answers returned from{' '}
+                                {run.expected_cells} planned cells
+                            </p>
+                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                <p>
+                                    Named in text:{' '}
+                                    {run.discovery.answered
+                                        ? `${run.discovery.mentions} / ${run.discovery.answered} discovery answers`
+                                        : 'Not observed'}
+                                </p>
+                                <p>
+                                    Website cited:{' '}
+                                    {run.discovery.answered
+                                        ? `${run.discovery.citations} / ${run.discovery.answered} discovery answers`
+                                        : 'Not observed'}
+                                </p>
+                            </div>
+                            <p className="mt-4 text-xs leading-6 text-muted-foreground">
+                                Missing answers are not negative mentions.{' '}
+                                {run.comparison.reason}
+                            </p>
+                            {run.comparison.previous_run_id && (
+                                <Link
+                                    className="text-xs underline"
+                                    href={`/visibility/runs/${run.comparison.previous_run_id}`}
+                                >
+                                    Previous run
+                                </Link>
+                            )}
+                            <p className="mt-3 text-xs text-muted-foreground">
+                                Known provider cost:{' '}
+                                {run.known_cost_micros === null
+                                    ? 'Not reported'
+                                    : `$${(run.known_cost_micros / 1_000_000).toFixed(4)} USD`}{' '}
+                                · {run.unknown_cost_cells} attempted cells with
+                                unknown cost
+                            </p>
+                        </section>
+                        <section
+                            className={`${workspacePanelClass} overflow-x-auto`}
+                        >
+                            <table className="w-full min-w-[650px] text-sm">
+                                <thead>
+                                    <tr className="border-b text-left text-xs text-muted-foreground">
+                                        <th className="p-4">Exact question</th>
+                                        <th className="p-4">
+                                            Model and context
+                                        </th>
+                                        <th className="p-4">Outcome</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {run.cells.map((cell) => (
+                                        <tr key={cell.id} className="border-b">
+                                            <td className="max-w-lg p-4 align-top">
+                                                {cell.specification.prompt.text}
+                                                <p className="mt-2 text-xs text-muted-foreground">
+                                                    {
+                                                        cell.specification
+                                                            .prompt.locale
+                                                    }{' '}
+                                                    ·{' '}
+                                                    {
+                                                        cell.specification
+                                                            .prompt.purpose
+                                                    }
+                                                </p>
+                                            </td>
+                                            <td className="p-4 align-top text-xs leading-6">
+                                                {
+                                                    cell.specification.platform
+                                                        .platform
+                                                }
+                                                <br />
+                                                Requested:{' '}
+                                                {
+                                                    cell.specification.platform
+                                                        .model
+                                                }
+                                                <br />
+                                                Returned:{' '}
+                                                {cell.answer?.resolved_model ??
+                                                    'Not reported'}
+                                                <br />
+                                                Market requested:{' '}
+                                                {cell.specification.market}
+                                                <br />
+                                                Country sent:{' '}
+                                                {cell.answer?.sent_country ??
+                                                    'Not sent or not reported'}
+                                                <br />
+                                                Web search reported:{' '}
+                                                {yes(
+                                                    cell.answer
+                                                        ?.web_search_reported ??
+                                                        null,
+                                                )}
+                                            </td>
+                                            <td className="max-w-sm p-4 align-top">
+                                                <p>
+                                                    {labels[cell.status] ??
+                                                        cell.status}
+                                                </p>
+                                                {cell.reason && (
+                                                    <p className="mt-2 text-xs text-muted-foreground">
+                                                        {cell.reason}
+                                                    </p>
+                                                )}
+                                                {owner &&
+                                                    !cell.answer &&
+                                                    ![
+                                                        'queued',
+                                                        'running',
+                                                    ].includes(cell.status) && (
+                                                        <CellRecheck
+                                                            id={cell.id}
+                                                        />
+                                                    )}
+                                                {cell.answer && (
+                                                    <>
+                                                        <p className="mt-3 text-xs">
+                                                            Mention:{' '}
+                                                            {yes(
+                                                                cell.answer
+                                                                    .mentioned_in_text,
+                                                            )}{' '}
+                                                            · Citation:{' '}
+                                                            {yes(
+                                                                cell.answer
+                                                                    .cited_own_site,
+                                                            )}
+                                                        </p>
+                                                        <Link
+                                                            className="mt-3 inline-block underline"
+                                                            href={`/visibility/answers/${cell.answer.id}`}
+                                                        >
+                                                            Inspect full
+                                                            returned answer
+                                                        </Link>
+                                                    </>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </section>
+                    </>
+                ) : (
+                    <section className={`${workspacePanelClass} p-6`}>
+                        <h2 className="font-semibold">
+                            No current full-answer results yet
+                        </h2>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                            Save questions for future checks, then run a manual
+                            check when your allowance is available. Earlier
+                            results remain available above.
+                        </p>
+                    </section>
                 )}
             </WorkspacePage>
         </>
     );
 }
+function questionsInRun(cells: Cell[]): TrackedQuestion[] {
+    const questions = new Map<string, TrackedQuestion>();
 
-function VisibilityHero({
-    summary,
-    byLocale,
-    project,
-    unmeasuredLocales,
+    for (const cell of cells) {
+        const prompt = cell.specification.prompt;
+        const key = JSON.stringify([
+            prompt.text,
+            prompt.locale,
+            prompt.purpose,
+        ]);
+        const question = questions.get(key) ?? {
+            ...prompt,
+            id: key,
+            checks: [],
+        };
+        const platform = cell.specification.platform.platform;
+        question.checks.push({
+            platform,
+            label: platformLabel(platform),
+            mentioned: cell.answer?.mentioned_in_text ?? null,
+            status:
+                cell.status === 'answered' && cell.answer === null
+                    ? 'no_answer'
+                    : cell.status,
+            asked_on: cell.answer?.received_at ?? null,
+            answer_url: cell.answer
+                ? `/visibility/answers/${cell.answer.id}`
+                : undefined,
+        });
+        questions.set(key, question);
+    }
+
+    return [...questions.values()];
+}
+
+function Questions({
+    set,
+    maxQuestions,
+    hasEarlierQuestions,
+    openRequest,
+    open,
+    onOpenChange,
 }: {
-    summary: Props['summary'];
-    byLocale: LocaleRow[];
-    project: Props['project'];
-    unmeasuredLocales: LocaleRow[];
+    set: Set | null;
+    maxQuestions: number;
+    hasEarlierQuestions: boolean;
+    openRequest: number;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
 }) {
-    // Null is unmeasured; zero is a real result and must remain visible.
-    const measured = summary.score !== null;
+    const editor = useRef<HTMLDetailsElement>(null);
+    const heading = useRef<HTMLSpanElement>(null);
+    const form = useForm({
+        expected_set_id: set?.id ?? null,
+        reason: '',
+        prompts: set?.configuration.prompts.map(
+            ({ text, locale, intent, purpose }) => ({
+                text,
+                locale,
+                intent,
+                purpose,
+            }),
+        ) ?? [
+            { text: '', locale: 'en', intent: 'buying', purpose: 'discovery' },
+        ],
+    });
+    const update = (index: number, key: keyof Prompt, value: string) =>
+        form.setData(
+            'prompts',
+            form.data.prompts.map((prompt, i) =>
+                i === index ? { ...prompt, [key]: value } : prompt,
+            ),
+        );
+
+    useEffect(() => {
+        if (openRequest === 0) {
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            editor.current?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start',
+            });
+            heading.current?.focus();
+        });
+    }, [openRequest]);
 
     return (
-        <section
-            className={`${workspaceHeroClass} min-h-[30rem]`}
-            aria-labelledby="visibility-overview"
+        <details
+            ref={editor}
+            className={`${workspacePanelClass} p-5`}
+            open={open}
+            onToggle={(event) => onOpenChange(event.currentTarget.open)}
         >
-            <div
-                className="pointer-events-none absolute -top-28 -right-24 -z-10 size-80 rounded-full bg-[#d6533c]/22 blur-3xl"
-                aria-hidden="true"
-            />
-            <div
-                className="pointer-events-none absolute -bottom-32 left-16 -z-10 size-72 rounded-full bg-[#3155a5]/18 blur-3xl"
-                aria-hidden="true"
-            />
-
-            <div className="flex h-full flex-col p-6 sm:p-8">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                        <h2
-                            id="visibility-overview"
-                            className="flex items-center gap-2 text-xs font-medium tracking-[0.14em] text-[#f3cf6a] uppercase"
-                        >
-                            <Sparkles className="size-3.5" aria-hidden="true" />
-                            Brand visibility
-                        </h2>
-                        <p className="mt-2 text-sm text-white/50">
-                            {summary.last_asked_on
-                                ? `Last measured ${summary.last_asked_on}`
-                                : 'The first prompt sweep has not run yet'}
-                        </p>
-                    </div>
-                    <Badge className="rounded-full border-white/10 bg-white/8 px-3 py-1 text-white">
-                        {byLocale.length || project.locales.length}{' '}
-                        {(byLocale.length || project.locales.length) === 1
-                            ? 'prompt language'
-                            : 'prompt languages'}
-                    </Badge>
-                </div>
-
-                <div className="my-auto grid gap-10 py-10 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] md:items-end">
-                    <div>
-                        <div
-                            className="flex items-start font-semibold tracking-[-0.075em] tabular-nums"
-                            aria-label={
-                                measured
-                                    ? `${summary.score} percent visibility`
-                                    : 'Visibility not measured'
-                            }
-                        >
-                            <Eye
-                                className="mt-1 mr-3 size-5 text-[#f3cf6a]"
-                                aria-hidden="true"
-                            />
-                            <span className="text-[5.5rem] leading-[0.82] sm:text-[7rem]">
-                                {measured ? summary.score : '—'}
-                            </span>
-                            {measured && (
-                                <span className="ml-2 text-2xl text-[#f3cf6a]">
-                                    %
-                                </span>
-                            )}
-                        </div>
-                        <p className="mt-5 max-w-60 text-sm leading-6 text-white/55">
-                            Share of answered prompts where {project.name} was
-                            named.
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="mb-4 text-[11px] font-medium tracking-[0.14em] text-white/55 uppercase">
-                            Visibility by language
-                        </p>
-                        {byLocale.length === 0 ? (
-                            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-5 text-sm text-white/60">
-                                No prompt results yet. Language performance will
-                                appear here after the first sweep.
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {byLocale.map((row) => (
-                                    <div key={row.locale}>
-                                        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                                            <span className="font-medium text-white/75">
-                                                {row.locale}
-                                            </span>
-                                            <span className="text-white/55 tabular-nums">
-                                                {row.score === null
-                                                    ? 'Not measured'
-                                                    : `${row.score}%`}
-                                                <span className="ml-2 text-white/35">
-                                                    {row.mentions}/
-                                                    {row.answered}
-                                                </span>
-                                            </span>
-                                        </div>
-                                        <div
-                                            className="h-1.5 overflow-hidden rounded-full bg-white/10"
-                                            role="progressbar"
-                                            aria-label={`${row.locale} visibility`}
-                                            aria-valuemin={0}
-                                            aria-valuemax={100}
-                                            aria-valuenow={
-                                                row.score ?? undefined
-                                            }
-                                            aria-valuetext={
-                                                row.score === null
-                                                    ? 'Not measured'
-                                                    : `${row.score} percent`
-                                            }
-                                        >
-                                            <div
-                                                className="h-full rounded-full bg-gradient-to-r from-[#f3cf6a] to-[#d6533c]"
-                                                style={{
-                                                    width: `${Math.max(0, Math.min(100, row.score ?? 0))}%`,
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        {unmeasuredLocales.length > 0 && (
-                            <p className="mt-4 text-xs leading-relaxed text-white/55">
-                                Prompts in{' '}
-                                {unmeasuredLocales
-                                    .map((row) => row.locale)
-                                    .join(', ')}{' '}
-                                are awaiting their first answer sweep.
-                            </p>
-                        )}
-                    </div>
-                </div>
-
-                <dl className="grid grid-cols-2 gap-y-5 border-t border-white/10 pt-5 sm:grid-cols-4 sm:divide-x sm:divide-white/10">
-                    <HeroMetric
-                        label="Monitored prompts"
-                        value={summary.monitored_prompts}
-                    />
-                    <HeroMetric
-                        label="Answers checked"
-                        value={summary.answered}
-                    />
-                    <HeroMetric
-                        label="Brand mentions"
-                        value={summary.mentions}
-                    />
-                    <HeroMetric
-                        label="Spend"
-                        value={`$${summary.money_spent.toFixed(3)}`}
-                    />
-                </dl>
-                {summary.declined > 0 && (
-                    <p className="mt-4 text-xs text-white/55">
-                        {summary.declined} declined{' '}
-                        {summary.declined === 1 ? 'answer was' : 'answers were'}{' '}
-                        excluded from the score.
+            <summary className="cursor-pointer font-medium">
+                <span ref={heading} tabIndex={-1}>
+                    Manage future questions {set && `· version ${set.version}`}
+                </span>
+            </summary>
+            <form
+                className="mt-4 space-y-4"
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    form.post('/visibility/sets');
+                }}
+            >
+                {hasEarlierQuestions && (
+                    <p className="text-sm text-muted-foreground">
+                        The questions above produced your earlier results. This
+                        editor saves the questions for future checks.
                     </p>
                 )}
-            </div>
-        </section>
+                <p className="text-xs leading-6 text-muted-foreground">
+                    These questions are used for future checks. Saving changes
+                    creates a new version; earlier measurements keep the
+                    questions used at the time.
+                    {maxQuestions < 60 &&
+                        ` Your plan includes up to ${maxQuestions} questions. Saving questions does not purchase a manual recheck; the next scheduled check uses the saved version.`}
+                </p>
+                {set && (
+                    <p className="text-xs text-muted-foreground">
+                        {set.change_reason} {set.configuration.max_answers}{' '}
+                        answer requests per run maximum. Models:{' '}
+                        {set.configuration.panel
+                            .map((item) => `${item.platform}: ${item.model}`)
+                            .join(' · ')}
+                        .
+                    </p>
+                )}
+                {form.data.prompts.map((prompt, index) => (
+                    <div
+                        key={index}
+                        className="grid gap-3 rounded border p-3 sm:grid-cols-4"
+                    >
+                        <label className="text-xs sm:col-span-4">
+                            Question
+                            <Textarea
+                                className="mt-1"
+                                maxLength={500}
+                                value={prompt.text}
+                                onChange={(event) =>
+                                    update(index, 'text', event.target.value)
+                                }
+                                required
+                            />
+                        </label>
+                        <label className="text-xs">
+                            Language
+                            <Input
+                                className="mt-1"
+                                value={prompt.locale}
+                                onChange={(event) =>
+                                    update(index, 'locale', event.target.value)
+                                }
+                                required
+                            />
+                        </label>
+                        <label className="text-xs">
+                            Purpose
+                            <select
+                                className="mt-1 w-full rounded border bg-background p-2"
+                                value={prompt.purpose}
+                                onChange={(event) =>
+                                    update(index, 'purpose', event.target.value)
+                                }
+                            >
+                                <option value="discovery">Discovery</option>
+                                <option value="accuracy">
+                                    Factual accuracy
+                                </option>
+                            </select>
+                        </label>
+                        <label className="text-xs">
+                            Intent
+                            <select
+                                className="mt-1 w-full rounded border bg-background p-2"
+                                value={prompt.intent}
+                                onChange={(event) =>
+                                    update(index, 'intent', event.target.value)
+                                }
+                            >
+                                <option value="buying">Buying</option>
+                                <option value="comparison">Comparison</option>
+                                <option value="learning">Learning</option>
+                            </select>
+                        </label>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={form.data.prompts.length === 1}
+                            onClick={() =>
+                                form.setData(
+                                    'prompts',
+                                    form.data.prompts.filter(
+                                        (_, i) => i !== index,
+                                    ),
+                                )
+                            }
+                        >
+                            Remove
+                        </Button>
+                    </div>
+                ))}
+                <Button
+                    type="button"
+                    variant="outline"
+                    disabled={form.data.prompts.length >= maxQuestions}
+                    onClick={() =>
+                        form.setData('prompts', [
+                            ...form.data.prompts,
+                            {
+                                text: '',
+                                locale: 'en',
+                                intent: 'buying',
+                                purpose: 'discovery',
+                            },
+                        ])
+                    }
+                >
+                    Add question
+                </Button>
+                <label className="block text-sm">
+                    Reason for this version
+                    <Input
+                        className="mt-1"
+                        value={form.data.reason}
+                        onChange={(event) =>
+                            form.setData('reason', event.target.value)
+                        }
+                        required
+                    />
+                </label>
+                {Object.entries(form.errors).map(([key, error]) => (
+                    <p key={key} className="text-sm text-destructive">
+                        {error}
+                    </p>
+                ))}
+                <Button disabled={form.processing}>
+                    Save question version
+                </Button>
+            </form>
+        </details>
     );
 }
 
-function HeroMetric({
-    label,
-    value,
-}: {
-    label: string;
-    value: number | string;
-}) {
+function CellRecheck({ id }: { id: string }) {
+    const form = useForm({ request_key: crypto.randomUUID() });
+    const { billing } = usePage().props;
+    const limited = (billing?.plan?.version ?? 0) >= 4;
+
     return (
-        <div className="sm:px-5 sm:first:pl-0 sm:last:pr-0">
-            <dt className="text-[11px] tracking-wide text-white/55 uppercase">
-                {label}
-            </dt>
-            <dd className="mt-1.5 text-xl font-semibold tabular-nums">
-                {value}
-            </dd>
-        </div>
+        <Button
+            className="mt-3"
+            variant="outline"
+            disabled={
+                form.processing ||
+                (limited &&
+                    (!billing?.may_generate ||
+                        billing.usage.ai_answers?.remaining === 0))
+            }
+            onClick={() => form.post(`/visibility/cells/${id}/recheck`)}
+        >
+            Recheck this question{limited && ' · 1 check'}
+        </Button>
     );
 }
-
-function Bar({
-    label,
-    value,
-    max,
-}: {
-    label: string;
-    value: number;
-    max: number;
-}) {
-    return (
-        <div className="space-y-1">
-            <div className="flex items-baseline justify-between gap-2 text-sm">
-                <span className="truncate">{label}</span>
-                <span className="text-muted-foreground tabular-nums">
-                    {value}
-                </span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#3155a5] to-[#d6533c]"
-                    style={{
-                        width: `${Math.max(4, (value / Math.max(1, max)) * 100)}%`,
-                    }}
-                />
-            </div>
-        </div>
-    );
-}
-
-Visibility.layout = {
-    breadcrumbs: [{ title: 'AI visibility', href: index() }],
-};

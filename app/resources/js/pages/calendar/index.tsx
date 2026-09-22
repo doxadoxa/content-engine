@@ -1,10 +1,10 @@
-import { Head, Link, router } from '@inertiajs/react';
-import {
-    CalendarDays,
-    ChevronLeft,
-    ChevronRight,
-    FileText,
-} from 'lucide-react';
+import { Head, Link, router, usePoll } from '@inertiajs/react';
+import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { publicationLabels } from '@/components/article-publication';
+import type { ArticlePublication } from '@/components/article-publication';
+import { ContentActions } from '@/components/content-actions';
+import type { ArticleWorkflow } from '@/components/content-actions';
+import { ContextualAssistant } from '@/components/contextual-assistant';
 import { PlanViews } from '@/components/plan-views';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,12 +23,15 @@ import { index } from '@/routes/calendar';
 import { show } from '@/routes/content';
 
 type Unit = {
+    calendar_date: string | null;
+    publication: ArticlePublication;
     id: string;
     title: string;
     state: string;
     state_label: string;
     is_live: boolean;
     type_label: string;
+    target_query: string | null;
     topic_difficulty: number | null;
     topic_volume: number | null;
     scheduled_for: string | null;
@@ -36,6 +39,10 @@ type Unit = {
 };
 
 type Props = {
+    article_workflow: ArticleWorkflow;
+    timezone: string;
+    mode: 'automatic' | 'review_first';
+    planning: boolean;
     month: string;
     label: string;
     previous: string;
@@ -58,6 +65,10 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
  * they disagree in exactly one time zone.
  */
 export default function Calendar({
+    article_workflow: workflow,
+    timezone,
+    mode,
+    planning,
     month,
     label,
     previous,
@@ -72,37 +83,41 @@ export default function Calendar({
     // comes from the server as YYYY-MM-DD, and `en-CA` is the locale that
     // formats that way. Both sides keep their dashes — stripping them from one
     // and not the other is a comparison that is never true.
-    const today = new Date().toLocaleDateString('en-CA');
+    usePoll(15000, { only: ['units', 'unscheduled', 'plan', 'planning'] });
+    const today = new Date().toLocaleDateString('en-CA', {
+        timeZone: timezone,
+    });
 
     const byDay = new Map<number, Unit[]>();
 
     for (const unit of units) {
-        if (unit.scheduled_for === null) {
+        if (unit.calendar_date === null) {
             continue;
         }
 
-        const day = Number(unit.scheduled_for.slice(8, 10));
+        const day = Number(unit.calendar_date.slice(8, 10));
         byDay.set(day, [...(byDay.get(day) ?? []), unit]);
     }
 
+    const summary = calendarSummary(units);
+
     return (
         <>
-            <Head title={`Content plan — ${label}`} />
+            <Head title={`Calendar — ${label}`} />
 
             <WorkspacePage>
                 <WorkspaceHeader
-                    eyebrow="Content plan"
-                    context={
-                        plan === null
-                            ? 'No plan generated'
-                            : plan.approved
-                              ? 'Approved plan'
-                              : `${plan.status} plan`
-                    }
+                    eyebrow="Calendar"
+                    context={timezone}
                     title={label}
-                    description="What this project is scheduled to publish, and where every article is in the workflow."
+                    description="Your upcoming articles, from first idea to publication. Open any article to review it or change its schedule."
                     actions={
                         <>
+                            <ContentActions
+                                month={month}
+                                planning={planning}
+                                primary={workflow.ready ? 'plan' : 'none'}
+                            />
                             <PlanViews active="calendar" />
                             {plan !== null && (
                                 <Badge
@@ -150,6 +165,30 @@ export default function Calendar({
                     }
                 />
 
+                <section
+                    className={`${workspacePanelClass} flex flex-wrap items-center justify-between gap-4 p-5`}
+                >
+                    <div>
+                        <h2 className="font-medium">
+                            {workflow.ready
+                                ? mode === 'automatic'
+                                    ? 'Publish automatically on schedule'
+                                    : 'Review before publishing'
+                                : 'Publishing setup needed'}
+                        </h2>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                            {workflow.message}
+                        </p>
+                    </div>
+                    {!workflow.ready && (
+                        <Button asChild size="sm" className="shrink-0">
+                            <Link href={workflow.action}>
+                                {workflow.action_label}
+                            </Link>
+                        </Button>
+                    )}
+                </section>
+
                 {units.length > 0 && (
                     <section
                         className={`${workspacePanelClass} flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6`}
@@ -170,12 +209,13 @@ export default function Calendar({
                                     Month at a glance
                                 </h2>
                                 <p className="mt-0.5 text-xs text-muted-foreground">
-                                    {units.length}{' '}
-                                    {units.length === 1
-                                        ? 'article'
-                                        : 'articles'}{' '}
-                                    across {byDay.size}{' '}
-                                    {byDay.size === 1 ? 'date' : 'dates'}
+                                    {summary.scheduled} scheduled ·{' '}
+                                    {summary.suggested}{' '}
+                                    {summary.suggested === 1
+                                        ? 'article on a suggested date'
+                                        : 'articles on suggested dates'}
+                                    {summary.other > 0 &&
+                                        ` · ${summary.other} other ${summary.other === 1 ? 'article' : 'articles'}`}
                                 </p>
                             </div>
                         </div>
@@ -183,7 +223,7 @@ export default function Calendar({
                     </section>
                 )}
 
-                <MobileAgenda units={units} />
+                <MobileAgenda units={units} today={today} />
 
                 <Card
                     className={`hidden max-w-full overflow-x-auto p-0 sm:block ${workspacePanelClass}`}
@@ -211,6 +251,10 @@ export default function Calendar({
                                 <DayCell
                                     key={index + 1}
                                     day={index + 1}
+                                    date={`${month.slice(0, 8)}${String(
+                                        index + 1,
+                                    ).padStart(2, '0')}`}
+                                    today={today}
                                     units={byDay.get(index + 1) ?? []}
                                     isToday={
                                         `${month.slice(0, 8)}${String(
@@ -229,11 +273,11 @@ export default function Calendar({
                     >
                         <div>
                             <h2 className="font-semibold tracking-tight">
-                                Ideas with no date
+                                Not scheduled yet
                             </h2>
                             <p className="mt-1 text-xs text-muted-foreground">
-                                Keep these visible until they earn a place in
-                                the calendar.
+                                Open an article to choose its publication date
+                                and review preference.
                             </p>
                         </div>
                         <div className="flex min-w-0 flex-wrap gap-2">
@@ -243,9 +287,12 @@ export default function Calendar({
                                     variant="outline"
                                     className="max-w-full whitespace-normal"
                                 >
-                                    <span className="break-words">
+                                    <Link
+                                        href={show(unit.id)}
+                                        className="break-words hover:underline"
+                                    >
                                         {unit.title}
-                                    </span>
+                                    </Link>
                                     {unit.topic_volume !== null && (
                                         <span className="ml-1 opacity-60">
                                             {unit.topic_volume.toLocaleString()}
@@ -259,13 +306,17 @@ export default function Calendar({
                 )}
 
                 {units.length === 0 && <EmptyMonth />}
+                <ContextualAssistant
+                    context={`Reviewing the website content calendar for ${label}. It has ${summary.scheduled} committed publications, ${summary.suggested} suggested dates, and ${unscheduled.length} articles without a date.`}
+                    label="Discuss this plan"
+                />
             </WorkspacePage>
         </>
     );
 }
 
 /** A chronological view that fits a phone without shrinking seven columns. */
-function MobileAgenda({ units }: { units: Unit[] }) {
+function MobileAgenda({ units, today }: { units: Unit[]; today: string }) {
     if (units.length === 0) {
         return null;
     }
@@ -273,32 +324,45 @@ function MobileAgenda({ units }: { units: Unit[] }) {
     const groups = new Map<string, Unit[]>();
 
     for (const unit of units) {
-        const date = unit.scheduled_for ?? 'Unscheduled';
+        const date = unit.calendar_date ?? 'Unscheduled';
         groups.set(date, [...(groups.get(date) ?? []), unit]);
     }
 
     return (
         <section className="flex flex-col gap-4 sm:hidden" aria-label="Agenda">
-            {[...groups.entries()].map(([date, dayUnits]) => (
-                <div
-                    key={date}
-                    className="flex min-w-0 flex-col gap-3 rounded-[1.25rem] border bg-card/80 p-4 shadow-sm backdrop-blur-sm"
-                >
-                    <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                        {date === 'Unscheduled'
-                            ? date
-                            : new Intl.DateTimeFormat(undefined, {
-                                  weekday: 'short',
-                                  month: 'short',
-                                  day: 'numeric',
-                                  timeZone: 'UTC',
-                              }).format(new Date(`${date}T00:00:00Z`))}
-                    </h2>
-                    {dayUnits.map((unit) => (
-                        <UnitCard key={unit.id} unit={unit} />
-                    ))}
-                </div>
-            ))}
+            {[...groups.entries()].map(([date, dayUnits]) => {
+                const suggested = dayUnits.every(isSuggestedDate);
+
+                return (
+                    <div
+                        key={date}
+                        className="flex min-w-0 flex-col gap-3 rounded-[1.25rem] border bg-card/80 p-4 shadow-sm backdrop-blur-sm"
+                    >
+                        <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                            {date === 'Unscheduled'
+                                ? date
+                                : `${suggested ? 'Suggested date · ' : ''}${new Intl.DateTimeFormat(
+                                      undefined,
+                                      {
+                                          weekday: 'short',
+                                          month: 'short',
+                                          day: 'numeric',
+                                          timeZone: 'UTC',
+                                      },
+                                  ).format(new Date(`${date}T00:00:00Z`))}`}
+                        </h2>
+                        {dayUnits.map((unit) => (
+                            <UnitCard
+                                key={unit.id}
+                                unit={unit}
+                                pastSuggestion={
+                                    isSuggestedDate(unit) && date < today
+                                }
+                            />
+                        ))}
+                    </div>
+                );
+            })}
         </section>
     );
 }
@@ -313,10 +377,10 @@ function StateCounts({ units }: { units: Unit[] }) {
     const counts = new Map<string, { label: string; count: number }>();
 
     for (const unit of units) {
-        const seen = counts.get(unit.state);
+        const seen = counts.get(unit.publication.status);
 
-        counts.set(unit.state, {
-            label: unit.state_label,
+        counts.set(unit.publication.status, {
+            label: publicationLabels[unit.publication.status],
             count: (seen?.count ?? 0) + 1,
         });
     }
@@ -338,12 +402,40 @@ function StateCounts({ units }: { units: Unit[] }) {
     );
 }
 
+function calendarSummary(units: Unit[]) {
+    return units.reduce(
+        (summary, unit) => {
+            if (unit.publication.schedule?.status === 'active') {
+                summary.scheduled += 1;
+            } else if (isSuggestedDate(unit)) {
+                summary.suggested += 1;
+            } else {
+                summary.other += 1;
+            }
+
+            return summary;
+        },
+        { scheduled: 0, suggested: 0, other: 0 },
+    );
+}
+
+function isSuggestedDate(unit: Unit) {
+    return (
+        unit.publication.schedule === null &&
+        unit.publication.status !== 'published'
+    );
+}
+
 function DayCell({
     day,
+    date,
+    today,
     units,
     isToday,
 }: {
     day: number;
+    date: string;
+    today: string;
     units: Unit[];
     isToday: boolean;
 }) {
@@ -359,7 +451,11 @@ function DayCell({
                 {day}
             </span>
             {units.map((unit) => (
-                <UnitCard key={unit.id} unit={unit} />
+                <UnitCard
+                    key={unit.id}
+                    unit={unit}
+                    pastSuggestion={isSuggestedDate(unit) && date < today}
+                />
             ))}
         </div>
     );
@@ -372,52 +468,50 @@ function DayCell({
  * is aiming at, and what shape it is — in the order they ask them. The state
  * leads because a month is read to find what needs doing.
  */
-function UnitCard({ unit }: { unit: Unit }) {
+function UnitCard({
+    unit,
+    pastSuggestion = false,
+}: {
+    unit: Unit;
+    pastSuggestion?: boolean;
+}) {
+    const suggested = isSuggestedDate(unit);
+
     return (
         <Link
             href={show(unit.id)}
-            className="group flex flex-col gap-2 rounded-xl border bg-card/90 p-2.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-500/35 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className={`group flex flex-col gap-2 rounded-xl border bg-card/90 p-2.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-500/35 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${suggested ? 'border-dashed border-amber-500/45 bg-amber-50/30 dark:bg-amber-950/10' : ''}`}
         >
-            <StatePill state={unit.state} label={unit.state_label} />
-
-            <span className="line-clamp-2 text-sm leading-snug font-medium">
+            <span className="line-clamp-3 text-sm leading-snug font-medium">
                 {unit.title}
             </span>
-
-            {(unit.topic_difficulty !== null || unit.topic_volume !== null) && (
-                <span className="flex flex-col text-xs text-muted-foreground">
-                    {unit.topic_difficulty !== null && (
-                        <span>
-                            Difficulty:{' '}
-                            <span className="text-foreground">
-                                {unit.topic_difficulty}
-                            </span>
-                        </span>
-                    )}
-                    {unit.topic_volume !== null && (
-                        <span>
-                            Volume:{' '}
-                            <span className="text-foreground">
-                                {unit.topic_volume.toLocaleString()}
-                            </span>
-                        </span>
-                    )}
-                </span>
-            )}
-
-            <span className="mt-auto flex items-center gap-1.5 border-t pt-2 text-xs text-muted-foreground">
-                <FileText className="size-3.5 shrink-0" aria-hidden="true" />
-                <span className="truncate group-hover:underline">
-                    {unit.type_label} article
-                </span>
-                {unit.locales.length > 1 && (
-                    <span className="ml-auto shrink-0">
-                        {unit.locales.length} langs
-                    </span>
-                )}
+            <StatePill
+                state={unit.publication.status}
+                label={publicationLabels[unit.publication.status]}
+            />
+            <span className="text-xs leading-5 text-muted-foreground">
+                {publicationTiming(unit, pastSuggestion)}
             </span>
         </Link>
     );
+}
+
+function publicationTiming(unit: Unit, pastSuggestion: boolean) {
+    const schedule = unit.publication.schedule;
+
+    if (schedule === null) {
+        if (!isSuggestedDate(unit)) {
+            return publicationLabels[unit.publication.status];
+        }
+
+        return pastSuggestion
+            ? 'Suggested date in the past · choose a new date to schedule'
+            : 'Suggested date · not scheduled to publish';
+    }
+
+    return schedule.status === 'active'
+        ? `${schedule.local_time} · ${schedule.mode === 'automatic' ? 'Automatic' : 'Review first'}`
+        : `${schedule.local_time} · ${publicationLabels[unit.publication.status]}`;
 }
 
 /**
@@ -431,20 +525,30 @@ function StatePill({ state, label }: { state: string; label: string }) {
         {
             published:
                 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-            approved: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
-            draft: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
-            generating:
+            scheduled: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
+            needs_review:
+                'border-amber-500/40 text-amber-700 dark:text-amber-400',
+            planned: 'border-amber-500/40 text-amber-700 dark:text-amber-400',
+            writing:
                 'border-violet-500/40 text-violet-600 dark:text-violet-400',
-            refreshing: 'border-blue-500/40 text-blue-600 dark:text-blue-400',
+            publishing:
+                'border-violet-500/40 text-violet-600 dark:text-violet-400',
+            blocked: 'border-rose-500/40 text-rose-700 dark:text-rose-400',
+            paused: 'border-amber-500/40 text-amber-700 dark:text-amber-400',
+            canceled: 'border-muted-foreground/30 text-muted-foreground',
+            unscheduled: 'border-muted-foreground/30 text-muted-foreground',
         }[state] ?? 'border-muted-foreground/30 text-muted-foreground';
 
     const dot =
         {
             published: 'bg-emerald-500',
-            approved: 'bg-sky-500',
-            draft: 'bg-amber-500',
-            generating: 'bg-violet-500',
-            refreshing: 'bg-blue-500',
+            scheduled: 'bg-sky-500',
+            needs_review: 'bg-amber-500',
+            planned: 'bg-amber-500',
+            writing: 'bg-violet-500',
+            publishing: 'bg-violet-500',
+            blocked: 'bg-rose-500',
+            paused: 'bg-amber-500',
         }[state] ?? 'bg-muted-foreground/50';
 
     return (
@@ -470,7 +574,9 @@ function EmptyMonth() {
                 />
                 <CardTitle>Nothing scheduled this month</CardTitle>
                 <CardDescription>
-                    Plan this month to schedule article ideas.
+                    Use “Plan my content” to let Avyo research topics and
+                    prepare your calendar, or create an article about a customer
+                    question.
                 </CardDescription>
             </CardHeader>
         </Card>
@@ -478,5 +584,5 @@ function EmptyMonth() {
 }
 
 Calendar.layout = {
-    breadcrumbs: [{ title: 'Content plan', href: index() }],
+    breadcrumbs: [{ title: 'Calendar', href: index() }],
 };

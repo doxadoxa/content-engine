@@ -63,7 +63,7 @@ enum ChannelType: string
     {
         return array_values(array_filter(
             self::cases(),
-            static fn (self $type): bool => $type !== self::Threads || (bool) config('social.enabled'),
+            static fn (self $type): bool => ! $type->isSocial() || (bool) config('social.enabled'),
         ));
     }
 

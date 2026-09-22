@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Onboarding;
 
 use App\Audit\SiteAuditStarter;
+use App\Billing\Entitlements;
+use App\Billing\Metric;
 use App\Console\Commands\EngineTickCommand;
 use App\ContentStudio\ContentStudioAction;
 use App\ContentStudio\ContentStudioOperations;
@@ -18,8 +20,11 @@ use App\Models\Project;
 use App\Pipelines\Core\PipelineRunner;
 use App\Pipelines\Definitions\ContentStudioPipeline;
 use App\Pipelines\Events\PipelineRunFinished;
+use App\Support\Engine\ArticleWorkflow;
+use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 /**
  * What happens after somebody finishes the wizard.
@@ -76,15 +81,29 @@ class ProjectLaunch
         private readonly CurrentProject $current,
         private readonly ContentStudioOperations $studio,
         private readonly SiteAuditStarter $audits,
+        private readonly Entitlements $entitlements,
     ) {}
 
     /** The first step: find out what this business could write about. */
-    public function begin(Project $project): PipelineRun
+    public function begin(Project $project): ?PipelineRun
     {
         $project->forceFill(['onboarding_status' => OnboardingStatus::Launching])->save();
 
-        $research = $this->runner->start('research', $project);
-        $this->startContentStudio($project);
+        if (! ArticleWorkflow::enabled($project)) {
+            $audit = $this->audits->start($project);
+            $this->settle($project);
+
+            return $audit;
+        }
+
+        if ($project->onboarded_at === null
+            && ! isset($project->onboarding['article_automation_started_at'])) {
+            $project->forceFill(['onboarding' => [...$project->onboarding, 'article_automation_started_at' => now()->toIso8601String()]])->save();
+        }
+        $research = app(MonthPlanner::class)->start($project);
+        if (config('social.enabled')) {
+            $this->startContentStudio($project);
+        }
 
         // The site the engine is about to write *for*, read once at the start.
         // Beside research rather than after it, and a third independent contour
@@ -110,7 +129,17 @@ class ProjectLaunch
     {
         $project = Project::query()->whereKey($run->project_id)->first();
 
-        if ($project === null || $project->onboarding_status !== OnboardingStatus::Launching) {
+        if ($project === null) {
+            return;
+        }
+        $continued = app(MonthPlanner::class)->afterResearch($run);
+        if ($project->onboarding_status !== OnboardingStatus::Launching) {
+            return;
+        }
+
+        if (! ArticleWorkflow::enabled($project)) {
+            $this->settle($project);
+
             return;
         }
 
@@ -119,6 +148,12 @@ class ProjectLaunch
         // but not a dependency of the SEO research/planning/generation chain:
         // one provider failure must not silently cancel the other product.
         if ($run->pipeline === ContentStudioPipeline::key()) {
+            if (! config('social.enabled')) {
+                $this->settleIfFinished($project);
+
+                return;
+            }
+
             if (
                 $run->status === PipelineRunStatus::Completed
                 && ($run->input['action'] ?? null) === ContentStudioAction::Proposal->value
@@ -152,9 +187,17 @@ class ProjectLaunch
             return;
         }
 
+        if ($run->pipeline === 'research' && isset($run->context['article_plan_month'])) {
+            if ($continued === null) {
+                $this->settleIfFinished($project);
+            }
+
+            return;
+        }
+
         match ($run->pipeline) {
             'research' => $this->afterResearch($project),
-            'planning' => $this->afterPlanning($project),
+            'planning' => $this->afterPlanning($project, $run),
             'generation' => $this->afterGeneration($project),
         };
     }
@@ -188,6 +231,7 @@ class ProjectLaunch
 
         $live = PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
+            ->forActiveProduct()
             ->whereIn('pipeline', self::LAUNCH_PIPELINES)
             ->inFlight()
             ->exists();
@@ -205,9 +249,11 @@ class ProjectLaunch
 
     private function afterResearch(Project $project): void
     {
-        $this->current->run($project, function () use ($project): void {
-            $this->runner->start('planning', $project);
-        });
+        try {
+            app(MonthPlanner::class)->start($project);
+        } catch (ValidationException) {
+            $this->settle($project);
+        }
     }
 
     private function startContentStudio(Project $project): void
@@ -253,16 +299,28 @@ class ProjectLaunch
         });
     }
 
-    private function afterPlanning(Project $project): void
+    private function afterPlanning(Project $project, PipelineRun $run): void
     {
-        $this->current->run($project, function () use ($project): void {
+        if (! ArticleWorkflow::enabled($project)) {
+            $this->settle($project);
+
+            return;
+        }
+
+        $planId = $run->context['planning.plan_id'] ?? null;
+        if (! is_string($planId) || $planId === '') {
+            $this->settle($project);
+
+            return;
+        }
+        $this->current->run($project, function () use ($project, $planId): void {
             $units = ContentItem::query()
                 ->roots()
                 ->inState(ContentItemState::Idea)
-                ->whereNotNull('content_plan_id')
+                ->where('content_plan_id', $planId)
                 ->where('locale', $project->default_locale)
                 ->orderBy('scheduled_for')
-                ->limit(self::FIRST_DRAFTS)
+                ->limit(min(self::FIRST_DRAFTS, $this->entitlements->for($project)->remaining(Metric::Articles) ?? self::FIRST_DRAFTS))
                 ->get();
 
             if ($units->isEmpty()) {
@@ -288,6 +346,7 @@ class ProjectLaunch
     {
         $stillRunning = PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
+            ->forActiveProduct()
             ->whereIn('pipeline', self::LAUNCH_PIPELINES)
             ->whereIn('status', [PipelineRunStatus::Pending->value, PipelineRunStatus::Running->value])
             ->exists();

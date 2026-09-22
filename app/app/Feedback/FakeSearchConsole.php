@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Feedback;
 
 use App\Feedback\Contracts\SearchConsoleGateway;
+use App\Feedback\Measurements\ReadResult;
+use App\Feedback\Measurements\ReadStatus;
+use App\Feedback\Measurements\SearchRow;
 use App\Models\Project;
 use App\Visibility\BrandPresence;
 use Illuminate\Support\Carbon;
@@ -18,6 +21,9 @@ use Illuminate\Support\Carbon;
  */
 class FakeSearchConsole implements SearchConsoleGateway
 {
+    /** @var array<int, ReadResult> */
+    private array $pageReports = [];
+
     /** @var list<UnitMetrics> */
     private array $rows = [];
 
@@ -33,6 +39,28 @@ class FakeSearchConsole implements SearchConsoleGateway
     private array $brand = [];
 
     private bool $configured = true;
+
+    public function willReadPages(ReadResult $result, bool $queries = false): self
+    {
+        $this->pageReports[(int) $queries] = $result;
+
+        return $this;
+    }
+
+    /** @param list<string> $urls */
+    public function pageReport(Project $project, array $urls, Carbon $from, Carbon $to, bool $queries = false): ReadResult
+    {
+        if (! $this->configured) {
+            return new ReadResult(ReadStatus::Unavailable, reason: 'Search Console is not connected.');
+        }
+
+        return $this->pageReports[(int) $queries] ?? new ReadResult(
+            ReadStatus::Complete,
+            $queries ? [] : array_map(static fn (UnitMetrics $row) => new SearchRow(
+                $row->url, $row->measuredOn->toDateString(), $row->impressions, $row->clicks, $row->position,
+            ), $this->performance($project, $urls, $from, $to)),
+        );
+    }
 
     public function name(): string
     {

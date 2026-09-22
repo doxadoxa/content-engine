@@ -39,6 +39,7 @@ class ProjectRequest extends FormRequest
                 Rule::unique('projects', 'slug')->ignore($project),
             ],
             'timezone' => ['required', 'string', 'timezone'],
+            'autopublish' => ['sometimes', 'boolean'],
 
             // Read in the project's own `timezone`, which is why it sits next
             // to it. Empty means never on duty, so the engine schedules

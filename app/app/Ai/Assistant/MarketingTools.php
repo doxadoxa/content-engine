@@ -15,11 +15,13 @@ use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Core\PipelineRunner;
+use App\Support\Engine\ArticleWorkflow;
 use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use App\Visibility\VisibilityReport;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use LarAgent\Tool;
 use Throwable;
@@ -66,7 +68,7 @@ final class MarketingTools
             $this->readVisibility(),
             $this->readContentState(),
             $this->readBrandBrief(),
-            $this->writePost(),
+            ...(config('social.enabled') ? [$this->writePost()] : []),
             $this->writeArticle(),
             $this->planMonth(),
         ];
@@ -102,7 +104,7 @@ final class MarketingTools
     {
         return Tool::create(
             'read_content_state',
-            'What this project has in each half of the engine: articles for search, and social posts. '
+            'What this project has planned and published for search and AI visibility. '
             .'Counts by state, plus the most recent titles. Use before proposing new work, so the advice '
             .'accounts for what is already written and waiting.',
         )->setCallback(function (): array {
@@ -128,14 +130,14 @@ final class MarketingTools
                         ->where('pipeline', 'planning')
                         ->latest('created_at')->value('created_at')?->toDateString(),
                 ],
-                'social' => [
+                ...(config('social.enabled') ? ['social' => [
                     'planned' => $count($social, ContentItemState::Idea),
                     'drafted' => $count($social, ContentItemState::Draft),
                     'approved_not_published' => $count($social, ContentItemState::Approved),
                     'published' => $count($social, ContentItemState::Published),
                     'recent_titles' => (clone $social)->latest()->limit(10)
                         ->pluck('title')->all(),
-                ],
+                ]] : []),
             ];
         });
     }
@@ -183,6 +185,10 @@ final class MarketingTools
         $tool->setRequiredProps(['thesis', 'kind']);
 
         return $tool->setCallback(function (string $thesis, string $kind): array {
+            if (! config('social.enabled')) {
+                return ['ok' => false, 'error' => 'Social publishing is retired.'];
+            }
+
             $project = $this->project();
             $postKind = PostKind::tryFrom($kind);
 
@@ -262,26 +268,32 @@ final class MarketingTools
                 return ['ok' => false, 'error' => 'That topic is too short to write about.'];
             }
 
-            $item = ContentItem::query()->create([
-                'locale' => $project->default_locale,
-                'type' => ContentItemType::Explainer,
-                'slug' => Str::slug(Str::limit($query, 60, '')).'-'.Str::lower(Str::random(4)),
-                'title' => Str::ucfirst($query),
-                'target_query' => $query,
-            ]);
-
-            return $this->started(
-                fn () => $this->runner->start('generation', $project, [], $item->getKey()),
-                [
-                    'ok' => true,
-                    'wrote' => 'article',
-                    'title' => $item->title,
+            return DB::transaction(function () use ($project, $query): array {
+                Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+                if (ArticleWorkflow::capacity($project) === 0) {
+                    return ['ok' => false, 'error' => 'The available article allowance is already used or being prepared.'];
+                }
+                $item = ContentItem::query()->create([
+                    'locale' => $project->default_locale,
+                    'type' => ContentItemType::Explainer,
+                    'slug' => Str::slug(Str::limit($query, 60, '')).'-'.Str::lower(Str::random(4)),
+                    'title' => Str::ucfirst($query),
                     'target_query' => $query,
-                    'content_item_id' => (string) $item->getKey(),
-                    'note' => 'Writing now. It lands in the content plan and waits for a person.',
-                ],
-                fn () => $item->delete(),
-            );
+                ]);
+
+                return $this->started(
+                    fn () => $this->runner->start('generation', $project, [], $item->getKey()),
+                    [
+                        'ok' => true,
+                        'wrote' => 'article',
+                        'title' => $item->title,
+                        'target_query' => $query,
+                        'content_item_id' => (string) $item->getKey(),
+                        'note' => 'Writing now. It lands in the content plan and waits for a person.',
+                    ],
+                    fn () => $item->delete(),
+                );
+            });
         });
     }
 
@@ -290,7 +302,7 @@ final class MarketingTools
         return Tool::create(
             'plan_month',
             'Choose a month of article topics out of the keyword research and write them up as a plan. '
-            .'Takes a few minutes. Refused while one is already running.',
+            .'Takes a few minutes. Reuses the current research or planning run. The resulting calendar follows the business’s saved publishing preference.',
         )->setCallback(function (): array {
             // Through the same starter the button uses, so the check and the
             // start happen under one lock. Two callers each doing their own
@@ -302,9 +314,7 @@ final class MarketingTools
                 return ['ok' => false, 'error' => 'The planner could not start: '.$e->getMessage()];
             }
 
-            return $run === null
-                ? ['ok' => false, 'error' => 'A month is already being planned.']
-                : ['ok' => true, 'started' => 'planning', 'note' => 'Planning the month. This takes a few minutes.'];
+            return ['ok' => true, 'started' => $run->pipeline, 'note' => $run->pipeline === 'research' ? 'Researching suitable article topics before planning the calendar.' : 'Planning the calendar. This takes a few minutes.'];
         });
     }
 

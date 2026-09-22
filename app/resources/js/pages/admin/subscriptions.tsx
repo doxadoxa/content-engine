@@ -30,6 +30,7 @@ type Row = {
     slug: string | null;
     plan: string;
     price_cents: number;
+    currency: string;
     status: string;
     stripe_id: string | null;
     stripe_status: string | null;
@@ -42,7 +43,6 @@ type Row = {
 
 type Props = {
     status: string;
-    currency: string;
     statuses: { value: string; label: string }[];
     subscriptions: Paginated<Row>;
 };
@@ -58,15 +58,15 @@ type Props = {
  */
 export default function AdminSubscriptions({
     status,
-    currency,
     statuses,
     subscriptions,
 }: Props) {
-    const money = (cents: number) =>
+    const money = (cents: number, currency: string) =>
         new Intl.NumberFormat(undefined, {
             style: 'currency',
             currency: currency.toUpperCase(),
-            maximumFractionDigits: 0,
+            maximumFractionDigits: 2,
+            currencyDisplay: 'code',
         }).format(cents / 100);
 
     return (
@@ -126,7 +126,10 @@ export default function AdminSubscriptions({
                                             <TableCell>
                                                 {row.plan}
                                                 <div className="text-xs text-muted-foreground tabular-nums">
-                                                    {money(row.price_cents)}
+                                                    {money(
+                                                        row.price_cents,
+                                                        row.currency,
+                                                    )}
                                                 </div>
                                             </TableCell>
                                             <TableCell>

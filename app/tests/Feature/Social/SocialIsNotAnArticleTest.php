@@ -171,10 +171,9 @@ final class SocialIsNotAnArticleTest extends TestCase
 
         $this->assertSame(ContentItemState::Draft, $reaction->refresh()->state);
 
-        // …and the flag still does what the operator asked it to do, so this is
-        // a rule about what a post is rather than the auto-approval path being
-        // broken.
-        $this->assertSame(ContentItemState::Approved, $article->refresh()->state);
+        // A historical project flag also cannot authorize an unscheduled
+        // article. Explicit due schedules own automatic article approval.
+        $this->assertSame(ContentItemState::Draft, $article->refresh()->state);
     }
 
     // ------------------------------------------------ §1.3, the reverse flow
