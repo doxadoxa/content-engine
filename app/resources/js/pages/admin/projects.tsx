@@ -1,4 +1,5 @@
 import { Head, Link, router } from '@inertiajs/react';
+import { AdminTabs } from '@/components/admin-tabs';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -70,6 +71,8 @@ export default function AdminProjects({ q, cost_currency, projects }: Props) {
                     description="Every tenant, what it is on, and what it has cost this month."
                 />
 
+                <AdminTabs current="projects" />
+
                 <Input
                     type="search"
                     placeholder="Search by name, slug or website"
@@ -99,6 +102,47 @@ export default function AdminProjects({ q, cost_currency, projects }: Props) {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
+                                    {projects.data.length === 0 && (
+                                        <TableRow>
+                                            <TableCell
+                                                colSpan={5}
+                                                className="h-28 text-center text-muted-foreground"
+                                            >
+                                                {/*
+                                                 * An empty page is not an empty table. Paging past
+                                                 * the last page — after somebody else removed rows,
+                                                 * or on a stale back button — also arrives here, and
+                                                 * `Pagination` renders nothing once there is only one
+                                                 * page left, so saying "none yet" would strand a
+                                                 * reader on a deployment that is full.
+                                                 */}
+                                                {projects.total === 0 ? (
+                                                    q === '' ? (
+                                                        'No projects yet.'
+                                                    ) : (
+                                                        'No project matches that search.'
+                                                    )
+                                                ) : (
+                                                    <>
+                                                        Nothing on this page.{' '}
+                                                        <Link
+                                                            href={projectsRoute(
+                                                                {
+                                                                    query: {
+                                                                        q,
+                                                                    },
+                                                                },
+                                                            )}
+                                                            className="underline underline-offset-4"
+                                                        >
+                                                            Back to the first
+                                                            page
+                                                        </Link>
+                                                    </>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
                                     {projects.data.map((project) => (
                                         <TableRow key={project.id}>
                                             <TableCell>

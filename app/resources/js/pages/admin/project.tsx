@@ -1,4 +1,5 @@
 import { Form, Head } from '@inertiajs/react';
+import { AdminTabs } from '@/components/admin-tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -138,6 +139,8 @@ export default function AdminProject({
                         </div>
                     }
                 />
+
+                <AdminTabs current="projects" exact={false} />
 
                 <div className="grid gap-4 sm:grid-cols-3">
                     <Figure
