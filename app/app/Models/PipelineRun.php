@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\ContentItemType;
 use App\Enums\PipelineRunStatus;
 use App\Enums\PipelineStepStatus;
 use App\Models\Concerns\BelongsToProject;
@@ -139,6 +140,26 @@ class PipelineRun extends Model
             ->whereNot(fn (Builder $dead) => $dead->idleSince(
                 now()->subSeconds((int) config('pipeline.abandon_after', 7200)),
             ));
+    }
+
+    /**
+     * Retained social history must not appear as current website work.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeForActiveProduct(Builder $query): void
+    {
+        if (config('social.enabled')) {
+            return;
+        }
+
+        $query->where('pipeline', 'not like', 'social%')
+            ->whereNotIn('pipeline', ['content_studio', 'repurpose'])
+            ->whereNotExists(fn (QueryBuilder $items) => $items
+                ->from('content_items')
+                ->whereRaw("content_items.id = coalesce(pipeline_runs.content_item_id, pipeline_runs.input->>'content_item_id')")
+                ->whereColumn('content_items.project_id', 'pipeline_runs.project_id')
+                ->where('content_items.type', ContentItemType::SocialPost->value));
     }
 
     /**

@@ -1,0 +1,38 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Models;
+
+use App\Models\Concerns\BelongsToProject;
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
+
+/**
+ * @property string $id
+ * @property string $project_id
+ * @property Carbon $created_at
+ * @property string $check_id
+ * @property array<string,mixed> $assessment
+ * @property array<string,mixed> $source_coverage
+ * @property list<array<string,mixed>> $comparisons
+ */
+class FactMaintenanceResult extends Model
+{
+    use BelongsToProject, HasUlids;
+
+    protected $fillable = ['check_id', 'assessment', 'source_coverage', 'comparisons'];
+
+    protected static function booted(): void
+    {
+        static::updating(fn () => throw new \LogicException('Fact-maintenance evidence is immutable. Record a new check or review.'));
+        static::deleting(fn () => throw new \LogicException('Fact-maintenance history is retained.'));
+    }
+
+    /** @return array<string,string> */
+    protected function casts(): array
+    {
+        return ['assessment' => 'array', 'source_coverage' => 'array', 'comparisons' => 'array'];
+    }
+}

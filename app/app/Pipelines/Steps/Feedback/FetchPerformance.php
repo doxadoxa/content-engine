@@ -87,9 +87,9 @@ class FetchPerformance extends AbstractStep
                     'impressions' => $row->impressions,
                     'clicks' => $row->clicks,
                     'position_tenths' => $row->position === null ? null : (int) round($row->position * 10),
-                    // Impressions are proof of indexing; zero is not proof of
-                    // the opposite, but it is the only signal available here.
-                    'indexed' => $row->impressions > 0,
+                    // Positive impressions prove appearance in search.
+                    // Missing impressions provide no index-inspection evidence.
+                    'indexed' => $row->impressions > 0 ? true : null,
                 ],
             );
         }

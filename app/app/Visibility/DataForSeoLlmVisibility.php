@@ -7,35 +7,8 @@ namespace App\Visibility;
 use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Research\DataForSeo\DataForSeoClient;
 use App\Visibility\Contracts\LlmVisibilityGateway;
-use Illuminate\Support\Facades\Log;
 
-/**
- * DataForSEO's AI Optimization API, LLM Responses half.
- *
- * One endpoint per assistant — `/v3/ai_optimization/{platform}/llm_responses/live`
- * — each taking a prompt and a model name and answering with the text plus the
- * sources it says it used. Billed as a small task fee plus whatever the
- * underlying provider charged, which the response reports back as `money_spent`
- * and this records, because a measurement whose own cost is invisible is one
- * nobody can decide to run less often.
- *
- * `web_search` is on. Without it the assistant answers about the brand from
- * training data, which measures what it remembered months ago rather than what
- * it would tell a customer today — and the entire point of this is the second
- * thing.
- *
- * Confirmed against live responses on 2026-08-07. The nesting below —
- * `result[0].items[0].sections[].text` with `annotations[]` alongside — is what
- * both ChatGPT and Perplexity actually return.
- *
- * Cost is worth knowing before scheduling this. One ChatGPT answer with web
- * search on cost $0.029; the same question to Perplexity cost $0.005. A sweep
- * of five prompts in three locales across four assistants is sixty answers, so
- * roughly a dollar a run — which is why `max_answers_per_run` exists and why
- * this is a weekly job rather than a nightly one.
- *
- * Everything the suite asserts runs through {@see FakeLlmVisibility}.
- */
+/** Provider API samples, not reproductions of personalised consumer applications. */
 class DataForSeoLlmVisibility implements LlmVisibilityGateway
 {
     public function __construct(private readonly DataForSeoClient $client) {}
@@ -53,110 +26,88 @@ class DataForSeoLlmVisibility implements LlmVisibilityGateway
     /** @return list<string> */
     public function platforms(): array
     {
-        /** @var array<string, mixed> $configured */
-        $configured = config('visibility.platforms', []);
-
-        return array_values(array_filter(
-            array_keys($configured),
-            static fn (string $platform): bool => is_string(config("visibility.platforms.{$platform}.model"))
-                && config("visibility.platforms.{$platform}.model") !== '',
-        ));
+        return array_values(array_filter(array_map(strval(...), array_keys(config('visibility.platforms', []))), static fn (string $platform): bool => is_string(config("visibility.platforms.{$platform}.model")) && config("visibility.platforms.{$platform}.model") !== ''));
     }
 
-    public function ask(string $platform, string $prompt, ?string $countryIso = null): ?LlmAnswer
+    /** @return list<array<string, mixed>> */
+    public function models(string $platform): array
     {
-        $model = config("visibility.platforms.{$platform}.model");
+        $this->validatePlatform($platform);
 
-        if (! is_string($model) || $model === '') {
-            throw new TerminalStepFailure(
-                "No model is configured for the '{$platform}' assistant, so it cannot be asked. "
-                .'Set one in config/visibility.php or stop listing the platform.'
-            );
+        return $this->client->get("/v3/ai_optimization/{$platform}/llm_responses/models");
+    }
+
+    /** @param array<string, mixed> $settings */
+    public function ask(string $platform, string $prompt, ?string $countryIso = null, array $settings = []): ?LlmAnswer
+    {
+        $this->validatePlatform($platform);
+        $model = $settings['model'] ?? config("visibility.platforms.{$platform}.model");
+        if (! is_string($model) || $model === '' || trim($prompt) === '' || mb_strlen($prompt) > 500) {
+            throw new TerminalStepFailure('The exact prompt and a configured model are required; prompts cannot exceed 500 characters.');
         }
-
-        $task = [
-            // The API caps the prompt at 500 characters. Truncating silently
-            // would change the question being measured, so an over-long prompt
-            // is refused at generation time; this is the belt.
-            'user_prompt' => mb_substr($prompt, 0, 500),
-            'model_name' => $model,
-            'web_search' => true,
-        ];
-
-        // Not every assistant takes the country hint, and the ones that do not
-        // reject the whole request rather than ignoring the field — so a single
-        // unsupported parameter costs that assistant every answer in a sweep
-        // while the others look healthy.
-        if ($countryIso !== null && $countryIso !== '' && config("visibility.platforms.{$platform}.accepts_country", true)) {
+        $task = ['user_prompt' => $prompt, 'model_name' => $model, 'web_search' => true];
+        $acceptsCountry = $settings['accepts_country'] ?? config("visibility.platforms.{$platform}.accepts_country", true);
+        if ($countryIso !== null && $countryIso !== '' && $acceptsCountry === true) {
             $task['web_search_country_iso_code'] = mb_strtoupper($countryIso);
         }
-
-        $result = $this->client->post(
-            "/v3/ai_optimization/{$platform}/llm_responses/live",
-            $task,
-            timeout: (int) config('visibility.timeout', 150),
-        );
-
-        if ($result === []) {
-            return null;
+        if (isset($settings['tag'])) {
+            $task['tag'] = $settings['tag'];
         }
-
-        $text = '';
+        // Parameters are pinned by the sampling set; omission uses the provider default, recorded as such.
+        foreach (['temperature', 'max_output_tokens'] as $key) {
+            if (isset($settings[$key])) {
+                $task[$key] = $settings[$key];
+            }
+        }
+        $envelope = $this->client->postTask("/v3/ai_optimization/{$platform}/llm_responses/live", $task, timeout: (int) config('visibility.timeout', 150));
+        $result = $envelope->results[0] ?? [];
+        $sections = [];
         $citations = [];
-
-        foreach ($this->sections($result) as $section) {
-            $text .= (string) ($section['text'] ?? '');
-
-            foreach (is_array($section['annotations'] ?? null) ? $section['annotations'] : [] as $annotation) {
-                $url = $annotation['url'] ?? null;
-
-                if (! is_string($url) || $url === '') {
+        foreach (is_array($result['items'] ?? null) ? $result['items'] : [] as $item) {
+            // Legacy providers omitted type; explicit reasoning/tool items must never become answer text.
+            if (! is_array($item) || ! in_array($item['type'] ?? 'message', ['message'], true)) {
+                continue;
+            }
+            foreach (is_array($item['sections'] ?? null) ? $item['sections'] : [] as $section) {
+                if (! is_array($section) || ! in_array($section['type'] ?? 'text', ['text', 'output_text'], true)) {
                     continue;
                 }
-
-                $title = $annotation['title'] ?? null;
-
-                $citations[] = ['url' => $url, 'title' => is_string($title) && $title !== '' ? $title : $url];
+                $text = is_string($section['text'] ?? null) ? $section['text'] : '';
+                $annotations = [];
+                foreach (is_array($section['annotations'] ?? null) ? $section['annotations'] : [] as $annotation) {
+                    if (! is_array($annotation) || ! is_string($annotation['url'] ?? null) || ! in_array(strtolower((string) parse_url($annotation['url'], PHP_URL_SCHEME)), ['https', 'http'], true)) {
+                        continue;
+                    }
+                    $citation = ['url' => $annotation['url'], 'title' => is_string($annotation['title'] ?? null) ? $annotation['title'] : $annotation['url']];
+                    $annotations[] = [...$citation, 'start_index' => $annotation['start_index'] ?? null, 'end_index' => $annotation['end_index'] ?? null, 'text' => $annotation['text'] ?? null];
+                    $citations[] = $citation;
+                }
+                $sections[] = ['text' => $text, 'annotations' => $annotations];
             }
         }
-
-        if (trim($text) === '') {
-            // Asked, and it said nothing usable. Not a failure — an assistant
-            // declining to answer "best cleaning service in Lisbon" is itself a
-            // finding, and failing the run would hide it.
-            Log::info('An assistant returned no text', ['platform' => $platform, 'prompt' => $prompt]);
-
+        $text = implode("\n\n", array_column($sections, 'text'));
+        if (trim($text) === '' && ! ($settings['preserve_empty'] ?? false)) {
             return null;
         }
 
-        return new LlmAnswer(
-            platform: $platform,
-            model: $model,
-            text: $text,
-            citations: $citations,
-            moneySpent: is_numeric($result[0]['money_spent'] ?? null) ? (float) $result[0]['money_spent'] : 0.0,
-        );
+        // Even an empty returned answer retains task identity and cost in the sampling record.
+        return new LlmAnswer($platform, is_string($result['model_name'] ?? null) ? $result['model_name'] : $model, $text, $citations,
+            is_numeric($result['money_spent'] ?? null) ? (float) $result['money_spent'] : 0.0,
+            $sections, [
+                'task_id' => $envelope->id, 'requested_model' => $model, 'resolved_model' => $result['model_name'] ?? null,
+                'provider_datetime' => $result['datetime'] ?? null, 'requested_country' => $countryIso,
+                'sent_country' => $task['web_search_country_iso_code'] ?? null,
+                'country_control' => isset($task['web_search_country_iso_code']) ? 'sent_to_provider' : 'not_supported_or_unspecified',
+                'web_search_requested' => true, 'web_search_reported' => $result['web_search'] ?? null,
+                'request' => $task, 'input_tokens' => $result['input_tokens'] ?? null, 'output_tokens' => $result['output_tokens'] ?? null,
+                'finish_reason' => $result['finish_reason'] ?? null, 'completion_state' => isset($result['finish_reason']) ? 'provider_reported' : 'not_reported',
+            ], $envelope->cost);
     }
 
-    /**
-     * An answer arrives in sections, and the citations hang off each section
-     * rather than off the answer — so both have to be walked together.
-     *
-     * @param  list<array<string, mixed>>  $result
-     * @return list<array<string, mixed>>
-     */
-    private function sections(array $result): array
+    private function validatePlatform(string $platform): void
     {
-        $sections = [];
-
-        foreach (is_array($result[0]['items'] ?? null) ? $result[0]['items'] : [] as $item) {
-            foreach (is_array($item['sections'] ?? null) ? $item['sections'] : [] as $section) {
-                if (is_array($section)) {
-                    $sections[] = $section;
-                }
-            }
+        if (! in_array($platform, ['chat_gpt', 'gemini', 'claude', 'perplexity'], true)) {
+            throw new TerminalStepFailure('Unsupported sampling platform.');
         }
-
-        return $sections;
     }
 }

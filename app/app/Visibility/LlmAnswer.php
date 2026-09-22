@@ -15,6 +15,8 @@ final readonly class LlmAnswer
 {
     /**
      * @param  list<array{url: string, title: string}>  $citations  sources the assistant said it used
+     * @param  list<array<string, mixed>>  $sections  final message sections, never reasoning
+     * @param  array<string, mixed>  $metadata
      * @param  float  $moneySpent  what the underlying provider charged, in USD
      */
     public function __construct(
@@ -23,6 +25,9 @@ final readonly class LlmAnswer
         public string $text,
         public array $citations = [],
         public float $moneySpent = 0.0,
+        public array $sections = [],
+        public array $metadata = [],
+        public ?float $totalCost = null,
     ) {}
 
     /**

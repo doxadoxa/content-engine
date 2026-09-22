@@ -89,6 +89,7 @@ final class ArticleVerbsTest extends TestCase
     #[Test]
     public function the_month_can_be_planned_from_the_screen(): void
     {
+        $this->researchedIdea();
         $this->post('/content/plan')->assertRedirect();
 
         app(CurrentProject::class)->run($this->project, function (): void {
@@ -126,6 +127,7 @@ final class ArticleVerbsTest extends TestCase
     public function another_projects_planning_run_does_not_block_this_one(): void
     {
         $theirs = Project::factory()->create();
+        $this->researchedIdea();
 
         app(CurrentProject::class)->run($theirs, function (): void {
             PipelineRun::query()->create([
@@ -142,5 +144,12 @@ final class ArticleVerbsTest extends TestCase
                 PipelineRun::query()->where('pipeline', 'planning')->exists(),
             );
         });
+    }
+
+    private function researchedIdea(): void
+    {
+        app(CurrentProject::class)->run($this->project, fn (): ContentItem => ContentItem::factory()->create([
+            'state' => ContentItemState::Idea, 'content_plan_id' => null,
+        ]));
     }
 }

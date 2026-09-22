@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Generation;
 
+use App\Content\ArticleBusinessFacts;
 use App\Enums\ContentItemState;
 use App\Enums\RejectionReason;
 use App\Models\BrandBrief;
@@ -68,7 +69,7 @@ class CompileBrief extends AbstractStep
 
         return StepResult::success(new BriefContextPayload(
             briefId: $brief->getKey(),
-            compiledBrief: $this->withOutstandingReview($brief->compileToPrompt(), $unit),
+            compiledBrief: $this->withOutstandingReview($brief->compileToPrompt(), $unit)."\n\n".app(ArticleBusinessFacts::class)->compile($context, $unit),
             // Only when the planner asked for it (§4.3). Handing a model the
             // price list on every article is how prices end up in guides that
             // never needed them.

@@ -370,6 +370,41 @@ final class StripeWebhookTest extends TestCase
     }
 
     #[Test]
+    public function an_unknown_explicit_version_never_falls_back_to_todays_offer(): void
+    {
+        $payload = $this->subscriptionPayload('active');
+        $payload['data']['object']['metadata']['plan_version'] = '999';
+        $this->send($payload);
+        $this->assertSame(0, ProjectSubscription::query()->count());
+        $this->assertSame('unknown_plan', StripeEvent::query()->sole()->outcome);
+    }
+
+    #[Test]
+    public function a_legacy_dashboard_price_resolves_its_original_version_after_the_new_offer_launches(): void
+    {
+        config(['billing.version' => 2, 'billing.plans.1.medium.stripe_price' => 'price_original']);
+        $payload = $this->subscriptionPayload('active');
+        unset($payload['data']['object']['metadata']['plan'], $payload['data']['object']['metadata']['plan_version']);
+        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_original';
+        $this->send($payload);
+        $this->assertSame('medium', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame(1, ProjectSubscription::query()->sole()->plan_version);
+    }
+
+    #[Test]
+    public function a_version_two_subscription_records_the_usd_offer_without_migrating_legacy_rows(): void
+    {
+        $payload = $this->subscriptionPayload('active');
+        $payload['data']['object']['metadata']['plan'] = 'local-search';
+        $payload['data']['object']['metadata']['plan_version'] = '2';
+        $this->send($payload);
+        $subscription = ProjectSubscription::query()->sole();
+        $this->assertSame(2, $subscription->plan_version);
+        $this->assertSame('usd', $subscription->plan()->currency);
+        $this->assertSame(4, $subscription->plan()->limit('page_improvements'));
+    }
+
+    #[Test]
     public function an_older_event_arriving_late_does_not_undo_a_newer_one(): void
     {
         $this->send($this->subscriptionPayload('active', at: Carbon::now()));

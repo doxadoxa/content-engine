@@ -37,7 +37,13 @@ class AdminOverviewController extends Controller
             fn (ProjectSubscription $s): bool => $s->status === BillingStatus::Active && $s->plan !== 'trial',
         );
 
-        $revenueCents = $paying->sum(fn (ProjectSubscription $s): int => $s->plan()->priceCents);
+        /** @var array<string,int> $revenueByCurrency */
+        $revenueByCurrency = [];
+        foreach ($paying as $subscription) {
+            $plan = $subscription->plan();
+            $revenueByCurrency[$plan->currency] = ($revenueByCurrency[$plan->currency] ?? 0) + $plan->priceCents;
+        }
+        ksort($revenueByCurrency);
 
         // Spend across every tenant, which is the one reading in this
         // application that legitimately spans them — and in two queries rather
@@ -47,9 +53,10 @@ class AdminOverviewController extends Controller
         /** @var list<string> $ids */
         $ids = $subscriptions->pluck('project_id')->values()->all();
 
-        $spends = ProjectSpend::totals($ids, $since);
+        $spends = ProjectSpend::summaries($ids, $since);
 
         $costMicros = 0;
+        $costComplete = true;
         $margins = [];
 
         foreach ($subscriptions as $subscription) {
@@ -61,7 +68,10 @@ class AdminOverviewController extends Controller
 
             // Absent means nothing spent: a project with no rows and a project
             // that cost nothing are the same thing to every reader here.
-            $spend = $spends[$project->getKey()] ?? 0;
+            $summary = $spends[$project->getKey()] ?? null;
+            $spend = $summary['total_micros'] ?? 0;
+            $rowComplete = ($summary['completeness'] ?? 'incomplete') === 'complete';
+            $costComplete = $costComplete && $rowComplete;
             $costMicros += $spend;
 
             $priceCents = $subscription->status === BillingStatus::Active && $subscription->plan !== 'trial'
@@ -75,7 +85,10 @@ class AdminOverviewController extends Controller
                 'plan' => $subscription->plan()->name,
                 'status' => $subscription->status->value,
                 'price_cents' => $priceCents,
+                'currency' => $subscription->plan()->currency,
+                'contribution_micros' => $subscription->plan()->currency === 'usd' && $rowComplete ? $priceCents * 10_000 - $spend : null,
                 'cost_micros' => $spend,
+                'cost_complete' => $rowComplete,
                 // The ceiling as a proportion, because "which projects are
                 // closest to costing more than they pay" is the question this
                 // screen is for and a raw figure buries it.
@@ -83,10 +96,10 @@ class AdminOverviewController extends Controller
             ];
         }
 
-        // Worst margin first: the projects that need looking at are the ones
-        // eating a plan they are not paying enough for.
-        usort($margins, static fn (array $a, array $b): int => ($b['cost_micros'] - $b['price_cents'] * 10_000)
-            <=> ($a['cost_micros'] - $a['price_cents'] * 10_000));
+        // Order by one measured unit only; cross-currency margins have no valid rank.
+        usort($margins, static fn (array $a, array $b): int => $b['cost_micros'] <=> $a['cost_micros']);
+        $contribution = $costComplete && array_diff(array_keys($revenueByCurrency), ['usd']) === []
+            ? ($revenueByCurrency['usd'] ?? 0) * 10_000 - $costMicros : null;
 
         return Inertia::render('admin/overview', [
             'month' => $since->toDateString(),
@@ -97,9 +110,11 @@ class AdminOverviewController extends Controller
                 'past_due' => $subscriptions->where('status', BillingStatus::PastDue)->count(),
                 'canceled' => $subscriptions->where('status', BillingStatus::Canceled)->count(),
             ],
-            'revenue_cents' => $revenueCents,
+            'revenue_by_currency' => collect($revenueByCurrency)->map(fn (int $cents, string $currency): array => ['currency' => $currency, 'cents' => $cents])->values()->all(),
+            'contribution_micros' => $contribution,
             'cost_micros' => $costMicros,
-            'currency' => (string) config('billing.currency', 'eur'),
+            'cost_complete' => $costComplete,
+            'cost_currency' => 'usd',
             'margins' => array_slice($margins, 0, 20),
             'recent_actions' => AdminAction::query()
                 ->with(['actor', 'project'])

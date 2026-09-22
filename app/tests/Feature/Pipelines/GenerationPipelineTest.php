@@ -548,7 +548,7 @@ final class GenerationPipelineTest extends TestCase
     }
 
     #[Test]
-    public function the_three_checks_run_in_parallel(): void
+    public function the_public_fields_are_ready_before_fact_checking_and_finalisation(): void
     {
         $run = $this->generate();
 
@@ -565,8 +565,11 @@ final class GenerationPipelineTest extends TestCase
             'The brief has to be compiled before anything is written from it.',
         );
 
-        // Several unrelated questions about one body, side by side, and all of
-        // them before the body is saved.
+        foreach ([BuildGeoLayer::key(), VerifyLinks::key(), LinkToSite::key()] as $key) {
+            $this->assertLessThan($positions[FactCheck::key()], $positions[$key]);
+        }
+
+        // All content processing must finish before the body is saved.
         foreach ([
             FactCheck::key(),
             BuildGeoLayer::key(),
@@ -665,10 +668,49 @@ final class GenerationPipelineTest extends TestCase
         $this->assertNull($unit->published_at);
     }
 
-    /**
-     * Scripted by role, not by position: fact_check and build_geo_layer are
-     * parallel branches with no guaranteed order between them.
-     */
+    #[Test]
+    public function an_empty_factcheck_answer_is_not_permission_to_publish_automatically(): void
+    {
+        $this->scriptAGoodArticle('');
+        $unit = $this->unit();
+        $this->generate($unit);
+        $this->assertFalse($unit->refresh()->factcheck['passed']);
+        $this->assertNotEmpty($unit->factcheck['findings']);
+    }
+
+    #[Test]
+    public function punctuation_without_a_verdict_is_not_a_pass(): void
+    {
+        $this->scriptAGoodArticle("-\n1.\n*)");
+        $unit = $this->unit();
+        $this->generate($unit);
+        $this->assertFalse($unit->refresh()->factcheck['passed']);
+        $this->assertNotEmpty($unit->factcheck['findings']);
+    }
+
+    #[Test]
+    public function claims_in_the_summary_and_faq_are_checked_before_the_article_is_sealed(): void
+    {
+        $this->models->willAnswerRole('draft', "# Preparing for a visit\n\nClear a path.\n\nSummary: Every visit costs €777.");
+        $this->models->willAnswerRole('utility', "Q: What is included?\nA: Every visit includes free roof restoration.");
+        $this->models->willAnswerUsing(static function (ModelRequest $request): ?string {
+            if ($request->role !== 'factcheck') {
+                return null;
+            }
+
+            return str_contains($request->prompt, 'Every visit costs €777.')
+                && str_contains($request->prompt, 'Every visit includes free roof restoration.')
+                ? 'The price and roof restoration claims are unsupported.'
+                : 'PASS';
+        });
+        $unit = $this->unit();
+        $run = $this->generate($unit);
+        $this->assertSame(PipelineRunStatus::Completed, $run->refresh()->status);
+        $this->assertFalse($unit->refresh()->factcheck['passed']);
+        $this->assertStringContainsString('unsupported', implode(' ', $unit->factcheck['findings']));
+    }
+
+    /** Script the distinct writing, FAQ and checking roles explicitly. */
     private function scriptAGoodArticle(string $factCheck = 'PASS'): void
     {
         $this->models

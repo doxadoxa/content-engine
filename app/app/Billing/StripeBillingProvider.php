@@ -8,13 +8,17 @@ use App\Billing\Contracts\BillingProvider;
 use App\Billing\Contracts\ProviderSubscription;
 use App\Enums\BillingStatus;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use DateTimeInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Stripe\Exception\ApiErrorException;
+use Stripe\Price;
 use Stripe\Subscription as StripeSubscription;
+use Stripe\SubscriptionSchedule;
 
 /**
  * Stripe, behind the one door.
@@ -48,6 +52,9 @@ class StripeBillingProvider implements BillingProvider
             // with no price behind it would otherwise send somebody to a
             // checkout for nothing.
             throw new RuntimeException("Plan `{$plan->key}` has no Stripe price configured.");
+        }
+        if ($plan->version >= 2) {
+            PlanPrice::verify($plan, Price::retrieve($price, ['api_key' => config('cashier.secret')])->toArray());
         }
 
         $builder = $payer->newSubscription($project->getKey(), $price);
@@ -101,6 +108,14 @@ class StripeBillingProvider implements BillingProvider
         if ($price === null || $subscription === null || ! $subscription->valid()) {
             return false;
         }
+        if ($plan->version >= 2) {
+            PlanPrice::verify($plan, Price::retrieve($price, ['api_key' => config('cashier.secret')])->toArray());
+        }
+
+        $local = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
+        if ($local?->stripe_schedule_id !== null && ! $this->cancelPlanChange($payer, $project)) {
+            return false;
+        }
 
         // `swap`, not `newSubscription`. The customer keeps one subscription,
         // Stripe prorates the difference, and a trial in progress survives the
@@ -121,6 +136,112 @@ class StripeBillingProvider implements BillingProvider
                 'plan_version' => (string) $plan->version,
             ],
         ]);
+
+        return true;
+    }
+
+    public function schedulePlanChange(User $payer, Project $project, Plan $plan): string
+    {
+        $local = ProjectSubscription::query()->where('project_id', $project->getKey())->firstOrFail();
+        if ($local->stripe_id === null || $local->period_ends_at === null || ! $local->period_ends_at->isFuture() || $plan->stripePrice === null) {
+            throw new RuntimeException('A confirmed future renewal and configured price are required.');
+        }
+        $options = ['api_key' => config('cashier.secret')];
+        PlanPrice::verify($plan, Price::retrieve($plan->stripePrice, $options)->toArray());
+        $remote = StripeSubscription::retrieve($local->stripe_id, $options);
+        if ($remote->customer !== $payer->stripe_id || $remote->status !== 'active' || count($remote->items->data) !== 1 || $remote->cancel_at_period_end) {
+            throw new RuntimeException('This subscription needs a billing review before scheduling a change.');
+        }
+        $end = $remote->items->data[0]->current_period_end ?? ($remote->toArray()['current_period_end'] ?? null);
+        if ($end !== $local->period_ends_at->getTimestamp()) {
+            throw new RuntimeException('The renewal date changed. Refresh billing before trying again.');
+        }
+        $remoteSchedule = is_string($remote->schedule) ? $remote->schedule : $remote->schedule?->id;
+        if ($remoteSchedule !== null && $local->stripe_schedule_id === null && $local->stripe_schedule_generation !== null) {
+            // Recover an accepted create whose response was lost. Only the
+            // original idempotency key can prove this is our schedule.
+            $recovered = SubscriptionSchedule::create(['from_subscription' => $remote->id], [
+                ...$options, 'idempotency_key' => 'avyo-schedule-'.$local->stripe_schedule_generation,
+            ]);
+            if ($recovered->id === $remoteSchedule) {
+                $local->fill(['stripe_schedule_id' => $recovered->id])->save();
+            }
+        }
+        if ($remoteSchedule !== null && $remoteSchedule !== $local->stripe_schedule_id) {
+            throw new RuntimeException('Another billing schedule already manages this subscription.');
+        }
+        if ($remoteSchedule === null && ($local->stripe_schedule_generation === null || $local->stripe_schedule_id !== null)) {
+            $local->fill(['stripe_schedule_generation' => (string) Str::ulid(), 'stripe_schedule_id' => null])->save();
+        }
+        // Held here rather than read back off the row afterwards. A
+        // `customer.subscription.updated` carrying `schedule: null` can land
+        // while the create below is in flight, and the webhook clears the
+        // generation when it does — leaving a schedule whose only proof of
+        // ownership, its idempotency key, no longer exists. Writing the pair
+        // back together restores it.
+        $generation = (string) $local->stripe_schedule_generation;
+        $schedule = $remoteSchedule !== null
+            ? SubscriptionSchedule::retrieve($remoteSchedule, $options)
+            : SubscriptionSchedule::create(['from_subscription' => $remote->id], [
+                ...$options, 'idempotency_key' => 'avyo-schedule-'.$generation,
+            ]);
+        // Persist the provider identity before configuring its phases. A timeout
+        // can then be retried against the same schedule, never a second subscription.
+        $local->forceFill(['stripe_schedule_id' => $schedule->id, 'stripe_schedule_generation' => $generation])->save();
+        $phases = $schedule->phases;
+        $current = null;
+        foreach ($phases as $phase) {
+            if ($phase->start_date <= time() && $phase->end_date > time()) {
+                $current = $phase->toArray();
+                break;
+            }
+        }
+        if ($current === null) {
+            throw new RuntimeException('Stripe returned no current billing phase.');
+        }
+        // Preserve the current phase's discounts, tax and billing settings.
+        $preserved = array_intersect_key($current, array_flip([
+            'start_date', 'end_date', 'items', 'metadata', 'discounts', 'default_tax_rates',
+            'automatic_tax', 'collection_method', 'default_payment_method', 'invoice_settings',
+            'application_fee_percent', 'transfer_data', 'on_behalf_of', 'description',
+        ]));
+        if (isset($preserved['automatic_tax'])) {
+            $preserved['automatic_tax'] = array_intersect_key($preserved['automatic_tax'], array_flip(['enabled', 'liability']));
+        }
+        $preserved = $this->withoutNulls($preserved);
+        $preserved['end_date'] = $end;
+        $preserved['items'] = $this->withoutNulls(array_map(static fn (array $item): array => array_intersect_key($item, array_flip(['price', 'quantity', 'tax_rates', 'discounts'])), $current['items']));
+        $next = $preserved;
+        unset($next['end_date']);
+        $next['start_date'] = $end;
+        $next['duration'] = ['interval' => 'month', 'interval_count' => 1];
+        $next['items'] = [[...$preserved['items'][0], 'price' => $plan->stripePrice, 'quantity' => 1]];
+        $next['metadata'] = ['project_id' => $project->getKey(), 'plan' => $plan->key, 'plan_version' => (string) $plan->version];
+        $next['proration_behavior'] = 'none';
+        SubscriptionSchedule::update($schedule->id, [
+            'end_behavior' => 'release', 'proration_behavior' => 'none',
+            'metadata' => ['avyo_project_id' => $project->getKey()],
+            'phases' => [$preserved, $next],
+        ], [...$options, 'idempotency_key' => 'avyo-phase-'.$schedule->id.'-'.$plan->version.'-'.$plan->key]);
+
+        return $schedule->id;
+    }
+
+    public function cancelPlanChange(User $payer, Project $project): bool
+    {
+        $local = ProjectSubscription::query()->where('project_id', $project->getKey())->firstOrFail();
+        if ($local->stripe_schedule_id === null) {
+            return true;
+        }
+        $options = ['api_key' => config('cashier.secret')];
+        $schedule = SubscriptionSchedule::retrieve($local->stripe_schedule_id, $options);
+        if ($schedule->customer !== $payer->stripe_id || ($schedule->subscription !== $local->stripe_id && $schedule->released_subscription !== $local->stripe_id)) {
+            throw new RuntimeException('The billing schedule does not belong to this subscription.');
+        }
+        if ($schedule->status === 'active' || $schedule->status === 'not_started') {
+            $schedule->release([], [...$options, 'idempotency_key' => 'avyo-release-'.$schedule->id]);
+        }
+        $local->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null, 'stripe_schedule_id' => null, 'stripe_schedule_generation' => null])->save();
 
         return true;
     }
@@ -197,6 +318,22 @@ class StripeBillingProvider implements BillingProvider
             'past_due', 'unpaid', 'incomplete', 'paused' => BillingStatus::PastDue,
             default => self::unknown($stripeStatus),
         };
+    }
+
+    /**
+     * @param  array<string|int, mixed>  $values
+     * @return array<string|int, mixed>
+     */
+    private function withoutNulls(array $values): array
+    {
+        $result = [];
+        foreach ($values as $key => $value) {
+            if ($value !== null) {
+                $result[$key] = is_array($value) ? $this->withoutNulls($value) : $value;
+            }
+        }
+
+        return $result;
     }
 
     private static function unknown(string $stripeStatus): BillingStatus

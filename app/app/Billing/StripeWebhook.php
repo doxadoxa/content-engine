@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Billing;
 
+use App\Billing\Contracts\BillingProvider;
 use App\Enums\BillingStatus;
 use App\Enums\OnboardingStatus;
 use App\Models\PipelineRun;
@@ -16,6 +17,7 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * What Stripe tells us, turned into what this application already understands.
@@ -37,7 +39,7 @@ use Illuminate\Support\Facades\Log;
  */
 class StripeWebhook
 {
-    public function __construct(private readonly Subscriptions $subscriptions) {}
+    public function __construct(private readonly Subscriptions $subscriptions, private readonly BillingProvider $provider) {}
 
     /**
      * @param  array<string, mixed>  $payload
@@ -171,7 +173,8 @@ class StripeWebhook
             return 'unmatched';
         }
 
-        $plan = $this->planKey($object);
+        $existing = $this->existing($project);
+        $plan = $this->soldPlan($object, $existing);
 
         if ($plan === null) {
             // Refusing rather than guessing, for the reason PlanCatalog throws:
@@ -187,7 +190,6 @@ class StripeWebhook
 
         $rawStatus = (string) ($object['status'] ?? '');
         $status = StripeBillingProvider::statusFrom($rawStatus);
-        $existing = $this->existing($project);
 
         // Read, and left null when Stripe sends no window we can recognise —
         // a metadata-only edit, or a payload shape the `items` fallback misses.
@@ -201,8 +203,13 @@ class StripeWebhook
         $periodStart = $this->at($object, 'current_period_start');
         $periodEnd = $this->at($object, 'current_period_end');
 
+        $samePeriodChange = $existing !== null
+            && ($existing->plan !== $plan->key || $existing->plan_version !== $plan->version)
+            && ($plan->version >= 4 || $existing->plan_version >= 4)
+            && ($periodStart === null || $existing->periodStart()->equalTo($periodStart));
         $outcome = match (true) {
-            $existing === null, $existing->plan !== $plan => $this->arrange(
+            $samePeriodChange => $this->changeWithinPeriod($project, $plan),
+            $existing === null, $existing->plan !== $plan->key, $existing->plan_version !== $plan->version => $this->arrange(
                 $project,
                 $plan,
                 $object,
@@ -240,6 +247,21 @@ class StripeWebhook
             'canceled_at' => $this->at($object, 'canceled_at'),
         ])->save();
 
+        if ($subscription->pending_plan === $plan->key && $subscription->pending_plan_version === $plan->version) {
+            $subscription->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null])->save();
+            // The scheduled change has landed, so the schedule has no work
+            // left — but `release` only fires at the end of its final phase, a
+            // month away, and until then Stripe treats the subscription as
+            // schedule-managed and refuses portal plan changes against it.
+            // Released here instead, once there is nothing pending to protect.
+            $this->releaseSettledSchedule($project, $subscription);
+        }
+
+        if (array_key_exists('schedule', $object)) {
+            $scheduleId = is_string($object['schedule']) ? $object['schedule'] : ($object['schedule']['id'] ?? null);
+            $subscription->fill(['stripe_schedule_id' => $scheduleId, ...($scheduleId === null ? ['stripe_schedule_generation' => null, 'pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null] : [])])->save();
+        }
+
         $this->stamp($subscription, $happenedAt);
 
         // Status last, and through the transitions rather than as a column.
@@ -255,13 +277,48 @@ class StripeWebhook
     }
 
     /**
+     * Let go of a schedule whose change has already taken effect.
+     *
+     * After the commit, and never fatal: this runs inside the event's claim
+     * transaction, and a provider call there would hold it open across the
+     * network — while a release that fails is a tidying step to repeat, not a
+     * reason to hand Stripe a 500 and have the whole event redelivered.
+     */
+    private function releaseSettledSchedule(Project $project, ProjectSubscription $subscription): void
+    {
+        $payer = $subscription->payer;
+
+        if ($subscription->stripe_schedule_id === null || ! $payer instanceof User) {
+            return;
+        }
+
+        DB::afterCommit(function () use ($project, $payer): void {
+            try {
+                $this->provider->cancelPlanChange($payer, $project);
+            } catch (Throwable $e) {
+                Log::warning('Could not release a settled billing schedule', [
+                    'project' => $project->getKey(),
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
+    }
+
+    private function changeWithinPeriod(Project $project, Plan $plan): string
+    {
+        $this->subscriptions->changeWithinPeriod($project, $plan);
+
+        return 'plan_changed';
+    }
+
+    /**
      * A new subscription, or a move to a different plan.
      *
      * @param  array<string, mixed>  $object
      */
     private function arrange(
         Project $project,
-        string $plan,
+        Plan $plan,
         array $object,
         Carbon $periodStart,
         Carbon $periodEnd,
@@ -269,14 +326,14 @@ class StripeWebhook
     ): string {
         $this->subscriptions->assign(
             $project,
-            $plan,
+            $plan->key,
             $this->payer($object, $project),
             $periodStart,
             $periodEnd,
             // The version the checkout was stamped with, so a session opened
             // under one price list and completed after the next was published
             // buys the one it was opened under.
-            version: $this->planVersion($object),
+            version: $plan->version,
         );
 
         if ($isNew) {
@@ -549,56 +606,47 @@ class StripeWebhook
     }
 
     /** @param array<string, mixed> $object */
-    private function planKey(array $object): ?string
+    private function soldPlan(array $object, ?ProjectSubscription $existing): ?Plan
     {
-        $plan = $object['metadata']['plan'] ?? null;
+        $catalog = app(PlanCatalog::class);
+        $key = $object['metadata']['plan'] ?? null;
+        $version = $object['metadata']['plan_version'] ?? null;
+        if ($version !== null) {
+            // Explicit checkout metadata is authoritative, including refusal of
+            // an invalid version. Never reinterpret it as today's price list.
+            if ((! is_int($version) && ! is_string($version)) || ! preg_match('/^[1-9][0-9]*$/D', (string) $version)) {
+                return null;
+            }
 
-        if (is_string($plan) && app(PlanCatalog::class)->has($plan)) {
-            return $plan;
+            if (! is_string($key) || ! $catalog->has($key, (int) $version)) {
+                return null;
+            }
+            $named = $catalog->get($key, (int) $version);
+            $price = $this->priceId($object);
+            // Portal/dashboard changes can retain old metadata. The actual
+            // configured price decides which v4 allowance is being paid for.
+            if ($named->version >= 4 && $price !== null && $named->stripePrice !== $price) {
+                return $catalog->forStripePrice($price);
+            }
+
+            return $named;
         }
-
-        // Falling back to the price is what makes a subscription created in the
-        // Stripe dashboard — an Enterprise deal, a comp — land on the right
-        // plan instead of nowhere.
+        $pinned = $existing !== null && $existing->stripe_id === ($object['id'] ?? null)
+            && $catalog->has($existing->plan, $existing->plan_version)
+            ? $catalog->get($existing->plan, $existing->plan_version) : null;
         $price = $this->priceId($object);
-
-        if ($price === null) {
-            return null;
-        }
-
-        foreach (app(PlanCatalog::class)->all() as $candidate) {
-            if ($candidate->stripePrice === $price) {
-                return $candidate->key;
+        if ($price !== null) {
+            $byPrice = $catalog->forStripePrice($price, $pinned);
+            if ($byPrice !== null && ($key === null || $key === $byPrice->key)) {
+                return $byPrice;
             }
         }
-
-        return null;
-    }
-
-    /**
-     * The price list this arrangement was sold under.
-     *
-     * Stamped into the checkout's metadata and read back here, so a session
-     * opened under version 1 and completed after version 2 was published buys
-     * version 1. Null — meaning today's list — when there is no metadata to
-     * read, which is the right answer for a subscription created directly in
-     * the Stripe dashboard.
-     *
-     * @param  array<string, mixed>  $object
-     */
-    private function planVersion(array $object): ?int
-    {
-        $version = $object['metadata']['plan_version'] ?? null;
-
-        if (! is_string($version) && ! is_int($version)) {
-            return null;
+        if ($pinned !== null && $key === $pinned->key) {
+            return $pinned;
         }
+        $matches = array_values(array_filter($catalog->allVersions(), static fn (Plan $plan): bool => $plan->key === $key));
 
-        $version = (int) $version;
-
-        return $version > 0 && app(PlanCatalog::class)->has($this->planKey($object) ?? '', $version)
-            ? $version
-            : null;
+        return count($matches) === 1 ? $matches[0] : null;
     }
 
     /** @param array<string, mixed> $object */

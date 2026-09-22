@@ -19,6 +19,10 @@ namespace App\Billing;
  */
 enum Metric: string
 {
+    case AiAnswers = 'ai_answers';
+
+    case PageImprovements = 'page_improvements';
+
     case Articles = 'articles';
 
     case SocialPosts = 'social_posts';
@@ -32,6 +36,8 @@ enum Metric: string
     public function label(): string
     {
         return match ($this) {
+            self::AiAnswers => 'AI answer checks',
+            self::PageImprovements => 'reviewed page improvements',
             self::Articles => 'articles',
             self::SocialPosts => 'social posts',
             self::SiteAudits => 'site audits',

@@ -22,6 +22,7 @@ final class PublicHttpClient
         int $timeout = 15,
         int $maxRedirects = 0,
         ?string $requiredOrigin = null,
+        ?int $maxBytes = null,
     ): PublicHttpResponse {
         $current = $url;
 
@@ -32,8 +33,19 @@ final class PublicHttpClient
                 ->timeout($timeout)
                 ->retry(0)
                 ->withoutRedirecting()
-                ->withOptions($target->httpOptions())
+                ->withOptions([
+                    ...$target->httpOptions(),
+                    ...($maxBytes === null ? [] : ['progress' => static function (float $downloadTotal, float $downloaded) use ($maxBytes): void {
+                        if ($downloadTotal > $maxBytes || $downloaded > $maxBytes) {
+                            throw new UnsafePublicUrl('The response exceeds the permitted download size.');
+                        }
+                    }]),
+                ])
                 ->send(strtoupper($method), $target->url);
+
+            if ($maxBytes !== null && strlen($response->body()) > $maxBytes) {
+                throw new UnsafePublicUrl('The response exceeds the permitted download size.');
+            }
 
             if (! $response->redirect() || $redirects >= $maxRedirects) {
                 return new PublicHttpResponse($response, $target->url);

@@ -118,6 +118,8 @@ class Subscriptions
         return DB::transaction(function () use ($project, $plan, $payer, $at, $until, $overrides): ProjectSubscription {
             $subscription = $this->find($project);
 
+            $this->syncPacing($project, $subscription, $plan);
+
             $attributes = [
                 'plan' => $plan->key,
                 'plan_version' => $plan->version,
@@ -158,6 +160,19 @@ class Subscriptions
             }
 
             $this->resetCounters($project);
+            $this->entitlements->forget($project);
+
+            return $subscription;
+        });
+    }
+
+    /** Change the allowance inside an existing paid period without minting new quota. */
+    public function changeWithinPeriod(Project $project, Plan $plan): ProjectSubscription
+    {
+        return DB::transaction(function () use ($project, $plan): ProjectSubscription {
+            $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->lockForUpdate()->firstOrFail();
+            $this->syncPacing($project, $subscription, $plan);
+            $subscription->fill(['plan' => $plan->key, 'plan_version' => $plan->version, 'limit_overrides' => []])->save();
             $this->entitlements->forget($project);
 
             return $subscription;
@@ -288,6 +303,18 @@ class Subscriptions
         $subscription->forceFill(['paused_by_billing' => false])->save();
 
         $this->entitlements->forget($project);
+    }
+
+    private function syncPacing(Project $project, ?ProjectSubscription $previous, Plan $target): void
+    {
+        if ($target->version < 4 || $previous === null) {
+            return;
+        }
+        $oldCeiling = $previous->plan()->weeklyTarget();
+        $newCeiling = $target->weeklyTarget();
+        if ($oldCeiling !== null && $newCeiling !== null) {
+            $project->forceFill(['weekly_target' => $project->weekly_target >= $oldCeiling ? $newCeiling : min($project->weekly_target, $newCeiling)])->save();
+        }
     }
 
     private function find(Project $project): ?ProjectSubscription

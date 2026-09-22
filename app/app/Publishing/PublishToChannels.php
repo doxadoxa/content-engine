@@ -6,9 +6,11 @@ namespace App\Publishing;
 
 use App\Enums\ChannelType;
 use App\Enums\SocialBand;
+use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Social\Governor;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -58,6 +60,18 @@ class PublishToChannels
      */
     public function refusal(ContentItem $unit, ?CarbonInterface $at = null): ?string
     {
+        if ($unit->isSocial() && ! config('social.enabled')) {
+            return 'Social publishing is retired.';
+        }
+
+        if (! $unit->isSocial()) {
+            $schedule = ArticleSchedule::query()->where('content_item_id', $unit->id)->first();
+            if ($schedule !== null && $schedule->status !== 'completed'
+                && (! in_array($schedule->status, ['active', 'blocked'], true) || $schedule->publish_at->isFuture())) {
+                return 'This article waits for its publication schedule.';
+            }
+        }
+
         return $this->governor->refusalToSend($unit, $at);
     }
 
@@ -95,6 +109,14 @@ class PublishToChannels
      */
     public function publishAutomatically(ContentItem $unit): array
     {
+        if (! $unit->isSocial()) {
+            return app(ArticleSchedules::class)->dispatch($unit);
+        }
+
+        if (! config('social.enabled')) {
+            return [];
+        }
+
         if ($unit->social_band?->canEverAutopublish() === false) {
             return [];
         }
@@ -112,9 +134,23 @@ class PublishToChannels
      */
     public function publishManually(ContentItem $unit): array
     {
+        if (! $unit->isSocial() && ArticleSchedule::query()->where('content_item_id', $unit->id)->where('status', '!=', 'completed')->exists()) {
+            return app(ArticleSchedules::class)->dispatch($unit);
+        }
+
         return $this->deliver($unit, $this->enabled()
             ->whereNotNull('verified_at')
             ->get());
+    }
+
+    /** Queue exactly the selected website; the schedule transaction links its durable identity before dispatch. */
+    public function publishToSelected(ContentItem $unit, Channel $channel): ?WebhookDelivery
+    {
+        if ($unit->project_id !== $channel->project_id || ! app(ArticleSchedules::class)->compatible($channel)) {
+            return null;
+        }
+
+        return $this->deliver($unit, new Collection([$channel]))[0] ?? null;
     }
 
     /**
@@ -216,6 +252,7 @@ class PublishToChannels
      */
     private function accepts(Channel $channel, ContentItem $unit): bool
     {
-        return $unit->isSocial() === $channel->type->isSocial();
+        return (! $unit->isSocial() || (bool) config('social.enabled'))
+            && $unit->isSocial() === $channel->type->isSocial();
     }
 }

@@ -4,14 +4,23 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Visibility;
 
+use App\Billing\Entitlements;
+use App\Billing\Metric;
+use App\Enums\ProjectStatus;
 use App\Enums\PromptIntent;
+use App\Models\AiSamplingCycle;
+use App\Models\AiSamplingSet;
 use App\Models\BrandBrief;
 use App\Models\LlmPrompt;
+use App\Models\Project;
 use App\Onboarding\SiteAnalyst;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
 use App\Research\Contracts\KeywordSource;
+use App\Visibility\Sampling\SamplingSchedule;
+use App\Visibility\Sampling\SamplingSets;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -49,8 +58,37 @@ class GeneratePrompts extends AbstractStep
 
     public function handle(StepContext $context): StepResult
     {
+        $entitlements = app(Entitlements::class);
+        $entitlements->forget($context->project);
+        $entitlement = $entitlements->for($context->project);
+        $limited = ($entitlement->plan->version ?? 0) >= 4;
+        if ((config('visibility.stable_sampling', true) || $limited) && AiSamplingSet::query()->exists()
+            && (! $limited || app(SamplingSets::class)->questionsNeeded($context->project) === 0)) {
+            return StepResult::skip('The monitored question set is pinned. Changes require a new reviewed version.');
+        }
         $wanted = max(1, (int) $context->get('prompts_per_locale', config('visibility.prompts_per_locale', 5)));
         $locales = $this->locales($context);
+        if ($limited) {
+            $claimed = DB::transaction(function () use ($context, $entitlements): bool {
+                $project = Project::query()->whereKey($context->project->id)->lockForUpdate()->firstOrFail();
+                $entitlements->forget($project);
+                $entitlement = $entitlements->for($project);
+                $cycle = AiSamplingCycle::query()->whereKey((string) $context->get('sampling_cycle_id', ''))->lockForUpdate()->first();
+                if ($cycle === null || $cycle->prompt_attempted_at !== null || $project->status !== ProjectStatus::Active || $entitlement->refusal(Metric::AiAnswers) !== null
+                    || $entitlement->subscription === null || ! $cycle->period_started_at->equalTo($entitlement->subscription->periodStart()) || ! $cycle->period_ends_at->isFuture()
+                    || $cycle->slot !== app(SamplingSchedule::class)->slot($cycle->period_started_at, $entitlement->limit('ai_frequency_days') ?? 30)) {
+                    return false;
+                }
+                $cycle->update(['prompt_attempted_at' => now()]);
+
+                return true;
+            });
+            if (! $claimed) {
+                return StepResult::skip('Question initialization needs a current scheduled slot; paid retries are not automatic.');
+            }
+            $wanted = max(1, app(SamplingSets::class)->questionsNeeded($context->project));
+            $locales = [$context->project->default_locale];
+        }
 
         if ($locales === []) {
             // Not reachable through the wizard, which requires a locale. Said
@@ -64,7 +102,7 @@ class GeneratePrompts extends AbstractStep
         $written = 0;
 
         foreach ($locales as $locale) {
-            $missing = $this->shortfall($locale, $wanted);
+            $missing = $limited ? $wanted : $this->shortfall($locale, $wanted);
 
             if ($missing > 0) {
                 $written += $this->writeFor($context, $locale, $missing, $brief);
@@ -141,6 +179,12 @@ class GeneratePrompts extends AbstractStep
     private function writeFor(StepContext $context, string $locale, int $wanted, ?BrandBrief $brief): int
     {
         $mix = PromptIntent::mix($wanted);
+        $existing = null;
+        if ((app(Entitlements::class)->for($context->project)->plan->version ?? 0) >= 4) {
+            $set = AiSamplingSet::query()->latest('version')->first();
+            $questions = array_unique([...array_column($set?->configuration['prompts'] ?? [], 'text'), ...LlmPrompt::query()->where('is_active', true)->pluck('text')->all()]);
+            $existing = 'Do not repeat these existing questions: '.json_encode($questions, JSON_THROW_ON_ERROR);
+        }
 
         $answer = $context->ask(
             'utility',
@@ -148,6 +192,7 @@ class GeneratePrompts extends AbstractStep
                 "The business: {$context->project->name}, selling in {$context->project->market}.",
                 $brief === null ? null : "Positioning: {$brief->positioning}",
                 $brief === null ? null : "Audience: {$brief->audience}",
+                $existing,
                 sprintf('Write exactly %d prompts in this order of intent: %s.', $wanted, implode(', ', array_map(
                     static fn (PromptIntent $intent): string => $intent->value,
                     $mix,

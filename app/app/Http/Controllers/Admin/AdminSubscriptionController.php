@@ -47,7 +47,6 @@ class AdminSubscriptionController extends Controller
 
         return Inertia::render('admin/subscriptions', [
             'status' => $status,
-            'currency' => (string) config('billing.currency', 'eur'),
             'statuses' => array_map(
                 static fn (BillingStatus $case): array => ['value' => $case->value, 'label' => $case->label()],
                 BillingStatus::cases(),
@@ -59,6 +58,7 @@ class AdminSubscriptionController extends Controller
                 'slug' => $s->project?->slug,
                 'plan' => $s->plan()->name,
                 'price_cents' => $s->plan()->priceCents,
+                'currency' => $s->plan()->currency,
                 'status' => $s->status->value,
                 'stripe_id' => $s->stripe_id,
                 // Beside our own, so a row where the two disagree reads as one

@@ -40,7 +40,7 @@ trait SkipsWhenSocialPresenceIsOff
         }
 
         $this->components->info(
-            'The social presence is off on this deployment. Set SOCIAL_PRESENCE_ENABLED=true to turn it on.'
+            'Social publishing is retired. SOCIAL_PRESENCE_ENABLED no longer enables it in the product.'
         );
 
         return true;

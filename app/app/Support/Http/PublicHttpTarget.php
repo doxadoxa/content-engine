@@ -6,6 +6,47 @@ namespace App\Support\Http;
 
 final class PublicHttpTarget
 {
+    /** @var array{origin: string, addresses: list<string>}|null */
+    private ?array $localFixture = null;
+
+    /**
+     * An integration command may use a named isolated local website fixture.
+     * This instance is never registered by configuration, web routes or jobs.
+     * The only exception is the named fixture origin, with a pinned Docker-host
+     * address; redirects and all other destinations keep the normal policy.
+     */
+    public static function forLocalFixture(string $name): self
+    {
+        if (! app()->runningInConsole() || ! app()->environment(['local', 'testing'])) {
+            throw new UnsafePublicUrl('Local fixture access is restricted to local integration commands.');
+        }
+        $origin = match ($name) {
+            'wordpress' => 'http://localhost:8093',
+            'cleaningpoint' => 'http://localhost:8094',
+            default => throw new UnsafePublicUrl('Unknown isolated integration fixture.'),
+        };
+        $addresses = gethostbynamel('host.docker.internal') ?: ['127.0.0.1'];
+        if (array_filter($addresses, static fn (string $address): bool => filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) !== []) {
+            throw new UnsafePublicUrl('The Docker fixture address could not be resolved.');
+        }
+        $instance = new self;
+        $instance->localFixture = ['origin' => $origin, 'addresses' => array_values(array_unique($addresses))];
+
+        return $instance;
+    }
+
+    public function isLocalFixture(string $url): bool
+    {
+        if ($this->localFixture === null || ! app()->runningInConsole() || ! app()->environment(['local', 'testing'])) {
+            return false;
+        }
+        $parts = parse_url($url);
+
+        return is_array($parts) && ! isset($parts['user']) && ! isset($parts['pass'])
+            && isset($parts['scheme'], $parts['host'])
+            && hash_equals($this->localFixture['origin'], $this->origin($url));
+    }
+
     public function validate(string $url, ?string $requiredOrigin = null): ValidatedPublicUrl
     {
         $url = trim($url);
@@ -22,7 +63,8 @@ final class PublicHttpTarget
             throw new UnsafePublicUrl('Only HTTP and HTTPS addresses are allowed.');
         }
 
-        if ((bool) config('security.outbound.require_https') && $scheme !== 'https') {
+        $fixture = $this->isLocalFixture($url);
+        if ((bool) config('security.outbound.require_https') && $scheme !== 'https' && ! $fixture) {
             throw new UnsafePublicUrl('The address must use HTTPS.');
         }
 
@@ -38,7 +80,7 @@ final class PublicHttpTarget
         $port = isset($parts['port']) ? (int) $parts['port'] : ($scheme === 'https' ? 443 : 80);
         $allowedPorts = array_map('intval', (array) config('security.outbound.allowed_ports', [80, 443]));
 
-        if (! in_array($port, $allowedPorts, true)) {
+        if (! in_array($port, $allowedPorts, true) && ! $fixture) {
             throw new UnsafePublicUrl('The address uses a port that is not allowed.');
         }
 
@@ -46,6 +88,10 @@ final class PublicHttpTarget
 
         if ($requiredOrigin !== null && ! hash_equals($this->origin($requiredOrigin), $origin)) {
             throw new UnsafePublicUrl('The address must stay on the configured site origin.');
+        }
+
+        if ($fixture && $this->localFixture !== null) {
+            return new ValidatedPublicUrl($url, $host, $port, $origin, $this->localFixture['addresses']);
         }
 
         $addresses = $this->addresses($host);

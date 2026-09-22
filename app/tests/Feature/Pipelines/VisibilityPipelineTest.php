@@ -63,6 +63,8 @@ final class VisibilityPipelineTest extends TestCase
         $models = app(ModelGateway::class);
         $this->models = $models;
 
+        // Archived excerpt pipeline coverage remains explicit; the current fixed-set flow has separate tests.
+        config()->set('visibility.stable_sampling', false);
         config()->set('queue.default', 'sync');
         config()->set('visibility.prompts_per_locale', 2);
     }

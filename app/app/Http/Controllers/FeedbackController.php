@@ -40,9 +40,9 @@ class FeedbackController extends Controller
                 'public_url' => $unit->public_url,
                 'impressions' => (int) ($unit->getAttribute('impressions') ?? 0),
                 'clicks' => (int) ($unit->getAttribute('clicks') ?? 0),
-                // Indexed is "has ever had an impression". Zero is not proof of
-                // the opposite, but it is the only signal search console gives.
-                'indexed' => (int) ($unit->getAttribute('impressions') ?? 0) > 0,
+                // Positive impressions show historical search appearance.
+                // Zero never proves that a URL is not indexed.
+                'indexed' => (int) ($unit->getAttribute('impressions') ?? 0) > 0 ? true : null,
                 'cited' => array_keys(array_filter($unit->citations)),
                 'citations_checked_at' => $unit->citations_checked_at?->toIso8601String(),
                 'refresh_due' => $unit->refresh_due_at !== null,

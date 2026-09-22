@@ -31,13 +31,19 @@ import type { AuthLayoutProps } from '@/types';
 const PROMISE = [
     {
         icon: Search,
-        text: 'Finds topics from your market and real performance',
+        text: 'Finds the questions your next customers ask',
     },
-    { icon: CalendarCheck2, text: 'Plans a consistent multilingual calendar' },
-    { icon: FileCheck2, text: 'Writes drafts with visible quality checks' },
+    {
+        icon: CalendarCheck2,
+        text: 'Creates useful articles that explain your services',
+    },
+    {
+        icon: FileCheck2,
+        text: 'Follows search traffic, AI mentions and connected purchases',
+    },
     {
         icon: Send,
-        text: 'Publishes approved work to verified channels',
+        text: 'Publishes to your website on your calendar',
     },
 ];
 
@@ -75,8 +81,8 @@ export default function AuthSplitLayout({
 
                 <div className="relative z-20 max-w-sm">
                     <p className="text-2xl leading-snug font-semibold text-balance">
-                        Research, write, review, and publish from one dependable
-                        content workflow.
+                        Help local customers find and choose your business
+                        through search and AI answers.
                     </p>
 
                     <ul className="mt-8 space-y-3">
@@ -98,7 +104,8 @@ export default function AuthSplitLayout({
                 </div>
 
                 <p className="relative z-20 text-xs text-[var(--brand-on-ink)]/70">
-                    Your strategy stays visible. Nothing publishes unseen.
+                    Your calendar stays visible. Review first whenever you
+                    choose.
                 </p>
             </div>
 

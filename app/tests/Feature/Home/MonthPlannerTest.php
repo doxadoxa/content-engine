@@ -5,14 +5,13 @@ declare(strict_types=1);
 namespace Tests\Feature\Home;
 
 use App\Ai\Assistant\MarketingTools;
+use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\User;
 use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
-use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -47,6 +46,7 @@ final class MonthPlannerTest extends TestCase
         $this->withSession(['project_id' => $this->project->getKey()]);
 
         app(CurrentProject::class)->set($this->project);
+        ContentItem::factory()->create();
     }
 
     #[Test]
@@ -54,38 +54,29 @@ final class MonthPlannerTest extends TestCase
     {
         $run = app(MonthPlanner::class)->start($this->project);
 
-        $this->assertNotNull($run);
         $this->assertSame('planning', $run->pipeline);
     }
 
     #[Test]
-    public function a_second_ask_while_one_is_in_flight_gets_nothing(): void
+    public function a_second_ask_while_one_is_in_flight_returns_the_same_work(): void
     {
-        $this->assertNotNull(app(MonthPlanner::class)->start($this->project));
+        $first = app(MonthPlanner::class)->start($this->project);
 
-        // Null rather than an exception: "already being planned" is a normal
-        // answer, and both callers have somewhere sensible to put it.
-        $this->assertNull(app(MonthPlanner::class)->start($this->project));
+        $this->assertSame($first->id, app(MonthPlanner::class)->start($this->project)->id);
         $this->assertSame(1, PipelineRun::query()->where('pipeline', 'planning')->count());
     }
 
     #[Test]
-    public function the_check_and_the_start_happen_under_one_lock(): void
+    public function an_empty_idea_pool_reuses_research_and_keeps_the_requested_month(): void
     {
-        // Held by somebody else, so a caller that checked first and started
-        // afterwards would sail past. The lock is the only thing that makes the
-        // two steps one decision.
-        $held = Cache::lock("planning:start:{$this->project->getKey()}", 10);
-        $this->assertTrue($held->get());
-
-        try {
-            app(MonthPlanner::class)->start($this->project);
-            $this->fail('Starting a month should wait for the lock rather than race it.');
-        } catch (LockTimeoutException) {
-            $this->assertSame(0, PipelineRun::query()->where('pipeline', 'planning')->count());
-        } finally {
-            $held->release();
-        }
+        $empty = Project::factory()->create();
+        $month = now()->addMonth()->startOfMonth()->format('Y-m');
+        $first = app(MonthPlanner::class)->start($empty, $month);
+        $second = app(MonthPlanner::class)->start($empty, $month);
+        $this->assertSame('research', $first->pipeline);
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame($month.'-01', $second->context['article_plan_month']);
+        $this->assertSame(1, PipelineRun::acrossProjects()->where('project_id', $empty->id)->count());
     }
 
     #[Test]
@@ -103,7 +94,7 @@ final class MonthPlannerTest extends TestCase
 
         $result = ($tool->getCallback())();
 
-        $this->assertFalse($result['ok']);
+        $this->assertTrue($result['ok']);
         $this->assertSame(1, PipelineRun::query()->where('pipeline', 'planning')->count());
     }
 
@@ -116,6 +107,6 @@ final class MonthPlannerTest extends TestCase
             app(MonthPlanner::class)->start($theirs);
         });
 
-        $this->assertNotNull(app(MonthPlanner::class)->start($this->project));
+        $this->assertSame($this->project->id, app(MonthPlanner::class)->start($this->project)->project_id);
     }
 }

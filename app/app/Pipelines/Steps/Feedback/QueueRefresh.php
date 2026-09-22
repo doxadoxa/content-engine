@@ -37,6 +37,10 @@ class QueueRefresh extends AbstractStep
 
     public function handle(StepContext $context): StepResult
     {
+        if (! config('social.enabled')) {
+            return StepResult::skip('Performance changes require a reviewed page proposal, not an automatic rewrite.');
+        }
+
         if (! $context->hasOutput(DetectDegradation::key())) {
             return StepResult::skip('Nothing was measured, so nothing has decayed.');
         }

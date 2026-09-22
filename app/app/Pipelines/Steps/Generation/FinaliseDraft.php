@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Generation;
 
+use App\Content\ArticleBusinessFacts;
 use App\Enums\ContentItemState;
 use App\Models\ContentItem;
 use App\Pipelines\Core\AbstractStep;
@@ -25,9 +26,8 @@ use Illuminate\Support\Str;
  * quietly reviewable that should not be. Terminal, because the same text will
  * fail the same check.
  *
- * **Approve mode is the default.** §5.4 and §1 make auto-publish a privilege a
- * pipeline earns on a specific project, so this step never publishes; the most
- * it does is leave an approved unit for the delivery of phase 6.
+ * This step records a draft. The explicit calendar schedule controls automatic
+ * publication or review first after generation and quality checks finish.
  */
 class FinaliseDraft extends AbstractStep
 {
@@ -122,6 +122,8 @@ class FinaliseDraft extends AbstractStep
         if ($unit->state !== ContentItemState::Draft) {
             $unit->markDrafted();
         }
+
+        app(ArticleBusinessFacts::class)->seal($context, $unit);
 
         $context->remember('generation.unit_id', $unit->getKey());
         $context->remember('generation.autopublish', $context->project->autopublish);

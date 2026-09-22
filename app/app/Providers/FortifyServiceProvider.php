@@ -8,6 +8,7 @@ use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Actions\Fortify\UpdateUserProfileInformation;
+use App\Billing\PlanSelection;
 use App\Enums\SocialLoginProvider;
 use App\Http\Controllers\Auth\SocialLoginController;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -80,6 +81,7 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::registerView(fn (Request $request) => Inertia::render('auth/register', [
             'passwordRules' => Password::defaults()->toPasswordRulesString(),
             'trialDays' => (int) config('billing.trial.days', 3),
+            'selectedPlan' => app(PlanSelection::class)->selected($request)->toArray(),
             ...$this->socialProps($request),
         ]));
 

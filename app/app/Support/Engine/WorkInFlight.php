@@ -56,6 +56,7 @@ final class WorkInFlight
         // should not be the thing that depends on them: a live badge is a claim
         // about now, and it has to expire.
         $active = PipelineRun::query()
+            ->forActiveProduct()
             ->inFlight()
             ->with(['steps', 'contentItem:id,title'])
             ->latest()
@@ -67,12 +68,14 @@ final class WorkInFlight
         // sees the old error every time they open the page, and stops reading
         // the panel — which is the failure mode this exists to avoid.
         $recovered = PipelineRun::query()
+            ->forActiveProduct()
             ->where('status', PipelineRunStatus::Completed)
             ->selectRaw('pipeline, max(finished_at) as recovered_at')
             ->groupBy('pipeline')
             ->pluck('recovered_at', 'pipeline');
 
         $recentlyFailed = PipelineRun::query()
+            ->forActiveProduct()
             ->where('status', PipelineRunStatus::Failed)
             ->where('finished_at', '>=', now()->subDay())
             ->with('contentItem:id,title')

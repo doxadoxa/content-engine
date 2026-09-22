@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Models\Project;
 use App\Support\Tenancy\CurrentProject;
 use App\Visibility\Contracts\LlmVisibilityGateway;
+use App\Visibility\Sampling\SamplingReport;
 use App\Visibility\VisibilityReport;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -31,6 +32,10 @@ class VisibilityController extends Controller
         $report = VisibilityReport::latest();
 
         return Inertia::render('visibility/index', [
+            'sampling' => app(SamplingReport::class)->get(),
+            'legacy' => ['answers' => $report->answered(), 'mentions' => $report->mentions(), 'score' => $report->score(),
+                'providers' => $this->labelled($report->byPlatform()),
+                'last_asked_on' => $report->lastAskedOn?->toDateString(), 'note' => 'These earlier checks stored excerpts rather than full returned answers, so they remain separate from later full-answer checks.'],
             'summary' => [
                 // Null, not 0. The screen renders the two differently because
                 // "you are in none of the answers" and "nothing has been asked

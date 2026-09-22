@@ -267,7 +267,7 @@ final class RegistrationAndTrialTest extends TestCase
             ->assertStatus(409)
             ->assertHeader(
                 'X-Inertia-Location',
-                'https://checkout.stripe.test/medium/'.$project->getKey(),
+                'https://checkout.stripe.test/starter/'.$project->getKey(),
             );
 
         // Nothing local is created by pressing the button. The subscription —

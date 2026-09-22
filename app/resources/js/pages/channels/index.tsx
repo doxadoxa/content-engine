@@ -1,4 +1,4 @@
-import { Form, Head, usePage, usePoll } from '@inertiajs/react';
+import { Form, Head, Link, usePage, usePoll } from '@inertiajs/react';
 import { CheckCircle2, KeyRound, Plus, Radio, Send } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import InputError from '@/components/input-error';
@@ -41,7 +41,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
-import { autopublish, index, ping, store } from '@/routes/channels';
+import { index, ping, store } from '@/routes/channels';
 
 type ChannelRow = {
     id: string;
@@ -52,7 +52,13 @@ type ChannelRow = {
     is_enabled: boolean;
     /** Whether a secret is stored — never the secret itself. */
     has_secret: boolean;
+    native_config: {
+        page_receiver_base: string;
+        username: string;
+        endpoint: string;
+    };
     autopublish: boolean;
+    can_schedule_articles: boolean;
     verified_at: string | null;
     test_pending: boolean;
     target: string | null;
@@ -66,7 +72,8 @@ type Props = {
     types: ChannelTypeOption[];
 };
 
-export default function ChannelsIndex({ channels, types }: Props) {
+export default function ChannelsIndex({ channels: allChannels, types }: Props) {
+    const channels = allChannels.filter((channel) => !channel.is_social);
     const { auth } = usePage().props;
     const isOwner = auth.project?.role === 'owner';
     const [connecting, setConnecting] = useState(false);
@@ -93,14 +100,14 @@ export default function ChannelsIndex({ channels, types }: Props) {
 
     return (
         <>
-            <Head title="Channels" />
+            <Head title="Website connection" />
 
             <WorkspacePage>
                 <WorkspaceHeader
-                    eyebrow="Distribution"
+                    eyebrow="Publishing"
                     context={`${channels.length} ${channels.length === 1 ? 'channel' : 'channels'}`}
-                    title="Channels"
-                    description="Where this project publishes and whether each destination is configured and verified."
+                    title="Your website connection"
+                    description="Connect the website where your articles will appear. After a successful test, enable scheduled publishing."
                     actions={
                         isOwner ? (
                             <Button
@@ -108,7 +115,7 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                 onClick={() => setConnecting(true)}
                             >
                                 <Plus className="size-4" aria-hidden="true" />
-                                Connect a channel
+                                Connect your website
                             </Button>
                         ) : undefined
                     }
@@ -150,9 +157,6 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                         </TableHead>
                                         <TableHead className="w-[13%]">
                                             Connected
-                                        </TableHead>
-                                        <TableHead className="w-[12%]">
-                                            Auto
                                         </TableHead>
                                         <TableHead className="w-[18%]">
                                             Status &amp; test
@@ -221,67 +225,6 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                                 )}
                                             </TableCell>
                                             <TableCell>
-                                                {isOwner ? (
-                                                    <Form
-                                                        action={
-                                                            autopublish(
-                                                                channel.id,
-                                                            ).url
-                                                        }
-                                                        method="patch"
-                                                        options={{
-                                                            preserveScroll: true,
-                                                        }}
-                                                    >
-                                                        {({ processing }) => (
-                                                            <Button
-                                                                type="submit"
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                disabled={
-                                                                    processing ||
-                                                                    channel.type !==
-                                                                        'webhook' ||
-                                                                    (!channel.autopublish &&
-                                                                        channel.verified_at ===
-                                                                            null)
-                                                                }
-                                                                title={
-                                                                    channel.verified_at ===
-                                                                    null
-                                                                        ? 'Test the channel before enabling automatic publishing'
-                                                                        : undefined
-                                                                }
-                                                            >
-                                                                <Badge
-                                                                    variant={
-                                                                        channel.autopublish
-                                                                            ? 'default'
-                                                                            : 'outline'
-                                                                    }
-                                                                >
-                                                                    {channel.autopublish
-                                                                        ? 'Automatic'
-                                                                        : 'Manual'}
-                                                                </Badge>
-                                                            </Button>
-                                                        )}
-                                                    </Form>
-                                                ) : (
-                                                    <Badge
-                                                        variant={
-                                                            channel.autopublish
-                                                                ? 'default'
-                                                                : 'outline'
-                                                        }
-                                                    >
-                                                        {channel.autopublish
-                                                            ? 'Automatic'
-                                                            : 'Manual'}
-                                                    </Badge>
-                                                )}
-                                            </TableCell>
-                                            <TableCell>
                                                 <div className="flex flex-col items-start gap-1">
                                                     <Badge
                                                         variant={
@@ -295,8 +238,20 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                                             : 'Disabled'}
                                                     </Badge>
                                                     {isOwner &&
-                                                        channel.type ===
-                                                            'webhook' && (
+                                                        [
+                                                            'webhook',
+                                                            'wordpress',
+                                                        ].includes(
+                                                            channel.type,
+                                                        ) &&
+                                                        Boolean(
+                                                            channel
+                                                                .native_config
+                                                                .endpoint ||
+                                                            channel
+                                                                .native_config
+                                                                .page_receiver_base,
+                                                        ) && (
                                                             <Form
                                                                 action={
                                                                     ping(
@@ -342,12 +297,199 @@ export default function ChannelsIndex({ channels, types }: Props) {
                     </>
                 )}
 
+                {isOwner &&
+                    channels
+                        .filter((channel) =>
+                            ['wordpress', 'webhook'].includes(channel.type),
+                        )
+                        .map((channel) => (
+                            <details
+                                key={channel.id}
+                                className={`${workspacePanelClass} p-5`}
+                            >
+                                <summary className="cursor-pointer font-medium">
+                                    Connection settings · {channel.name}
+                                </summary>
+                                <Form
+                                    action={`/channels/${channel.id}`}
+                                    method="patch"
+                                    options={{ preserveScroll: true }}
+                                    className="mt-4 grid gap-3"
+                                >
+                                    {({ processing, errors }) => (
+                                        <>
+                                            <input
+                                                type="hidden"
+                                                name="name"
+                                                value={channel.name}
+                                            />
+                                            <input
+                                                type="hidden"
+                                                name="type"
+                                                value={channel.type}
+                                            />
+                                            {channel.type === 'webhook' && (
+                                                <>
+                                                    <Label
+                                                        htmlFor={`endpoint-${channel.id}`}
+                                                    >
+                                                        Article publishing
+                                                        address
+                                                    </Label>
+                                                    <Input
+                                                        id={`endpoint-${channel.id}`}
+                                                        name="config[endpoint]"
+                                                        type="url"
+                                                        defaultValue={
+                                                            channel
+                                                                .native_config
+                                                                .endpoint
+                                                        }
+                                                    />
+                                                </>
+                                            )}
+                                            <Label
+                                                htmlFor={`receiver-${channel.id}`}
+                                            >
+                                                Avyo publishing address
+                                            </Label>
+                                            <Input
+                                                id={`receiver-${channel.id}`}
+                                                name="config[page_receiver_base]"
+                                                type="url"
+                                                defaultValue={
+                                                    channel.native_config
+                                                        .page_receiver_base
+                                                }
+                                                required={
+                                                    channel.type === 'wordpress'
+                                                }
+                                            />
+                                            <InputError
+                                                message={
+                                                    errors[
+                                                        'config.page_receiver_base'
+                                                    ]
+                                                }
+                                            />
+                                            {channel.type === 'wordpress' && (
+                                                <>
+                                                    <Label
+                                                        htmlFor={`username-${channel.id}`}
+                                                    >
+                                                        WordPress account name
+                                                    </Label>
+                                                    <Input
+                                                        id={`username-${channel.id}`}
+                                                        name="config[username]"
+                                                        defaultValue={
+                                                            channel
+                                                                .native_config
+                                                                .username
+                                                        }
+                                                        required
+                                                    />
+                                                    <InputError
+                                                        message={
+                                                            errors[
+                                                                'config.username'
+                                                            ]
+                                                        }
+                                                    />
+                                                </>
+                                            )}
+                                            <Label
+                                                htmlFor={`password-${channel.id}`}
+                                            >
+                                                {channel.type === 'wordpress'
+                                                    ? 'Replacement application password'
+                                                    : 'Replacement receiver secret'}
+                                            </Label>
+                                            <Input
+                                                id={`password-${channel.id}`}
+                                                name="secret"
+                                                type="password"
+                                                autoComplete="new-password"
+                                            />
+                                            <p className="text-xs text-muted-foreground">
+                                                Leave blank to keep the stored
+                                                credential. Changes require a
+                                                new source read and review
+                                                before native publication.
+                                            </p>
+                                            <input
+                                                type="hidden"
+                                                name="is_enabled"
+                                                value="0"
+                                            />
+                                            <label className="flex items-center gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    name="is_enabled"
+                                                    value="1"
+                                                    defaultChecked={
+                                                        channel.is_enabled
+                                                    }
+                                                />{' '}
+                                                Connection enabled
+                                            </label>
+                                            <input
+                                                type="hidden"
+                                                name="autopublish"
+                                                value="0"
+                                            />
+                                            <label className="flex items-center gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    name="autopublish"
+                                                    value="1"
+                                                    defaultChecked={
+                                                        channel.autopublish
+                                                    }
+                                                    disabled={
+                                                        !channel.can_schedule_articles &&
+                                                        !channel.autopublish
+                                                    }
+                                                />
+                                                Publish scheduled articles
+                                                automatically
+                                            </label>
+                                            <p className="text-xs leading-5 text-muted-foreground">
+                                                {channel.can_schedule_articles
+                                                    ? 'Allows Avyo to use this website for newly scheduled articles. Existing unscheduled approvals stay unchanged; review-first articles still wait for approval.'
+                                                    : 'Send a successful article publishing test before enabling this option.'}
+                                            </p>
+                                            <InputError
+                                                message={errors.autopublish}
+                                            />
+                                            <InputError
+                                                message={errors.secret}
+                                            />
+                                            <Button
+                                                disabled={processing}
+                                                type="submit"
+                                                className="justify-self-start"
+                                            >
+                                                Save connection
+                                            </Button>
+                                            <Link
+                                                href="/pages"
+                                                className="text-sm underline"
+                                            >
+                                                Advanced: update existing pages
+                                            </Link>
+                                        </>
+                                    )}
+                                </Form>
+                            </details>
+                        ))}
                 <div className="rounded-[1.25rem] border border-dashed bg-card/45 px-5 py-4 text-xs leading-relaxed text-muted-foreground">
                     <p>
-                        Secrets are encrypted and never returned to this page.
-                        Connected means a signed test delivery was answered.
-                        Automatic channels receive approved work without a
-                        second click; manual channels publish from the article.
+                        Credentials are stored securely. A publishing test
+                        checks that this website can receive articles. Choose
+                        automatic publishing or review first on each article’s
+                        schedule. Existing-page changes remain a separate
+                        reviewed workflow.
                     </p>
                     {!isOwner && (
                         <p className="mt-2">
@@ -361,7 +503,7 @@ export default function ChannelsIndex({ channels, types }: Props) {
             {isOwner && (
                 <ConnectDialog
                     open={connecting}
-                    types={types}
+                    types={types.filter((type) => !type.is_social)}
                     onClose={() => setConnecting(false)}
                 />
             )}
@@ -373,7 +515,9 @@ function ChannelSummary({ channels }: { channels: ChannelRow[] }) {
     const verified = channels.filter(
         (channel) => channel.verified_at !== null,
     ).length;
-    const automatic = channels.filter((channel) => channel.autopublish).length;
+    const unverified = channels.filter(
+        (channel) => channel.verified_at === null,
+    ).length;
     const enabled = channels.filter((channel) => channel.is_enabled).length;
 
     return (
@@ -383,7 +527,7 @@ function ChannelSummary({ channels }: { channels: ChannelRow[] }) {
         >
             <ChannelMetric label="Enabled" value={enabled} />
             <ChannelMetric label="Verified" value={verified} />
-            <ChannelMetric label="Automatic" value={automatic} />
+            <ChannelMetric label="Needs testing" value={unverified} />
         </section>
     );
 }
@@ -433,7 +577,9 @@ function ChannelMobileCard({
                         {channel.type_label}
                     </Badge>
                     <Badge variant="outline" className="rounded-full">
-                        {channel.has_secret ? 'Secret stored' : 'No secret'}
+                        {channel.has_secret
+                            ? 'Credentials saved'
+                            : 'Credentials needed'}
                     </Badge>
                     <Badge
                         variant={
@@ -451,63 +597,43 @@ function ChannelMobileCard({
                     </Badge>
                 </div>
 
+                <p className="text-xs text-muted-foreground">
+                    {channel.autopublish && channel.can_schedule_articles
+                        ? 'Automatic publishing enabled'
+                        : 'Automatic publishing not enabled'}
+                </p>
                 <div className="flex flex-wrap items-center gap-2 border-t pt-4">
-                    {isOwner ? (
-                        <Form
-                            action={autopublish(channel.id).url}
-                            method="patch"
-                            options={{ preserveScroll: true }}
-                        >
-                            {({ processing }) => (
-                                <Button
-                                    type="submit"
-                                    variant="outline"
-                                    className="rounded-full"
-                                    disabled={
-                                        processing ||
-                                        channel.type !== 'webhook' ||
-                                        (!channel.autopublish &&
-                                            channel.verified_at === null)
-                                    }
-                                >
-                                    {channel.autopublish
-                                        ? 'Automatic'
-                                        : 'Manual'}
-                                </Button>
-                            )}
-                        </Form>
-                    ) : (
-                        <Badge variant="outline" className="rounded-full">
-                            {channel.autopublish ? 'Automatic' : 'Manual'}
-                        </Badge>
-                    )}
-
-                    {isOwner && channel.type === 'webhook' && (
-                        <Form
-                            action={ping(channel.id).url}
-                            method="post"
-                            options={{ preserveScroll: true }}
-                        >
-                            {({ processing }) => (
-                                <Button
-                                    type="submit"
-                                    variant="outline"
-                                    className="rounded-full"
-                                    disabled={
-                                        processing || channel.test_pending
-                                    }
-                                >
-                                    <Send
-                                        className="size-4"
-                                        aria-hidden="true"
-                                    />
-                                    {channel.test_pending
-                                        ? 'Testing…'
-                                        : 'Test connection'}
-                                </Button>
-                            )}
-                        </Form>
-                    )}
+                    {isOwner &&
+                        ['webhook', 'wordpress'].includes(channel.type) &&
+                        Boolean(
+                            channel.native_config.endpoint ||
+                            channel.native_config.page_receiver_base,
+                        ) && (
+                            <Form
+                                action={ping(channel.id).url}
+                                method="post"
+                                options={{ preserveScroll: true }}
+                            >
+                                {({ processing }) => (
+                                    <Button
+                                        type="submit"
+                                        variant="outline"
+                                        className="rounded-full"
+                                        disabled={
+                                            processing || channel.test_pending
+                                        }
+                                    >
+                                        <Send
+                                            className="size-4"
+                                            aria-hidden="true"
+                                        />
+                                        {channel.test_pending
+                                            ? 'Testing…'
+                                            : 'Test connection'}
+                                    </Button>
+                                )}
+                            </Form>
+                        )}
                 </div>
             </CardContent>
         </Card>
@@ -530,7 +656,8 @@ function ConnectDialog({
     types: ChannelTypeOption[];
     onClose: () => void;
 }) {
-    const [selectedType, setSelectedType] = useState('webhook');
+    const [selectedType, setSelectedType] = useState('wordpress');
+    const [receiverAddress, setReceiverAddress] = useState('');
 
     return (
         <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -539,10 +666,12 @@ function ConnectDialog({
                     {({ processing, errors }) => (
                         <>
                             <DialogHeader>
-                                <DialogTitle>Connect a channel</DialogTitle>
+                                <DialogTitle>Connect your website</DialogTitle>
                                 <DialogDescription>
-                                    Add it here, then send a test delivery from
-                                    the list to confirm it answers.
+                                    Choose your website and add its publishing
+                                    credentials. Then send a test from the
+                                    connection list to confirm that articles can
+                                    be received.
                                 </DialogDescription>
                             </DialogHeader>
 
@@ -585,13 +714,12 @@ function ConnectDialog({
                                 {selectedType === 'webhook' && (
                                     <div className="grid gap-2">
                                         <Label htmlFor="endpoint">
-                                            Endpoint
+                                            Article publishing address
                                         </Label>
                                         <Input
                                             id="endpoint"
                                             name="config[endpoint]"
                                             type="url"
-                                            required
                                             placeholder="https://yoursite.test/engine/webhook"
                                         />
                                         <InputError
@@ -600,13 +728,116 @@ function ConnectDialog({
                                     </div>
                                 )}
 
+                                {selectedType === 'wordpress' && (
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="wordpress-site">
+                                            WordPress website address
+                                        </Label>
+                                        <Input
+                                            id="wordpress-site"
+                                            type="url"
+                                            required
+                                            placeholder="https://yourbusiness.com"
+                                            onChange={(event) => {
+                                                try {
+                                                    const url = new URL(
+                                                        event.target.value,
+                                                    );
+                                                    setReceiverAddress(
+                                                        `${url.origin}${url.pathname.replace(/\/$/, '')}/wp-json/avyo/v1`,
+                                                    );
+                                                } catch {
+                                                    setReceiverAddress('');
+                                                }
+                                            }}
+                                        />
+                                        <details className="text-xs">
+                                            <summary className="cursor-pointer text-muted-foreground">
+                                                Advanced publishing address
+                                            </summary>
+                                            <Input
+                                                aria-label="Avyo publishing address"
+                                                name="config[page_receiver_base]"
+                                                type="url"
+                                                required
+                                                value={receiverAddress}
+                                                onChange={(event) =>
+                                                    setReceiverAddress(
+                                                        event.target.value,
+                                                    )
+                                                }
+                                                className="mt-2"
+                                            />
+                                        </details>
+                                        <InputError
+                                            message={
+                                                errors[
+                                                    'config.page_receiver_base'
+                                                ]
+                                            }
+                                        />
+                                    </div>
+                                )}
+                                {selectedType === 'webhook' && (
+                                    <details className="text-xs">
+                                        <summary className="cursor-pointer text-muted-foreground">
+                                            Advanced: existing-page updates
+                                        </summary>
+                                        <Input
+                                            aria-label="Existing-page receiver address"
+                                            name="config[page_receiver_base]"
+                                            type="url"
+                                            placeholder="https://yourbusiness.com/api/avyo/pages/v1"
+                                            className="mt-2"
+                                        />
+                                        <InputError
+                                            message={
+                                                errors[
+                                                    'config.page_receiver_base'
+                                                ]
+                                            }
+                                        />
+                                    </details>
+                                )}
+                                {selectedType === 'wordpress' && (
+                                    <div className="grid gap-2">
+                                        <p className="text-xs text-muted-foreground">
+                                            <a
+                                                href="/integrations/wordpress/receiver.zip"
+                                                className="font-medium underline"
+                                            >
+                                                Download the Avyo WordPress
+                                                plugin
+                                            </a>
+                                            . In WordPress, open Plugins → Add
+                                            Plugin → Upload Plugin, install this
+                                            ZIP and activate it. Then create an
+                                            application password in the
+                                            dedicated editor's user profile.
+                                        </p>
+                                        <Label htmlFor="wordpress-username">
+                                            WordPress account name
+                                        </Label>
+                                        <Input
+                                            id="wordpress-username"
+                                            name="config[username]"
+                                            required
+                                        />
+                                        <InputError
+                                            message={errors['config.username']}
+                                        />
+                                    </div>
+                                )}
                                 {(selectedType === 'webhook' ||
+                                    selectedType === 'wordpress' ||
                                     selectedType === 'pull_api') && (
                                     <div className="grid gap-2">
                                         <Label htmlFor="secret">
-                                            {selectedType === 'pull_api'
-                                                ? 'Bearer token'
-                                                : 'Signing secret'}
+                                            {selectedType === 'wordpress'
+                                                ? 'WordPress application password'
+                                                : selectedType === 'pull_api'
+                                                  ? 'Bearer token'
+                                                  : 'Signing secret'}
                                         </Label>
                                         <Input
                                             id="secret"
@@ -616,9 +847,11 @@ function ConnectDialog({
                                             autoComplete="off"
                                         />
                                         <p className="text-xs text-muted-foreground">
-                                            {selectedType === 'pull_api'
-                                                ? 'The static site sends this token with every pull request.'
-                                                : 'The same string the receiving site uses to verify signatures.'}{' '}
+                                            {selectedType === 'wordpress'
+                                                ? 'Use a revocable application password from the WordPress user profile.'
+                                                : selectedType === 'pull_api'
+                                                  ? 'The static site sends this token with every pull request.'
+                                                  : 'The same string the receiving site uses to verify signatures.'}{' '}
                                             Encrypted here, and never shown
                                             again.
                                         </p>
@@ -662,8 +895,8 @@ function EmptyChannels({ isOwner }: { isOwner: boolean }) {
                 <CardTitle>No channels yet</CardTitle>
                 <CardDescription>
                     {isOwner
-                        ? 'Connect a channel to publish to a website, webhook, or social account.'
-                        : 'Ask a project owner to connect a website, webhook, or social account.'}
+                        ? 'Connect your website to publish approved changes.'
+                        : 'Ask a project owner to connect the website.'}
                 </CardDescription>
             </CardHeader>
         </Card>

@@ -3,6 +3,7 @@ import { CheckCircle2, Eye, FileSearch, Quote, RefreshCw } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
     Card,
     CardContent,
@@ -23,7 +24,9 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
+import { index as auditIndex } from '@/routes/audit';
 import { index } from '@/routes/feedback';
+import { index as visibilityIndex } from '@/routes/visibility';
 import type { Paginated } from '@/types';
 
 type Unit = {
@@ -33,7 +36,7 @@ type Unit = {
     public_url: string | null;
     impressions: number;
     clicks: number;
-    indexed: boolean;
+    indexed: boolean | null;
     cited: string[];
     citations_checked_at: string | null;
     refresh_due: boolean;
@@ -68,14 +71,29 @@ export default function Feedback({
 
     return (
         <>
-            <Head title="Article performance" />
+            <Head title="Performance" />
 
             <WorkspacePage>
                 <WorkspaceHeader
                     eyebrow="Performance loop"
                     context={`${summary.live} live`}
-                    title="Article performance"
-                    description="How published articles perform in search and AI, and which ones need another pass."
+                    title="Performance"
+                    description="Search evidence for published articles. Review AI answers and site diagnostics when you need more context."
+                    actions={
+                        <>
+                            <Button asChild variant="outline">
+                                <Link href="/purchases">Purchases</Link>
+                            </Button>
+                            <Button asChild variant="outline">
+                                <Link href={visibilityIndex()}>AI answers</Link>
+                            </Button>
+                            <Button asChild variant="ghost">
+                                <Link href={auditIndex()}>
+                                    Site diagnostics
+                                </Link>
+                            </Button>
+                        </>
+                    }
                 />
 
                 <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -186,7 +204,7 @@ export default function Feedback({
                                 <TableHeader>
                                     <TableRow className="bg-muted/20 text-xs tracking-wide uppercase">
                                         <TableHead>Article</TableHead>
-                                        <TableHead>Indexed</TableHead>
+                                        <TableHead>Search appearance</TableHead>
                                         <TableHead>Impressions</TableHead>
                                         <TableHead>Clicks</TableHead>
                                         <TableHead>Cited in</TableHead>
@@ -212,8 +230,8 @@ export default function Feedback({
                                                     }
                                                 >
                                                     {unit.indexed
-                                                        ? 'Yes'
-                                                        : 'No'}
+                                                        ? 'Observed'
+                                                        : 'Unknown'}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-muted-foreground">
@@ -276,7 +294,7 @@ function FeedbackMobileCard({ unit }: { unit: Unit }) {
                     variant={unit.indexed ? 'outline' : 'secondary'}
                     className="rounded-full"
                 >
-                    {unit.indexed ? 'Indexed' : 'Not indexed'}
+                    {unit.indexed ? 'Observed in search' : 'Unknown'}
                 </Badge>
             </div>
             <dl className="grid grid-cols-2 gap-3 border-t pt-3 text-sm">
@@ -372,5 +390,5 @@ function EmptyFeedback() {
 }
 
 Feedback.layout = {
-    breadcrumbs: [{ title: 'Article performance', href: index() }],
+    breadcrumbs: [{ title: 'Performance', href: index() }],
 };

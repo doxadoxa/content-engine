@@ -4,25 +4,32 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Planning;
 
+use App\Billing\Entitlements;
+use App\Billing\Metric;
+use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\ContentPlanStatus;
+use App\Models\ArticlePlanningPeriod;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
+use App\Models\Project;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
+use App\Publishing\Articles\ArticleSchedules;
+use App\Support\Engine\ArticleWorkflow;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The fan-in: build the month (§4.2).
  *
  * Reads both branches — which units, and what each one is — and writes a
  * `ContentPlan` in `draft` whose units are still `idea`. That combination is
- * exit criterion 2, and it is deliberate: a plan is a proposal, and nothing
- * about it is committed until a human approves it (phase 7, `plan:approve`
- * until then).
+ * the topic calendar remains separate from approval of a finished article.
  *
  * Locale variants are created here rather than in generation, because §2 makes
  * a locale a unit of its own rather than a translation — the Portuguese article
@@ -52,9 +59,13 @@ class ScheduleCalendar extends AbstractStep
         $selection = $context->output(SelectTopics::key(), SelectionPayload::class);
         $typing = $context->output(TypeAndFlagUnits::key(), TypingPayload::class);
 
-        $window = PlanningWindow::resolve($context->get('month'));
+        $window = PlanningWindow::forProject($context->project, $context->get('month'), $context->get('article_period_started_at'));
         $month = $window->month;
-        $dates = $window->dates(count($selection->selected));
+        if ($selection->selected === []) {
+            $context->remember('planning.empty_reason', 'No suitable new topic fits this calendar and its available allowance.');
+
+            return StepResult::success(new PlanPayload('', $month->toDateString(), 0, 0));
+        }
         $needData = array_flip($typing->needOriginalData);
 
         /** @var list<string> $extraLocales */
@@ -77,9 +88,32 @@ class ScheduleCalendar extends AbstractStep
         $localeRows = [];
 
         $plan = DB::transaction(function () use (
-            $month, $selection, $typing, $dates, $needData,
+            $context, $window, $month, $selection, $typing, $needData,
             $extraLocales, $derivativeChannels, &$planned, &$localeRows
         ): ContentPlan {
+            $locked = Project::query()->whereKey($context->project->id)->lockForUpdate()->firstOrFail();
+            $window = PlanningWindow::forProject($locked, $context->get('month'), $context->get('article_period_started_at'));
+            $month = $window->month;
+            $available = ArticleWorkflow::capacity($context->project);
+            $maxTopics = min(ArticleWorkflow::calendarCapacity($context->project, $window), $available === null ? count($selection->selected) : intdiv($available, max(1, count($extraLocales))));
+            // Selection ran before the project lock. Never move work another
+            // completed planner has already placed on a calendar.
+            $eligible = ContentItem::query()->roots()->inState(ContentItemState::Idea)->whereNull('content_plan_id')
+                ->whereIn('id', $selection->selected)->lockForUpdate()->get()->keyBy('id');
+            $selectedIds = array_slice(array_values(array_filter($selection->selected, fn (string $id): bool => $eligible->has($id))), 0, $maxTopics);
+            if ($window->periodStart !== null) {
+                $openDates = ArticleWorkflow::openSlots($locked, $window);
+            } else {
+                $occupied = ContentItem::query()->roots()->whereNotNull('content_plan_id')
+                    ->whereBetween('scheduled_for', [$window->start->toDateString(), $window->end->toDateString()])->get()
+                    ->map(fn (ContentItem $item): string => $item->scheduled_for->toDateString())->flip()->all();
+                $openDates = array_values(array_filter($window->dates($window->days()), fn (Carbon $date): bool => ! isset($occupied[$date->toDateString()])));
+            }
+            $selectedIds = array_slice($selectedIds, 0, count($openDates));
+            $dates = PlanningWindow::spread($openDates, count($selectedIds));
+            if ($selectedIds === []) {
+                throw ValidationException::withMessages(['planning' => 'No new article fits the available topics and this period’s allowance. Existing calendar work is unchanged.']);
+            }
             // firstOrCreate, not create: (project, month) is unique, and
             // re-planning a month should fill the existing draft rather than
             // fail on a constraint the operator cannot see.
@@ -88,8 +122,24 @@ class ScheduleCalendar extends AbstractStep
                 ['status' => ContentPlanStatus::Draft],
             );
 
-            foreach ($selection->selected as $index => $id) {
-                $unit = ContentItem::query()->find($id);
+            $period = null;
+            if ($window->periodStart !== null) {
+                $period = ArticlePlanningPeriod::query()->firstOrCreate([
+                    'period_started_at' => $window->periodStart->copy()->utc(),
+                ], [
+                    'period_ends_at' => $window->periodEnd?->copy()->utc(), 'timezone' => $locked->timezone,
+                    'content_plan_id' => $plan->id,
+                ]);
+            }
+            $needsReservation = $period === null ? $plan->wasRecentlyCreated : $period->plan_counted_at === null;
+            if ($needsReservation && ! app(Entitlements::class)->reserve($context->project, Metric::ContentPlans)) {
+                throw ValidationException::withMessages(['planning' => 'This period’s content plan allowance is used.']);
+            }
+            if ($period !== null && $needsReservation) {
+                $period->update(['plan_counted_at' => now()]);
+            }
+            foreach ($selectedIds as $index => $id) {
+                $unit = $eligible->get($id);
 
                 if ($unit === null) {
                     continue;
@@ -98,11 +148,14 @@ class ScheduleCalendar extends AbstractStep
                 $unit->forceFill([
                     'content_plan_id' => $plan->getKey(),
                     'scheduled_for' => $dates[$index]->toDateString(),
+                    'article_planning_period_id' => $period?->id,
+                    'planned_publication_at' => $period === null ? null : $dates[$index]->copy()->utc(),
                     'type' => ContentItemType::from($typing->types[$id] ?? $unit->type->value),
                     'needs_original_data' => isset($needData[$id]),
                     'planned_derivatives' => $derivativeChannels,
                 ])->save();
 
+                app(ArticleSchedules::class)->scheduleNew($unit, $period === null ? Carbon::parse($dates[$index]->toDateString().' 09:00', $context->project->timezone) : $dates[$index]);
                 $planned++;
 
                 foreach ($extraLocales as $locale) {
@@ -123,6 +176,8 @@ class ScheduleCalendar extends AbstractStep
                     $variant->forceFill([
                         'content_plan_id' => $plan->getKey(),
                         'scheduled_for' => $dates[$index]->toDateString(),
+                        'article_planning_period_id' => $period?->id,
+                        'planned_publication_at' => $period === null ? null : $dates[$index]->copy()->utc(),
                         'needs_original_data' => isset($needData[$id]),
                         'planned_derivatives' => $derivativeChannels,
                         'intent' => $unit->intent,
@@ -161,6 +216,7 @@ class ScheduleCalendar extends AbstractStep
                     // the parent's title is how a Russian article came to be
                     // outlined from "limpeza pós-obra" and written half in
                     // Portuguese.
+                    app(ArticleSchedules::class)->scheduleNew($variant, $period === null ? Carbon::parse($dates[$index]->toDateString().' 09:00', $context->project->timezone) : $dates[$index]);
                     $localeRows[] = [
                         'id' => (string) $variant->getKey(),
                         'locale' => $locale,
@@ -204,6 +260,9 @@ class ScheduleCalendar extends AbstractStep
      */
     private function socialChannels(): array
     {
+        if (! config('social.enabled')) {
+            return [];
+        }
         $connected = array_values(array_unique(
             Channel::query()
                 ->where('is_enabled', true)

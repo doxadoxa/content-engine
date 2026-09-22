@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Publishing;
 
+use App\Content\ArticleBusinessFacts;
 use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
@@ -11,12 +12,15 @@ use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\WebhookDelivery;
+use App\Pages\RegisterPublishedArticle;
+use App\Publishing\Articles\ArticleDeliveryGuard;
 use App\Publishing\Concerns\RecordsDeliveryOutcome;
 use App\Publishing\Contracts\ChannelPublisher;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Support\Http\PublicHttpTarget;
 use App\Support\Http\UnsafePublicUrl;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -43,7 +47,7 @@ class WebhookPublisher implements ChannelPublisher
     use RecordsDeliveryOutcome;
 
     public function __construct(
-        private readonly PublicHttpTarget $targets,
+        protected readonly PublicHttpTarget $targets,
         private readonly PublishToChannels $channels,
     ) {}
 
@@ -133,6 +137,8 @@ class WebhookPublisher implements ChannelPublisher
      */
     public function queue(ContentItem $unit, Channel $channel, ?WebhookEvent $event = null): WebhookDelivery
     {
+        abort_if(($unit->isSocial() || $channel->type->isSocial()) && ! config('social.enabled'), 409, 'Social publishing is retired.');
+
         $event ??= $this->eventFor($unit, $channel);
         $deliveryId = WebhookPayload::newDeliveryId();
         $payload = WebhookPayload::for($unit, $event, $deliveryId);
@@ -185,6 +191,30 @@ class WebhookPublisher implements ChannelPublisher
      */
     public function replay(WebhookDelivery $delivery): WebhookDelivery
     {
+        abort_if(RetiredSocialDelivery::applies($delivery), 409, 'Social publishing is retired.');
+
+        if ($delivery->article_schedule_id !== null) {
+            $lock = Cache::lock('webhook-delivery:'.$delivery->id, (int) config('publishing.timeout', 15) + 30);
+            abort_unless($lock->get(), 409, 'This publication is still being delivered.');
+            try {
+                $delivery->refresh();
+                if ($delivery->status === DeliveryStatus::Delivered) {
+                    return $delivery;
+                }
+                abort_unless($delivery->status === DeliveryStatus::DeadLetter, 409, 'This delivery is already waiting for a result.');
+                // An uncertain website outcome must be reconciled with its original receipt identity.
+                $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
+                    ?? ($delivery->contentItem === null ? null : app(ArticleBusinessFacts::class)->refusal($delivery->contentItem));
+                abort_if($refusal !== null, 409, $refusal ?? '');
+                $delivery->forceFill(['status' => DeliveryStatus::Pending, 'next_attempt_at' => null, 'error' => null, 'deferrals' => 0])->save();
+            } finally {
+                $lock->release();
+            }
+            DeliverWebhookJob::dispatch($delivery->getKey())->onQueue((string) config('publishing.queue'))->afterCommit();
+
+            return $delivery;
+        }
+
         $deliveryId = WebhookPayload::newDeliveryId();
 
         $snapshot = $delivery->payload_snapshot;
@@ -248,6 +278,50 @@ class WebhookPublisher implements ChannelPublisher
     }
 
     /**
+     * @param  array<string, mixed>|null  $body
+     */
+    protected function succeed(WebhookDelivery $delivery, int $attempt, int $latency, int $status, ?array $body): WebhookDelivery
+    {
+        $this->settleDelivered($delivery, $attempt, $latency, $status);
+
+        $this->recordPublicUrl($delivery, $body);
+        $this->markUnitPublished($delivery);
+
+        if ($delivery->contentItem !== null) {
+            app(RegisterPublishedArticle::class)->register($delivery->contentItem);
+        }
+
+        return $delivery;
+    }
+
+    protected function endpoint(Channel $channel): string
+    {
+        return (string) ($channel->config['endpoint'] ?? '');
+    }
+
+    protected function sendRequest(WebhookDelivery $delivery, string $endpoint, string $body, int $timestamp): Response
+    {
+        $channel = $delivery->channel;
+        $target = $this->targets->validate($endpoint);
+
+        return Http::withHeaders([
+            'Authorization' => 'Bearer '.(string) $channel->secret,
+            'X-Engine-Delivery' => $delivery->delivery_id,
+            'X-Engine-Event' => (string) ($delivery->payload_snapshot['event'] ?? ''),
+            'X-Engine-Timestamp' => (string) $timestamp,
+            'X-Engine-Signature' => WebhookSignature::compute((string) $channel->secret, $timestamp, $body),
+            'X-Engine-Contract' => (string) config('publishing.contract_version', 1),
+            'Content-Type' => 'application/json; charset=utf-8',
+        ])->timeout((int) config('publishing.timeout', 15))->retry(0)->withoutRedirecting()
+            ->withOptions($target->httpOptions())->withBody($body, 'application/json')->post($target->url);
+    }
+
+    protected function acceptsResponse(WebhookDelivery $delivery, Response $response): bool
+    {
+        return $response->successful() || $response->status() === 409;
+    }
+
+    /**
      * A destination that has never received this unit is owed
      * `content.published`, even if another channel made the unit globally live
      * earlier; one that has is owed `content.updated`.
@@ -278,7 +352,7 @@ class WebhookPublisher implements ChannelPublisher
         }
 
         $channel = $delivery->channel;
-        $endpoint = (string) ($channel->config['endpoint'] ?? '');
+        $endpoint = $this->endpoint($channel);
 
         if ($endpoint === '') {
             return $this->deadLetter($delivery, 'The channel has no endpoint configured.');
@@ -289,23 +363,10 @@ class WebhookPublisher implements ChannelPublisher
         $attempt = $delivery->attempts + 1;
         $startedAt = hrtime(true);
 
+        $this->markArticleAttemptStarted($delivery);
+
         try {
-            $target = $this->targets->validate($endpoint);
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer '.(string) $channel->secret,
-                'X-Engine-Delivery' => $delivery->delivery_id,
-                'X-Engine-Event' => (string) ($delivery->payload_snapshot['event'] ?? ''),
-                'X-Engine-Timestamp' => (string) $timestamp,
-                'X-Engine-Signature' => WebhookSignature::compute((string) $channel->secret, $timestamp, $body),
-                'X-Engine-Contract' => (string) config('publishing.contract_version', 1),
-                'Content-Type' => 'application/json; charset=utf-8',
-            ])
-                ->timeout((int) config('publishing.timeout', 15))
-                ->retry(0)
-                ->withoutRedirecting()
-                ->withOptions($target->httpOptions())
-                ->withBody($body, 'application/json')
-                ->post($target->url);
+            $response = $this->sendRequest($delivery, $endpoint, $body, $timestamp);
         } catch (ConnectionException $e) {
             // Never reached the receiver. Always worth another go.
             return $this->scheduleRetry($delivery, $attempt, $this->elapsed($startedAt), null, $e->getMessage());
@@ -318,7 +379,7 @@ class WebhookPublisher implements ChannelPublisher
 
         // 409 is the receiver saying "already have this one" — which is the
         // idempotency contract working, not a failure (§2 of the contract).
-        if ($response->successful() || $status === 409) {
+        if ($this->acceptsResponse($delivery, $response)) {
             return $this->succeed($delivery, $attempt, $latency, $status, $response->json());
         }
 
@@ -334,19 +395,6 @@ class WebhookPublisher implements ChannelPublisher
     private function isRetryable(int $status): bool
     {
         return $status >= 500 || in_array($status, [408, 425, 429], true);
-    }
-
-    /**
-     * @param  array<string, mixed>|null  $body
-     */
-    private function succeed(WebhookDelivery $delivery, int $attempt, int $latency, int $status, ?array $body): WebhookDelivery
-    {
-        $this->settleDelivered($delivery, $attempt, $latency, $status);
-
-        $this->recordPublicUrl($delivery, $body);
-        $this->markUnitPublished($delivery);
-
-        return $delivery;
     }
 
     /**

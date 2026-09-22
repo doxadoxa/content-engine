@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace App\Feedback;
 
 use App\Feedback\Contracts\AnalyticsGateway;
+use App\Feedback\Measurements\ReadResult;
+use App\Feedback\Measurements\ReadStatus;
 use App\Models\Project;
 use Illuminate\Support\Carbon;
 
 /** Analytics for the suite. */
 class FakeAnalytics implements AnalyticsGateway
 {
+    private ?ReadResult $purchaseReport = null;
+
     /** @var list<UnitEngagement> */
     private array $rows = [];
 
@@ -22,6 +26,21 @@ class FakeAnalytics implements AnalyticsGateway
     private array $audience = [];
 
     private bool $configured = true;
+
+    public function willReadPurchases(ReadResult $result): self
+    {
+        $this->purchaseReport = $result;
+
+        return $this;
+    }
+
+    /** @param list<string> $urls */
+    public function landingPurchases(Project $project, array $urls, Carbon $from, Carbon $to): ReadResult
+    {
+        return ! $this->configured
+            ? new ReadResult(ReadStatus::Unavailable, reason: 'Analytics is not connected.')
+            : ($this->purchaseReport ?? new ReadResult(ReadStatus::Complete));
+    }
 
     public function name(): string
     {

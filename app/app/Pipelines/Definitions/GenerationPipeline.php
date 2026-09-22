@@ -20,14 +20,9 @@ use App\Pipelines\Steps\Generation\WriteOutline;
 /**
  * Generation, daily (§4 pipeline 3, §5).
  *
- *                                              ┌─ fact_check ─────┐
- *  compile_brief → write_outline → write_draft ─┼─ build_geo_layer ─┼→ finalise_draft
- *                                              └─ cover_entities ──┘
- *
- * The three-way fan-out is the shape the work actually has: once a body exists,
- * checking its claims, building its schema and measuring its entity coverage
- * are three unrelated questions about the same text. Two of them call a model
- * and go to the expensive queue; the third is a string search and does not.
+ * After writing, build the GEO layer, verify citations, select internal links
+ * and measure entity coverage. Fact checking waits for the public fields and
+ * verified body, then finalisation records the checked article before images.
  *
  * Interlinking on pgvector is absent deliberately — §5's
  * out-of-scope note puts both in phase 8, and this pipeline only leaves the

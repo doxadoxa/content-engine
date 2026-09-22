@@ -12,8 +12,10 @@ use App\Models\BrandBrief;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -28,15 +30,17 @@ class ContentItemDetailController extends Controller
         private readonly PublishToChannels $channels,
     ) {}
 
-    public function __invoke(ContentItem $item): Response
+    public function __invoke(Request $request, ContentItem $item): Response
     {
-        $item->load(['localeVariants', 'derivatives', 'assets']);
+        $item->load(['localeVariants', 'derivatives', 'assets', 'articleSchedule.delivery', 'project.channels']);
 
         $brief = $item->brand_brief_id === null
             ? null
             : BrandBrief::query()->whereKey($item->brand_brief_id)->first();
 
         return Inertia::render('content/show', [
+            'return_to' => $this->returnTo($request),
+            'publication' => app(ArticleSchedules::class)->props($item),
             'item' => [
                 ...ContentItemProps::summary($item),
                 'summary' => $item->summary,
@@ -123,6 +127,32 @@ class ContentItemDetailController extends Controller
             'rewriting' => $this->rewriting($item),
             'manual_channels' => $this->channels->manualTargets($item),
         ]);
+    }
+
+    /** A list return target may only be the local Content inventory. */
+    private function returnTo(Request $request): ?string
+    {
+        $returnTo = $request->query('return_to');
+
+        if (! is_string($returnTo) || ! str_starts_with($returnTo, '/content')) {
+            return null;
+        }
+
+        $parts = parse_url($returnTo);
+        if ($parts === false || array_intersect(array_keys($parts), ['scheme', 'host', 'user', 'pass', 'port', 'fragment']) !== []
+            || ($parts['path'] ?? null) !== '/content') {
+            return null;
+        }
+
+        parse_str($parts['query'] ?? '', $query);
+        if (array_diff(array_keys($query), ['view', 'search', 'page']) !== []
+            || (isset($query['view']) && (! is_string($query['view']) || ! in_array($query['view'], ['all', 'writing', 'review', 'scheduled', 'published'], true)))
+            || (isset($query['search']) && (! is_string($query['search']) || mb_strlen($query['search']) > 120))
+            || (isset($query['page']) && (! is_string($query['page']) || ! ctype_digit($query['page']) || (int) $query['page'] < 1))) {
+            return null;
+        }
+
+        return $returnTo;
     }
 
     /**

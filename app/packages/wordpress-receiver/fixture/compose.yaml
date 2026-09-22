@@ -1,0 +1,54 @@
+name: avyo-wordpress-fixture
+services:
+    db:
+        image: mariadb:11.4
+        environment:
+            MARIADB_DATABASE: wordpress_fixture
+            MARIADB_USER: wordpress_fixture
+            MARIADB_PASSWORD: local-fixture-only
+            MARIADB_ROOT_PASSWORD: local-fixture-root-only
+        volumes:
+            - database:/var/lib/mysql
+        healthcheck:
+            test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+            interval: 3s
+            timeout: 3s
+            retries: 30
+    wordpress:
+        image: wordpress:7.1-php8.3-apache
+        environment: &wp-environment
+            WORDPRESS_DB_HOST: db
+            WORDPRESS_DB_NAME: wordpress_fixture
+            WORDPRESS_DB_USER: wordpress_fixture
+            WORDPRESS_DB_PASSWORD: local-fixture-only
+            WORDPRESS_DEBUG: '1'
+            WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+            WORDPRESS_CONFIG_EXTRA: |
+                define('WP_ENVIRONMENT_TYPE', 'local');
+                define('DISABLE_WP_CRON', true);
+                define('AUTOMATIC_UPDATER_DISABLED', true);
+                define('WP_DEBUG_LOG', true);
+                define('WP_DEBUG_DISPLAY', false);
+        ports:
+            - '127.0.0.1:8093:80'
+        volumes: &wp-volumes
+            - wordpress:/var/www/html
+            - ../plugin:/var/www/html/wp-content/plugins/avyo-receiver:ro
+            - ./guards.php:/var/www/html/wp-content/mu-plugins/avyo-fixture-guards.php:ro
+            - .:/fixture:ro
+        depends_on:
+            db:
+                condition: service_healthy
+    cli:
+        image: wordpress:cli-php8.3
+        entrypoint: [wp]
+        user: '33:33'
+        profiles: [tools]
+        environment: *wp-environment
+        volumes: *wp-volumes
+        depends_on:
+            db:
+                condition: service_healthy
+volumes:
+    database:
+    wordpress:

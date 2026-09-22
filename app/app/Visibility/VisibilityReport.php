@@ -295,7 +295,8 @@ final class VisibilityReport
      *
      * @return list<array{
      *     id: string, text: string, locale: string, intent: string, intent_label: string,
-     *     mentioned_in: list<string>, answered: int, declined: int
+     *     mentioned_in: list<string>, answered: int, declined: int,
+     *     checks: list<array{platform: string, label: string, mentioned: bool|null, status: string, asked_on: string|null, excerpt: string|null, citations: list<array{url: string, title: string}>}>
      * }>
      */
     public function promptRows(): array
@@ -307,6 +308,23 @@ final class VisibilityReport
         foreach ($this->prompts as $prompt) {
             /** @var Collection<int, LlmVisibilityAnswer> $answers */
             $answers = $byPrompt->get($prompt->id) ?? new Collection;
+            $platforms = array_values(array_unique([...array_keys(config('visibility.platforms', [])), ...$answers->pluck('platform')->all()]));
+            $checks = [];
+            foreach ($platforms as $platform) {
+                $answer = $answers->firstWhere('platform', $platform);
+                $label = config("visibility.platforms.{$platform}.label");
+                $checks[] = [
+                    'platform' => $platform, 'label' => is_string($label) ? $label : $platform,
+                    'mentioned' => $answer?->mentioned,
+                    'status' => $answer === null ? 'not_checked' : ($answer->mentioned === null ? 'no_answer' : 'answered'),
+                    'asked_on' => $answer?->asked_on->toDateString(),
+                    // These are the same newest (question, platform) rows that
+                    // supply the score. Older excerpts would make a visible
+                    // answer look like evidence for a different measurement.
+                    'excerpt' => self::excerptOf($answer),
+                    'citations' => self::safeCitations($answer?->citations),
+                ];
+            }
 
             $rows[] = [
                 'id' => $prompt->id,
@@ -317,6 +335,7 @@ final class VisibilityReport
                 'mentioned_in' => array_values($answers->where('mentioned', true)->pluck('platform')->all()),
                 'answered' => $answers->whereNotNull('mentioned')->count(),
                 'declined' => $answers->whereNull('mentioned')->count(),
+                'checks' => $checks,
             ];
         }
 
@@ -359,6 +378,49 @@ final class VisibilityReport
         }
 
         return (string) preg_replace('/^www\./', '', mb_strtolower($host));
+    }
+
+    private static function excerptOf(?LlmVisibilityAnswer $answer): ?string
+    {
+        $excerpt = trim((string) ($answer === null ? '' : $answer->excerpt));
+
+        return $excerpt === '' ? null : $excerpt;
+    }
+
+    /**
+     * Legacy citations came from provider payloads. Keep only ordinary web
+     * links before handing them to the client; an excerpt is evidence to read,
+     * never a reason to turn an arbitrary provider string into a link.
+     *
+     * @return list<array{url: string, title: string}>
+     */
+    private static function safeCitations(mixed $citations): array
+    {
+        if (! is_array($citations)) {
+            return [];
+        }
+
+        $safe = [];
+
+        foreach ($citations as $citation) {
+            if (! is_array($citation) || ! is_string($citation['url'] ?? null)) {
+                continue;
+            }
+
+            $url = trim($citation['url']);
+            $scheme = parse_url($url, PHP_URL_SCHEME);
+            $host = parse_url($url, PHP_URL_HOST);
+
+            if (! is_string($scheme) || ! in_array(mb_strtolower($scheme), ['http', 'https'], true)
+                || ! is_string($host) || $host === '') {
+                continue;
+            }
+
+            $title = is_string($citation['title'] ?? null) ? trim($citation['title']) : '';
+            $safe[] = ['url' => $url, 'title' => $title];
+        }
+
+        return $safe;
     }
 
     /** @param list<string> $aggregators */

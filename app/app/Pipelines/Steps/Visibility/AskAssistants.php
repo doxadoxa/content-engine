@@ -12,6 +12,10 @@ use App\Pipelines\Core\StepResult;
 use App\Pipelines\Exceptions\RetryableStepFailure;
 use App\Visibility\BrandPresence;
 use App\Visibility\Contracts\LlmVisibilityGateway;
+use App\Visibility\Sampling\AnswerAllowance;
+use App\Visibility\Sampling\SamplingRuns;
+use App\Visibility\Sampling\SamplingSchedule;
+use App\Visibility\Sampling\SamplingSets;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -59,6 +63,26 @@ class AskAssistants extends AbstractStep
 
     public function handle(StepContext $context): StepResult
     {
+        if (app(AnswerAllowance::class)->applies($context->project)) {
+            $cycleId = $context->get('sampling_cycle_id');
+            $schedule = app(SamplingSchedule::class);
+            $run = is_string($cycleId) ? $schedule->finishInitialization($context->project, $cycleId) : $schedule->dispatchDue($context->project);
+            if ($run !== null) {
+                $context->remember('visibility.sampling_run_id', $run->id);
+            }
+
+            return StepResult::success(new AnsweredPayload(0, 0, 0, 0.0));
+        }
+        if (config('visibility.stable_sampling', true)) {
+            $set = app(SamplingSets::class)->ensure($context->project);
+            if ($set === null) {
+                return StepResult::skip('No monitored questions have been recorded.');
+            }
+            $run = app(SamplingRuns::class)->start($context->project, $set, 'pipeline:'.$context->run->id);
+            $context->remember('visibility.sampling_run_id', $run->id);
+
+            return StepResult::success(new AnsweredPayload(0, 0, 0, 0.0));
+        }
         if (! $this->assistants->isConfigured()) {
             // A skip, not a failure. This runs on a schedule against every
             // project, and a nightly failure at each unconnected one teaches

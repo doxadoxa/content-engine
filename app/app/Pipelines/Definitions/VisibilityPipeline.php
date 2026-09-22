@@ -57,6 +57,7 @@ class VisibilityPipeline implements PipelineDefinition
     public function inputRules(): array
     {
         return [
+            'sampling_cycle_id' => ['sometimes', 'ulid'],
             'prompts_per_locale' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'max_answers' => ['sometimes', 'integer', 'min:1', 'max:500'],
         ];

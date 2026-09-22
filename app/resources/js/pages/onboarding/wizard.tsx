@@ -10,8 +10,6 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import AlertError from '@/components/alert-error';
-import { DutyHoursField } from '@/components/duty-hours-field';
-import type { DutyHoursValue } from '@/components/duty-hours-field';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,7 +19,6 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -68,16 +65,25 @@ type Draft = {
     competitors: string[];
     seed_keywords: string[];
     weekly_target: number;
-    duty_hours: DutyHoursValue;
+    autopublish: boolean;
     analysis: Analysis | null;
     onboarding: Record<string, Record<string, unknown>> | null;
 };
 
-type ChannelType = { value: string; label: string; is_social: boolean };
-
+type Offer = {
+    key: string;
+    version: number;
+    name: string;
+    price_cents: number;
+    currency: string;
+    limits: { articles: number; ai_frequency_days: number };
+};
 type Props = {
+    selectedPlan: Offer;
+    plans: Offer[];
+    trialDays: number;
+    articlesEnabled: boolean;
     draft: Draft | null;
-    channelTypes: ChannelType[];
 };
 
 const STEPS = [
@@ -86,8 +92,8 @@ const STEPS = [
     'Business',
     'Voice',
     'Competitors',
-    'Where it goes',
-    'Cadence',
+    'Website connection',
+    'Publishing preferences',
 ] as const;
 
 /**
@@ -100,7 +106,14 @@ const STEPS = [
  * Every step saves as it is left, against a project row that exists from the
  * moment the site is read. Closing the tab loses nothing.
  */
-export default function Wizard({ draft: initialDraft, channelTypes }: Props) {
+export default function Wizard({
+    draft: initialDraft,
+    articlesEnabled,
+    selectedPlan: initialPlan,
+    plans,
+    trialDays,
+}: Props) {
+    const [selectedPlan, setSelectedPlan] = useState(initialPlan);
     const [draft, setDraft] = useState<Draft | null>(initialDraft);
     const [step, setStep] = useState(initialDraft ? 1 : 0);
     const [busy, setBusy] = useState(false);
@@ -128,6 +141,103 @@ export default function Wizard({ draft: initialDraft, channelTypes }: Props) {
                     }
                 />
 
+                <section
+                    className={`${workspacePanelClass} p-5`}
+                    aria-label="Selected plan"
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                            <p className="font-medium">
+                                Your plan after the {trialDays}-day trial
+                            </p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                {selectedPlan.limits.articles} articles per
+                                billing month ·{' '}
+                                {selectedPlan.limits.ai_frequency_days === 7
+                                    ? 'Weekly'
+                                    : 'Monthly'}{' '}
+                                AI visibility checks
+                            </p>
+                        </div>
+                        <label className="text-sm">
+                            <span className="sr-only">Plan</span>
+                            <select
+                                className="rounded-lg border bg-background px-3 py-2"
+                                value={selectedPlan.key}
+                                disabled={busy}
+                                onChange={async (event) => {
+                                    const next = plans.find(
+                                        (plan) =>
+                                            plan.key === event.target.value,
+                                    );
+
+                                    if (!next) {
+                                        return;
+                                    }
+
+                                    if (!draft) {
+                                        router.visit(
+                                            `/start?plan=${next.key}&plan_version=${next.version}`,
+                                        );
+
+                                        return;
+                                    }
+
+                                    setBusy(true);
+                                    const result = await postJson<{
+                                        project: Draft;
+                                    }>(save(draft.id).url, {
+                                        step: 'offer',
+                                        answers: {
+                                            key: next.key,
+                                            version: next.version,
+                                        },
+                                    });
+                                    setBusy(false);
+
+                                    if (!result.ok) {
+                                        setError(result.message);
+
+                                        return;
+                                    }
+
+                                    setDraft(result.data.project);
+                                    setSelectedPlan(next);
+                                }}
+                            >
+                                {plans.map((plan) => (
+                                    <option key={plan.key} value={plan.key}>
+                                        {plan.name} ·{' '}
+                                        {new Intl.NumberFormat(undefined, {
+                                            style: 'currency',
+                                            currency:
+                                                plan.currency.toUpperCase(),
+                                            maximumFractionDigits: 0,
+                                        }).format(plan.price_cents / 100)}
+                                        /month
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+                    {!plans.some(
+                        (plan) =>
+                            plan.key === selectedPlan.key &&
+                            plan.version === selectedPlan.version,
+                    ) && (
+                        <p className="mt-3 text-sm text-amber-700">
+                            The available plans have changed since you started
+                            setup. Choose a current plan above and review its
+                            price before checkout.
+                        </p>
+                    )}
+                    <p className="mt-3 text-xs text-muted-foreground">
+                        Trial: 3 articles and one AI check of 3 questions across
+                        4 services. Add a card at checkout; the selected monthly
+                        price starts when the trial ends. Cancel before then to
+                        avoid the subscription charge.
+                    </p>
+                </section>
                 <Progress step={step} />
 
                 <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
@@ -165,10 +275,11 @@ export default function Wizard({ draft: initialDraft, channelTypes }: Props) {
 
                         {step > 0 && draft && (
                             <Steps
+                                packaged={selectedPlan.version >= 4}
+                                focused={!articlesEnabled}
                                 draft={draft}
                                 step={step}
                                 busy={busy}
-                                channelTypes={channelTypes}
                                 onBack={() => setStep((current) => current - 1)}
                                 onSave={async (name, answers) => {
                                     setBusy(true);
@@ -210,7 +321,11 @@ export default function Wizard({ draft: initialDraft, channelTypes }: Props) {
                         )}
                     </div>
 
-                    <SetupGuide step={step} hasDraft={draft !== null} />
+                    <SetupGuide
+                        step={step}
+                        hasDraft={draft !== null}
+                        focused={!articlesEnabled}
+                    />
                 </div>
             </WorkspacePage>
         </>
@@ -269,7 +384,15 @@ function Progress({ step }: { step: number }) {
     );
 }
 
-function SetupGuide({ step, hasDraft }: { step: number; hasDraft: boolean }) {
+function SetupGuide({
+    step,
+    hasDraft,
+    focused,
+}: {
+    step: number;
+    hasDraft: boolean;
+    focused: boolean;
+}) {
     return (
         <aside
             className={`${workspacePanelClass} hidden flex-col gap-5 p-5 lg:sticky lg:top-6 lg:flex`}
@@ -301,7 +424,11 @@ function SetupGuide({ step, hasDraft }: { step: number; hasDraft: boolean }) {
                 <GuideItem
                     done={false}
                     title="Launch the project"
-                    detail="Research, planning, and first drafts begin."
+                    detail={
+                        focused
+                            ? 'Your website audit begins. Track a page and confirm facts before choosing an improvement.'
+                            : 'Avyo researches useful topics, plans the calendar and writes your first articles. Your publishing preference controls what happens next.'
+                    }
                 />
             </ol>
             {hasDraft && (
@@ -424,17 +551,19 @@ function WebsiteStep({
  * still be there when they return to it.
  */
 function Steps({
+    focused,
+    packaged,
     draft,
     step,
     busy,
-    channelTypes,
     onBack,
     onSave,
 }: {
+    focused: boolean;
+    packaged: boolean;
     draft: Draft;
     step: number;
     busy: boolean;
-    channelTypes: ChannelType[];
     onBack: () => void;
     onSave: (step: string, answers: Record<string, unknown>) => void;
 }) {
@@ -449,12 +578,6 @@ function Steps({
     const [language, setLanguage] = useState(
         saved('market', 'language', draft.language),
     );
-    // §4.3: the window the operator is around for, read in the project's own
-    // time zone — which is why it is answered on this step and not the last.
-    const [dutyHours, setDutyHours] = useState<DutyHoursValue>(
-        saved('market', 'duty_hours', draft.duty_hours ?? {}),
-    );
-
     const [name, setName] = useState(saved('business', 'name', draft.name));
     const [description, setDescription] = useState(
         saved('business', 'description', analysis?.description ?? ''),
@@ -491,25 +614,27 @@ function Steps({
     const [endpoint, setEndpoint] = useState(
         saved('channels', 'webhook_endpoint', ''),
     );
-    const [social, setSocial] = useState<string[]>(
-        saved('channels', 'social', []),
-    );
-
-    const [weekly, setWeekly] = useState(String(draft.weekly_target));
     const [words, setWords] = useState(
         String(saved('settings', 'target_words', 1400)),
     );
-    const [autopublish, setAutopublish] = useState(
-        saved('settings', 'autopublish', false),
+    const [weeklyTarget, setWeeklyTarget] = useState(
+        String(
+            saved(
+                'settings',
+                'weekly_target',
+                Math.min(7, draft.weekly_target),
+            ),
+        ),
     );
-
+    const [automatic, setAutomatic] = useState(
+        !draft.is_ymyl && saved('settings', 'autopublish', draft.autopublish),
+    );
     const submit = () => {
         switch (step) {
             case 1:
                 return onSave('market', {
                     market,
                     language,
-                    duty_hours: dutyHours,
                 });
             case 2:
                 return onSave('business', { name, description, audiences });
@@ -528,14 +653,19 @@ function Steps({
                 return onSave('competitors', { competitors });
             case 5:
                 return onSave('channels', {
-                    webhook_endpoint: endpoint,
-                    social,
+                    webhook_endpoint: focused ? null : endpoint,
                 });
             default:
                 return onSave('settings', {
-                    weekly_target: Number(weekly),
-                    target_words: Number(words),
-                    autopublish,
+                    ...(focused
+                        ? {}
+                        : {
+                              target_words: Number(words),
+                              ...(!packaged
+                                  ? { weekly_target: Number(weeklyTarget) }
+                                  : {}),
+                          }),
+                    autopublish: !focused && !draft.is_ymyl && automatic,
                 });
         }
     };
@@ -573,7 +703,11 @@ function Steps({
                             <Field
                                 id="language"
                                 label="Language"
-                                hint="What the articles are written in."
+                                hint={
+                                    focused
+                                        ? 'The language of the pages you want to improve.'
+                                        : 'What the articles are written in.'
+                                }
                             >
                                 <Input
                                     id="language"
@@ -584,10 +718,7 @@ function Steps({
                                     placeholder="en"
                                 />
                             </Field>
-                            <DutyHoursField
-                                value={dutyHours}
-                                onChange={setDutyHours}
-                            />
+
                             {draft.is_ymyl && <YmylNotice />}
                         </>
                     )}
@@ -725,7 +856,11 @@ function Steps({
                             <Field
                                 id="sitemap"
                                 label="Sitemap"
-                                hint="Used to find pages worth linking to from new articles."
+                                hint={
+                                    focused
+                                        ? 'Find existing pages and avoid recommending another page for the same purpose.'
+                                        : 'Used to find pages worth linking to from new articles.'
+                                }
                             >
                                 <Input
                                     id="sitemap"
@@ -774,126 +909,157 @@ function Steps({
 
                     {step === 5 && (
                         <>
-                            <Field
-                                id="endpoint"
-                                label="Your site's receiving endpoint"
-                                hint="Not a page on your site — a URL that accepts a POST and stores the article. Install the engine-receiver package and use the route it adds. Leave empty to pull articles from our API instead."
-                            >
-                                <Input
+                            {focused ? (
+                                <div className="rounded-xl border p-4 text-sm leading-6">
+                                    <p>
+                                        You will connect a specific existing
+                                        page after setup. WordPress uses the
+                                        Avyo receiver plugin and an application
+                                        password. Compatible custom sites use a
+                                        signed page receiver. Assisted
+                                        publishing remains available.
+                                    </p>
+                                    <p className="mt-3 text-muted-foreground">
+                                        Finish setup first, then open Content to
+                                        select the page and inspect what can
+                                        safely be edited.
+                                    </p>
+                                </div>
+                            ) : (
+                                <Field
                                     id="endpoint"
-                                    value={endpoint}
-                                    onChange={(e) =>
-                                        setEndpoint(e.target.value)
-                                    }
-                                    placeholder="https://example.com/api/content-engine"
-                                />
-                                <p className="text-sm text-muted-foreground">
-                                    We send a signed test request when you
-                                    finish. If your site answers with anything
-                                    other than success, nothing will publish and
-                                    the dashboard will say so.
-                                </p>
-                            </Field>
-
-                            <fieldset className="flex flex-col gap-3">
-                                <legend className="text-sm font-medium">
-                                    Social channels
-                                </legend>
-                                <p className="text-sm text-muted-foreground">
-                                    A project is one content layer, not just a
-                                    blog. Anything published here is also cut
-                                    down for these, from the same brief.
-                                </p>
-                                {channelTypes
-                                    .filter((type) => type.is_social)
-                                    .map((type) => (
-                                        <label
-                                            key={type.value}
-                                            className="flex items-center gap-3 rounded-xl border bg-background/30 p-3 text-sm transition-colors hover:bg-muted/30"
-                                        >
-                                            <Checkbox
-                                                checked={social.includes(
-                                                    type.value,
-                                                )}
-                                                onCheckedChange={(checked) =>
-                                                    setSocial((current) =>
-                                                        checked
-                                                            ? [
-                                                                  ...current,
-                                                                  type.value,
-                                                              ]
-                                                            : current.filter(
-                                                                  (v) =>
-                                                                      v !==
-                                                                      type.value,
-                                                              ),
-                                                    )
-                                                }
-                                            />
-                                            {type.label}
-                                        </label>
-                                    ))}
-                            </fieldset>
+                                    label="Your site's receiving endpoint"
+                                    hint="Optional: enter an article receiving address supplied by your website developer. You can connect WordPress or a custom website from Settings after setup. Articles wait safely until a compatible connection is ready."
+                                >
+                                    <Input
+                                        id="endpoint"
+                                        value={endpoint}
+                                        onChange={(e) =>
+                                            setEndpoint(e.target.value)
+                                        }
+                                        placeholder="https://example.com/api/content-engine"
+                                    />
+                                    <p className="text-sm text-muted-foreground">
+                                        We send a signed test request when you
+                                        finish. If your site answers with
+                                        anything other than success, nothing
+                                        will publish and the dashboard will say
+                                        so.
+                                    </p>
+                                </Field>
+                            )}
                         </>
                     )}
 
                     {last && (
                         <>
-                            <Field
-                                id="weekly"
-                                label="Articles per week"
-                                hint="The planner fills a month at this rate."
-                            >
-                                <Select
-                                    value={weekly}
-                                    onValueChange={setWeekly}
+                            {!focused && (
+                                <Field
+                                    id="words"
+                                    label="Preferred length for new articles"
                                 >
-                                    <SelectTrigger id="weekly">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {['1', '2', '3', '5', '7'].map((n) => (
-                                            <SelectItem key={n} value={n}>
-                                                {n} per week
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </Field>
-                            <Field id="words" label="Target length">
-                                <Select value={words} onValueChange={setWords}>
-                                    <SelectTrigger id="words">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {['800', '1400', '2200'].map((n) => (
-                                            <SelectItem key={n} value={n}>
-                                                {n} words
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </Field>
-                            <label className="flex items-start gap-3 rounded-xl border bg-background/30 p-3 text-sm">
-                                <Checkbox
-                                    checked={autopublish}
-                                    disabled={draft.is_ymyl}
-                                    onCheckedChange={(checked) =>
-                                        setAutopublish(checked === true)
-                                    }
-                                    className="mt-0.5"
-                                />
-                                <span>
-                                    Publish without waiting for approval
-                                    {draft.is_ymyl && (
-                                        <span className="block text-muted-foreground">
-                                            Not available here — this project
-                                            was read as money-or-health, and
-                                            those get reviewed.
-                                        </span>
+                                    <Select
+                                        value={words}
+                                        onValueChange={setWords}
+                                    >
+                                        <SelectTrigger id="words">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {['800', '1400', '2200'].map(
+                                                (n) => (
+                                                    <SelectItem
+                                                        key={n}
+                                                        value={n}
+                                                    >
+                                                        {n} words
+                                                    </SelectItem>
+                                                ),
+                                            )}
+                                        </SelectContent>
+                                    </Select>
+                                </Field>
+                            )}
+                            {!focused && (
+                                <>
+                                    {!packaged && (
+                                        <Field
+                                            id="cadence"
+                                            label="How often should articles go out?"
+                                            hint="We spread articles across the calendar, within your plan’s allowance."
+                                        >
+                                            <Select
+                                                value={weeklyTarget}
+                                                onValueChange={setWeeklyTarget}
+                                            >
+                                                <SelectTrigger id="cadence">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {[1, 2, 3, 5, 7].map(
+                                                        (n) => (
+                                                            <SelectItem
+                                                                key={n}
+                                                                value={String(
+                                                                    n,
+                                                                )}
+                                                            >
+                                                                {n === 7
+                                                                    ? 'Daily, within my allowance'
+                                                                    : `${n} per week`}
+                                                            </SelectItem>
+                                                        ),
+                                                    )}
+                                                </SelectContent>
+                                            </Select>
+                                        </Field>
                                     )}
-                                </span>
-                            </label>
+                                    <Field
+                                        id="publishing-mode"
+                                        label="Publishing preference"
+                                        hint={
+                                            draft.is_ymyl
+                                                ? 'Health and financial topics always need your review.'
+                                                : 'You can switch to review-first whenever you need to.'
+                                        }
+                                    >
+                                        <Select
+                                            value={
+                                                automatic
+                                                    ? 'automatic'
+                                                    : 'review'
+                                            }
+                                            onValueChange={(value) =>
+                                                setAutomatic(
+                                                    value === 'automatic',
+                                                )
+                                            }
+                                            disabled={draft.is_ymyl}
+                                        >
+                                            <SelectTrigger id="publishing-mode">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="automatic">
+                                                    Publish automatically on the
+                                                    calendar
+                                                </SelectItem>
+                                                <SelectItem value="review">
+                                                    Let me review each article
+                                                    first
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </Field>
+                                </>
+                            )}
+                            <p className="rounded-xl border bg-background/30 p-4 text-sm leading-6">
+                                {focused
+                                    ? 'Start with an existing page and current confirmed facts. The site audit runs during setup. Choose a bounded opportunity in Plan; review and publication each need your separate decision.'
+                                    : automatic
+                                      ? 'Avyo writes useful articles and publishes them on schedule once your website is connected and the article passes its checks. Articles that need attention wait for you.'
+                                      : 'Avyo plans and writes your articles. Each article waits for your approval before its scheduled publication.'}
+                            </p>
                         </>
                     )}
 
@@ -914,7 +1080,7 @@ function Steps({
                             className="rounded-full px-5"
                         >
                             {busy && <Spinner className="size-4" />}
-                            {last ? 'Start writing' : 'Continue'}
+                            {last ? 'Start my content calendar' : 'Continue'}
                             {!busy &&
                                 (last ? (
                                     <Rocket
@@ -940,7 +1106,7 @@ const HEADINGS = [
     {
         title: 'Who are you writing for?',
         description:
-            'The market decides which search volumes we look at, the language is what gets written, and the duty hours decide when a social post is allowed to go out.',
+            'Choose where your customers are and the first language to focus on. Search evidence follows this market.',
     },
     {
         title: 'What does the business do?',
@@ -960,11 +1126,12 @@ const HEADINGS = [
     {
         title: 'Where does it go?',
         description:
-            'Your site, and the social channels that share the same voice.',
+            'Connect your website, or leave this empty to publish reviewed changes with assistance.',
     },
     {
-        title: 'How often?',
-        description: 'This is changeable later — nothing here is permanent.',
+        title: 'How should publishing work?',
+        description:
+            'Choose your pace and whether articles publish automatically or wait for your review.',
     },
 ] as const;
 

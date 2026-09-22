@@ -11,6 +11,9 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 
 /**
@@ -29,6 +32,15 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $published_at
  * @property bool $is_article
  * @property SitePageKind|null $page_kind
+ * @property Carbon|null $tracked_at
+ * @property string|null $canonical_url
+ * @property string|null $canonical_hash
+ * @property string|null $locale
+ * @property string|null $content_item_id
+ * @property string|null $channel_id
+ * @property string|null $cms_object_type
+ * @property string|null $cms_object_id
+ * @property-read PageSnapshot|null $latestSnapshot
  * @property Carbon|null $read_at
  */
 class SitePage extends Model
@@ -49,7 +61,42 @@ class SitePage extends Model
         'is_article',
         'page_kind',
         'read_at',
+        'tracked_at', 'canonical_url', 'canonical_hash', 'locale', 'content_item_id',
+        'channel_id', 'cms_object_type', 'cms_object_id',
     ];
+
+    /** @return HasMany<PageSnapshot, $this> */
+    public function snapshots(): HasMany
+    {
+        return $this->hasMany(PageSnapshot::class)->orderByDesc('id');
+    }
+
+    /** @return HasOne<PageSnapshot, $this> */
+    public function latestSnapshot(): HasOne
+    {
+        return $this->hasOne(PageSnapshot::class)->ofMany(['id' => 'max'], fn ($query) => $query->where('source_kind', 'public'));
+    }
+
+    /** @return BelongsTo<ContentItem, $this> */
+    public function contentItem(): BelongsTo
+    {
+        return $this->belongsTo(ContentItem::class);
+    }
+
+    /** @return BelongsTo<Channel, $this> */
+    public function channel(): BelongsTo
+    {
+        return $this->belongsTo(Channel::class);
+    }
+
+    /**
+     * @param  Builder<$this>  $query
+     * @return Builder<$this>
+     */
+    public function scopeTracked(Builder $query): Builder
+    {
+        return $query->whereNotNull('tracked_at');
+    }
 
     /**
      * Pages worth comparing a planned topic against.
@@ -102,6 +149,7 @@ class SitePage extends Model
         return [
             'published_at' => 'datetime',
             'read_at' => 'datetime',
+            'tracked_at' => 'datetime',
             'is_article' => 'boolean',
             'page_kind' => SitePageKind::class,
         ];

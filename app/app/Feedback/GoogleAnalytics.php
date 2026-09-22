@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Feedback;
 
 use App\Feedback\Contracts\AnalyticsGateway;
+use App\Feedback\Measurements\ReadsLandingPurchases;
 use App\Integrations\Exceptions\GoogleUnavailable;
 use App\Integrations\Google\GoogleConnection;
 use App\Models\Project;
@@ -25,6 +26,8 @@ use Illuminate\Support\Str;
  */
 class GoogleAnalytics implements AnalyticsGateway
 {
+    use ReadsLandingPurchases;
+
     /** The API's ceiling is 250,000; this is a day-by-page report, not an export. */
     private const int PAGE_SIZE = 50000;
 

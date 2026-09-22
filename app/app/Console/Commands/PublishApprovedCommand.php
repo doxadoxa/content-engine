@@ -7,8 +7,10 @@ namespace App\Console\Commands;
 use App\Billing\Entitlements;
 use App\Enums\ContentItemState;
 use App\Enums\ProjectStatus;
+use App\Models\ArticleSchedule;
 use App\Models\ContentItem;
 use App\Models\Project;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\PublishToChannels;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Console\Command;
@@ -81,7 +83,21 @@ class PublishApprovedCommand extends Command
 
     private function forProject(Project $project, PublishToChannels $channels, CurrentProject $current): int
     {
-        return $current->run($project, function () use ($channels): int {
+        return $current->run($project, function () use ($channels, $project): int {
+            if (! config('social.enabled')) {
+                app(ArticleSchedules::class)->resolveTargets($project);
+                $query = ArticleSchedule::query()->whereIn('status', ['active', 'blocked'])
+                    ->where('publish_at', '<=', now()->toIso8601String())
+                    ->when($this->option('unit'), fn ($q, $id) => $q->where('content_item_id', $id));
+                $queued = 0;
+                foreach ($query->with('contentItem')->get() as $schedule) {
+                    $queued += count(app(ArticleSchedules::class)->dispatch($schedule->contentItem));
+                }
+                $this->components->info("Queued {$queued} scheduled article delivery(s).");
+
+                return self::SUCCESS;
+            }
+
             // Articles, and this scope is the whole of the guard: the scheduled
             // run publishes whatever is approved, and since §3 an approved unit
             // may be a 300-character social post with no parent. Handed to a

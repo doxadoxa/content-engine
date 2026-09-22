@@ -38,12 +38,28 @@ final class EntitlementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // These cases exercise the version 1 offer; FocusedOfferTest covers version 2.
+        config(['billing.version' => 1]);
 
         // Unbilled by default here, because every test below says out loud
         // which subscription it is about — including the one that says there
         // is none.
         $this->project = Project::factory()->unbilled()->create();
         app(CurrentProject::class)->set($this->project);
+    }
+
+    #[Test]
+    public function excluded_social_does_not_show_as_used_up_but_real_article_exhaustion_does(): void
+    {
+        config(['social.enabled' => false]);
+        ProjectSubscription::factory()->forProject($this->project)->create(['plan' => 'local-search', 'plan_version' => 3]);
+        $entitlements = app(Entitlements::class);
+        $entitlements->forget($this->project);
+        $this->assertNotContains(Metric::SocialPosts->value, $entitlements->for($this->project)->exhausted());
+        $entitlements->record($this->project, Metric::Articles, 30);
+        $entitlements->forget($this->project);
+        $this->assertContains(Metric::Articles->value, $entitlements->for($this->project)->exhausted());
+        $this->assertNotContains(Metric::SocialPosts->value, $entitlements->for($this->project)->exhausted());
     }
 
     #[Test]

@@ -17,6 +17,7 @@ final class OnboardingStepRequest extends FormRequest
     use ValidatesDutyHours;
 
     private const array STEPS = [
+        'offer',
         'market',
         'business',
         'voice',
@@ -52,6 +53,7 @@ final class OnboardingStepRequest extends FormRequest
     private function keysFor(string $step): array
     {
         return match ($step) {
+            'offer' => ['key', 'version'],
             'market' => ['market', 'language', 'extra_languages', 'timezone', 'duty_hours'],
             'business' => ['name', 'description', 'audiences'],
             'voice' => [
@@ -69,6 +71,7 @@ final class OnboardingStepRequest extends FormRequest
     private function answerRules(string $step): array
     {
         return match ($step) {
+            'offer' => ['answers.key' => ['required', 'string'], 'answers.version' => ['required', 'integer']],
             'market' => [
                 'answers.market' => ['nullable', 'string', 'max:100'],
                 'answers.language' => ['required', 'string', 'max:12', 'regex:/^[a-z]{2,3}(?:-[A-Z]{2})?$/'],
@@ -101,7 +104,7 @@ final class OnboardingStepRequest extends FormRequest
             'channels' => [
                 'answers.webhook_endpoint' => ['sometimes', 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
                 'answers.webhook_secret' => ['sometimes', 'nullable', 'string', 'max:500'],
-                'answers.social' => ['sometimes', 'array', 'max:10'],
+                'answers.social' => [Rule::prohibitedIf(! config('social.enabled')), 'sometimes', 'array', 'max:10'],
                 'answers.social.*' => [
                     'string', 'distinct',
                     Rule::in(array_map(
@@ -111,7 +114,7 @@ final class OnboardingStepRequest extends FormRequest
                 ],
             ],
             'settings' => [
-                'answers.weekly_target' => ['required', 'integer', 'min:1', 'max:7'],
+                'answers.weekly_target' => ['sometimes', 'integer', 'min:1', 'max:7'],
                 'answers.target_words' => ['sometimes', 'integer', 'min:400', 'max:5000'],
                 'answers.autopublish' => ['sometimes', 'boolean'],
             ],

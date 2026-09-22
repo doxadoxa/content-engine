@@ -5,8 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\ContentItem;
+use App\Models\PipelineRun;
+use App\Publishing\Articles\ArticleSchedules;
+use App\Support\Content\ManagerContent;
 use App\Support\Tenancy\CurrentProject;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -27,15 +33,25 @@ class ContentItemController extends Controller
 {
     public function __construct(private readonly CurrentProject $current) {}
 
-    public function index(): Response
+    public function index(Request $request): Response
     {
-        $groups = ContentItem::query()
-            ->roots()
+        $view = $request->query('view', 'all');
+        abort_unless(is_string($view) && in_array($view, ['all', 'writing', 'review', 'scheduled', 'published'], true), 422);
+        $search = $request->query('search', '');
+        abort_unless(is_string($search), 422);
+        $search = trim($search);
+        abort_if(mb_strlen($search) > 120, 422);
+
+        // Filter roots before grouping. A unit may have one title per locale,
+        // and a search for a translated title must still find the unit once.
+        $matching = $this->matching($view, $search);
+        $groups = (clone $matching)
             ->select('locale_group_id')
             ->selectRaw('max(created_at) as latest_created_at')
             ->groupBy('locale_group_id')
             ->orderByDesc('latest_created_at')
-            ->paginate(25)
+            ->orderByDesc('locale_group_id')
+            ->paginate(12)
             ->withQueryString();
 
         $groupIds = $groups->getCollection()
@@ -43,23 +59,33 @@ class ContentItemController extends Controller
             ->filter(fn (mixed $id): bool => is_string($id))
             ->values();
 
+        // Keep the matching root separately from the complete unit. The
+        // matching root makes a translated title and its filter state visible;
+        // the complete unit keeps every locale and derivative on the card.
+        $matchingRoots = (clone $matching)
+            ->whereIn('locale_group_id', $groupIds)
+            ->get()
+            ->groupBy('locale_group_id');
+
         // Only the groups on this page get their trees. Loading everything and
         // grouping in PHP made response size grow with the entire project.
         $roots = ContentItem::query()
             ->roots()
             ->whereIn('locale_group_id', $groupIds)
             ->withTree()
-            ->with('contentPlan')
+            ->with(['contentPlan', 'articleSchedule.delivery', 'project.channels'])
             ->get()
             ->groupBy('locale_group_id');
 
         $defaultLocale = $this->current->get()?->default_locale;
 
-        $units = $groupIds->map(function (string $id) use ($roots, $defaultLocale): array {
+        $units = $groupIds->map(function (string $id) use ($roots, $matchingRoots, $defaultLocale): array {
             /** @var Collection<int, ContentItem> $group */
             $group = $roots->get($id, new Collection);
+            /** @var Collection<int, ContentItem> $matches */
+            $matches = $matchingRoots->get($id, new Collection);
 
-            return $this->toProps($group, $defaultLocale);
+            return $this->toProps($group, $matches, $defaultLocale);
         })->all();
 
         $pagination = $groups->toArray();
@@ -67,22 +93,61 @@ class ContentItemController extends Controller
 
         return Inertia::render('content/index', [
             'items' => $pagination,
+            'view' => $view,
+            'search' => $search,
+            'status_counts' => collect(['all', 'writing', 'review', 'scheduled', 'published'])
+                ->mapWithKeys(fn (string $status): array => [$status => $this->countGroups($status, $search)])
+                ->all(),
+            'article_workflow' => $this->current->get() === null ? null : ManagerContent::workflow($this->current->get()),
+            'planning' => PipelineRun::query()->inFlight()->whereIn('pipeline', ['research', 'planning'])->exists(),
         ]);
+    }
+
+    /** @return Builder<ContentItem> */
+    private function matching(string $view, string $search): Builder
+    {
+        if ($search === '') {
+            return ManagerContent::query($view);
+        }
+
+        // PostgreSQL's LIKE is case-sensitive. Escape wildcard characters so
+        // a manager searching for a literal title does not turn it into a
+        // pattern, while keeping SQLite test semantics aligned.
+        $operator = DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
+        $literal = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search);
+
+        return ManagerContent::query($view)
+            ->whereRaw("title {$operator} ? ESCAPE '\\'", ['%'.$literal.'%']);
+    }
+
+    private function countGroups(string $view, string $search): int
+    {
+        return (clone $this->matching($view, $search))
+            ->distinct()
+            ->count('locale_group_id');
     }
 
     /**
      * @param  Collection<int, ContentItem>  $group
+     * @param  Collection<int, ContentItem>  $matches
      * @return array<string, mixed>
      */
-    private function toProps(Collection $group, ?string $defaultLocale): array
+    private function toProps(Collection $group, Collection $matches, ?string $defaultLocale): array
     {
-        // The project's own language is the one an operator recognises the
-        // unit by; anything else is a fallback for a unit not written in it.
-        $item = $group->firstWhere('locale', $defaultLocale) ?? $group->first();
+        // Prefer a root that actually matched the active filter or title
+        // search. Otherwise an English row could replace a Portuguese title a
+        // manager searched for, or hide the state that put this unit in view.
+        $matchedIds = $matches->pluck('id');
+        $matchingItems = $group->whereIn('id', $matchedIds);
+        $item = $matchingItems->firstWhere('locale', $defaultLocale)
+            ?? $matchingItems->first()
+            ?? $group->firstWhere('locale', $defaultLocale)
+            ?? $group->first();
 
         /** @var ContentItem $item */
         return [
             'id' => $item->id,
+            'publication' => app(ArticleSchedules::class)->props($item),
             'title' => $item->title,
             'slug' => $item->slug,
             'locale' => $item->locale,

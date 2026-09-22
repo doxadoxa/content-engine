@@ -178,6 +178,8 @@ class ThreadsPublisher implements ChannelPublisher
      */
     public function queue(ContentItem $unit, Channel $channel): WebhookDelivery
     {
+        abort_unless(config('social.enabled'), 409, 'Social publishing is retired.');
+
         $payload = $this->payloadFor($unit);
         $deliveryId = WebhookPayload::newDeliveryId();
         $revision = $this->revisionOf($payload);
@@ -231,6 +233,8 @@ class ThreadsPublisher implements ChannelPublisher
      */
     public function ping(Channel $channel, Project $project): WebhookDelivery
     {
+        abort_unless(config('social.enabled'), 409, 'Social publishing is retired.');
+
         $deliveryId = WebhookPayload::newDeliveryId();
 
         $delivery = WebhookDelivery::query()->create([
@@ -275,6 +279,8 @@ class ThreadsPublisher implements ChannelPublisher
      */
     public function replay(WebhookDelivery $delivery): WebhookDelivery
     {
+        abort_if(RetiredSocialDelivery::applies($delivery), 409, 'Social publishing is retired.');
+
         $deliveryId = WebhookPayload::newDeliveryId();
 
         $snapshot = $delivery->payload_snapshot;

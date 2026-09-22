@@ -72,6 +72,12 @@ interface BillingProvider
      */
     public function changePlan(User $payer, Project $project, Plan $plan): bool;
 
+    /** Schedule a lower allowance at the current period end; returns its provider identity. */
+    public function schedulePlanChange(User $payer, Project $project, Plan $plan): string;
+
+    /** Keep the current plan by releasing our pending schedule. */
+    public function cancelPlanChange(User $payer, Project $project): bool;
+
     /**
      * Move the provider's own trial end.
      *

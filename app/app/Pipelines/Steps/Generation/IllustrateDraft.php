@@ -5,17 +5,21 @@ declare(strict_types=1);
 namespace App\Pipelines\Steps\Generation;
 
 use App\Console\Commands\EngineTickCommand;
+use App\Content\ArticleBusinessFacts;
+use App\Enums\ContentItemState;
 use App\Media\HeroImage;
 use App\Media\MediaWriteFailed;
 use App\Media\PublicUrl;
 use App\Models\Asset;
 use App\Models\ContentItem;
+use App\Models\Project;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
 use App\Pipelines\Exceptions\TerminalStepFailure;
 use App\Pipelines\Steps\Repurpose\HeroPayload;
 use App\Support\Content\SafeMarkdown;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -87,6 +91,15 @@ class IllustrateDraft extends AbstractStep
         }
 
         $unit = $this->unit($context);
+        $facts = app(ArticleBusinessFacts::class);
+        $refusal = $facts->refusal($unit);
+        if ($unit->state !== ContentItemState::Draft || $refusal !== null) {
+            throw new TerminalStepFailure($refusal ?? 'Only the checked draft may receive automatic illustrations.');
+        }
+        $sourceHash = $facts->bodyHash($unit);
+        $this->placed = 0;
+        $this->wanted = 0;
+        $this->shortfall = null;
 
         try {
             $made = $this->hero->for($unit, $unit->title, $unit->summary);
@@ -135,6 +148,23 @@ class IllustrateDraft extends AbstractStep
             $context->remember('media.inline_wanted', $this->wanted);
             $context->remember('media.inline_stopped_because', $this->shortfall);
         }
+
+        // Image calls happen outside the lock. A manager can edit or approve
+        // the draft while they run; neither change may be overwritten or
+        // silently adopted as newly fact-checked text by this decoration step.
+        DB::transaction(function () use ($context, $unit, $sourceHash, $facts): void {
+            Project::query()->whereKey($unit->project_id)->lockForUpdate()->firstOrFail();
+            $fresh = ContentItem::query()->whereKey($unit->id)->lockForUpdate()->firstOrFail();
+            if ($fresh->state !== ContentItemState::Draft || ! hash_equals($sourceHash, $facts->bodyHash($fresh))) {
+                throw new TerminalStepFailure('This draft changed while its illustrations were being prepared. The newer article is preserved.');
+            }
+            $refusal = $facts->refusal($fresh);
+            if ($refusal !== null) {
+                throw new TerminalStepFailure($refusal);
+            }
+            $fresh->forceFill(['body_markdown' => $unit->body_markdown, 'body_html' => $unit->body_html])->save();
+            $facts->seal($context, $fresh);
+        });
 
         return StepResult::success(new HeroPayload($made['asset']->getKey(), $cost));
     }
@@ -208,6 +238,9 @@ class IllustrateDraft extends AbstractStep
                 $cost += $made['cost'];
                 $placed++;
             } catch (Throwable $e) {
+                if ($e instanceof MediaWriteFailed && $e->wasPaidFor()) {
+                    $context->spend($e->spendMicros, $e->spendProvider, $e->spendModel);
+                }
                 Log::warning('An inline illustration could not be made', [
                     'unit' => $unit->slug,
                     'heading' => $heading,
@@ -224,7 +257,7 @@ class IllustrateDraft extends AbstractStep
             $unit->forceFill([
                 'body_markdown' => $markdown,
                 'body_html' => $this->markdown->render($markdown),
-            ])->save();
+            ]);
         }
 
         $this->placed = $placed;
@@ -278,9 +311,15 @@ class IllustrateDraft extends AbstractStep
      */
     private function insertAfterHeading(string $markdown, string $heading, string $image): string
     {
+        // A worker may retry after saving the body but before its step result
+        // is recorded. Reusing the same asset must not insert it twice.
+        if (str_contains($markdown, $image)) {
+            return $markdown;
+        }
+
         $pattern = '/^(##\s+'.preg_quote($heading, '/').'\s*)$/mu';
 
-        $replaced = preg_replace($pattern, '$1'."\n\n".$image, $markdown, 1);
+        $replaced = preg_replace_callback($pattern, static fn (array $match): string => $match[1]."\n\n".$image, $markdown, 1);
 
         return $replaced ?? $markdown;
     }

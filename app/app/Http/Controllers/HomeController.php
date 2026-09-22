@@ -8,16 +8,24 @@ use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\InteractionState;
 use App\Enums\PostKind;
+use App\Feedback\ManagerResults;
 use App\Feedback\ProjectStateTrend;
+use App\Models\ArticleSchedule;
 use App\Models\AssistantThread;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\Interaction;
+use App\Models\PageOpportunity;
+use App\Models\PageOutcomeReview;
+use App\Models\PageProposal;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
+use App\Onboarding\WebsiteChecklist;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Social\ActivationChecklist;
 use App\Social\RefusalLedger;
+use App\Support\Content\ManagerContent;
 use App\Support\Engine\WorkInFlight;
 use App\Support\Health\StackHealth;
 use App\Support\Tenancy\CurrentProject;
@@ -28,37 +36,7 @@ use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
 
-/**
- * The screen, singular.
- *
- * This product used to open on three of them — Home, Today and Dashboard — and
- * every one of them was a landing screen. They were not three questions, which
- * is how the code defended them; they were one question asked at three levels
- * of anxiety, and the giveaway was that all three counted the same drafts with
- * different queries and different words. Home said "38 social drafts", the
- * dashboard said "52 waiting for you", and neither said which half of the
- * product it meant. §7 asks for **one** summary and five minutes; three
- * summaries is the violation, whichever one of them is best.
- *
- * So the order here is act, owe, measure, account:
- *
- * 1. **The composer.** The only thing on the screen that starts something.
- * 2. **What needs you** — across both halves, because an operator's morning
- *    does not care that articles and posts are different subsystems.
- * 3. **The figures**, and only the ones that change a decision.
- * 4. **The two halves**, each in one line, because this engine does two jobs and
- *    no screen used to say so out loud.
- * 5. **What the engine did not do**, which §7 makes mandatory and which is
- *    therefore the one band that is never deferred.
- *
- * **Why the halves are a band and not a second screen.** The articles half has
- * no operator verb at all — nothing here is typed, and a month of articles is
- * chosen from keywords by a planning run that fires once at onboarding and is on
- * no schedule afterwards. That is exactly why it needs a line: a half of the
- * product that only ever acts on its own is the half most able to stop without
- * anybody noticing, and on this project it had — the last planning run was
- * seventeen days before the one that found it.
- */
+/** The manager's daily summary: content in progress, upcoming publication, and observed results. */
 class HomeController extends Controller
 {
     public function __construct(
@@ -93,16 +71,19 @@ class HomeController extends Controller
 
         return Inertia::render('home/index', [
             'project' => [
+                'id' => (string) $project->getKey(),
                 'name' => $project->name,
                 'site_name' => (string) ($project->site_analysis['name'] ?? $project->name),
             ],
             'hasProjects' => true,
-            'checklist' => ActivationChecklist::for($project, Carbon::now()->startOfMonth()),
+            'checklist' => config('social.enabled')
+                ? ActivationChecklist::for($project, Carbon::now()->startOfMonth())
+                : WebsiteChecklist::for($project),
             // The kinds an operator may write by hand, each with the channels
             // it goes to — because the kind decides the channels here exactly
             // as it does in a proposal, and the chip has to say so before
             // somebody picks one expecting all three.
-            'kinds' => array_map(
+            'kinds' => config('social.enabled') ? array_map(
                 static fn (PostKind $kind): array => [
                     'value' => $kind->value,
                     'label' => $kind->label(),
@@ -112,7 +93,7 @@ class HomeController extends Controller
                     ),
                 ],
                 PostKind::cases(),
-            ),
+            ) : [],
 
             // The conversations, newest first — the handful worth offering a
             // route back into. The box on this screen starts a new one; the
@@ -123,7 +104,7 @@ class HomeController extends Controller
             // arrives on a second round trip renders as silence for as long as
             // anybody actually looks at the screen, which is the one thing the
             // paragraph forbids.
-            'refusals' => $this->refusals->for($project, $now),
+            'refusals' => config('social.enabled') ? $this->refusals->for($project, $now) : null,
 
             // Not deferred, for two reasons that are really one. A project in
             // its first hour has nothing else on this screen — deferring it
@@ -132,12 +113,45 @@ class HomeController extends Controller
             // behind a deferred prop that repair only runs for somebody who
             // stays long enough for the second request.
             'work' => $this->work->for($project),
+            'article_workflow' => ManagerContent::workflow($project),
+            'pageWork' => Inertia::defer(fn (): array => $this->pageWork()),
+            'manager' => Inertia::defer(fn (): array => $this->manager($project)),
+            // The dashboard's primary purpose: show the saved results on first paint.
+            'results' => fn (): array => app(ManagerResults::class)->for($project),
 
             'needs' => Inertia::defer(fn (): array => $this->needs($now)),
             'figures' => Inertia::defer(fn (): array => $this->figures($project, $trend, $now)),
             'halves' => Inertia::defer(fn (): array => $this->halves($now)),
             'health' => Inertia::defer(fn (): array => $health->check()),
         ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function manager(Project $project): array
+    {
+        $schedules = app(ArticleSchedules::class);
+        $row = function (ContentItem $item) use ($schedules): array {
+            $publication = $schedules->props($item);
+
+            return ['id' => $item->id, 'title' => $item->title, 'status' => $publication['status'],
+                'publish_at' => $item->state->isLive() ? $item->published_at?->toIso8601String() : ($publication['schedule']['publish_at'] ?? null),
+                'reason' => $publication['schedule']['blocked_reason'] ?? null];
+        };
+        $upcoming = ManagerContent::query()->whereNotIn('state', ['published', 'refreshing'])
+            ->whereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'active')->where('publish_at', '>=', now()))
+            ->orderBy(ArticleSchedule::query()->select('publish_at')->whereColumn('content_item_id', 'content_items.id')->limit(1))
+            ->with(['articleSchedule.delivery', 'project.channels'])->limit(5)->get();
+
+        return [
+            'mode' => $project->autopublish ? 'automatic' : 'review_first', 'timezone' => $project->timezone,
+            'workflow' => ManagerContent::workflow($project),
+            'has_articles' => ManagerContent::query()->exists(),
+            'writing' => ManagerContent::query('writing')->count(), 'needs_review' => ManagerContent::query('review')->count(),
+            'scheduled' => ManagerContent::query('scheduled')->count(), 'published' => ManagerContent::query('published')->count(),
+            'upcoming' => $upcoming->map($row)->values()->all(),
+            'attention' => ManagerContent::query('review')->with(['articleSchedule.delivery', 'project.channels'])->latest()->limit(5)->get()->map($row)->all(),
+            'recent' => ManagerContent::query('published')->with(['articleSchedule.delivery', 'project.channels'])->latest('published_at')->limit(4)->get()->map($row)->all(),
+        ];
     }
 
     /**
@@ -162,23 +176,33 @@ class HomeController extends Controller
             ->all();
     }
 
-    /**
-     * Everything with a person's name on it, in one count.
-     *
-     * The merge is the point. These five numbers used to live on three screens
-     * under three headings, and the two that overlapped disagreed — one scoped
-     * to `social()` and the other to `roots()`, neither saying so. Counting them
-     * once, here, is what lets the band answer the only question anybody opens
-     * this product to ask: can I close the tab.
-     *
-     * @return array<string, mixed>
-     */
+    /** @return array<string,mixed> */
+    private function pageWork(): array
+    {
+        $items = PageProposal::query()->whereHas('page')->with(['page', 'publications'])->where('status', '!=', 'dismissed')->latest()->limit(20)->get()
+            ->map(function (PageProposal $proposal): array {
+                $publication = $proposal->publications->firstWhere('revision_id', $proposal->current_revision_id);
+                $decision = $publication ? PageOutcomeReview::query()->where('publication_id', $publication->id)->latest('id')->first() : null;
+                $status = $publication?->verified_at !== null ? ($decision ? 'reviewed' : 'observing') : $proposal->status;
+                if ($publication !== null && in_array($publication->status, ['verification_failed', 'recovery_verification_failed', 'review_required'], true)) {
+                    $status = 'review_required';
+                }
+
+                return ['id' => $proposal->id, 'title' => $proposal->page->title, 'status' => $status, 'decision' => $decision?->decision,
+                    'recovered_at' => $publication?->recovered_at?->toIso8601String()];
+            })->all();
+
+        return ['opportunities' => PageOpportunity::query()->where('status', 'open')->count(), 'items' => $items];
+    }
+
+    /** @return array<string,mixed> */
     private function needs(CarbonImmutable $now): array
     {
-        $open = Interaction::query()->open()->get();
+        $open = Interaction::query()->open()
+            ->when(! config('social.enabled'), fn ($query) => $query->whereRaw('1 = 0'))->get();
 
-        $socialDrafts = ContentItem::query()->social()
-            ->inState(ContentItemState::Draft)->count();
+        $socialDrafts = config('social.enabled') ? ContentItem::query()->social()
+            ->inState(ContentItemState::Draft)->count() : 0;
         $articleDrafts = ContentItem::query()->roots()
             ->inState(ContentItemState::Draft)->count();
         $articleApprovals = ContentItem::query()->roots()
@@ -188,6 +212,7 @@ class HomeController extends Controller
             ->count();
         $dead = WebhookDelivery::query()
             ->where('status', DeliveryStatus::DeadLetter->value)
+            ->when(! config('social.enabled'), fn ($query) => $query->whereIn('content_item_id', ContentItem::query()->roots()->select('id')))
             ->count();
 
         return [
@@ -201,6 +226,7 @@ class HomeController extends Controller
             'reply_drafts' => $replyDrafts,
             'social_drafts' => $socialDrafts,
             'article_drafts' => $articleDrafts,
+            'page_reviews' => PageProposal::query()->whereIn('status', ['review_required', 'approved', 'failed'])->whereDoesntHave('publications', fn ($query) => $query->whereNotNull('verified_at')->whereColumn('page_publications.revision_id', 'page_proposals.current_revision_id'))->count(),
             // Approved and not gone out. On the project this screen was built
             // against there were fifty-two of them against zero published, and
             // no screen in the product said so above a whisper.
@@ -273,7 +299,7 @@ class HomeController extends Controller
                 'approved' => (clone $articles)->inState(ContentItemState::Approved)->count(),
                 'published' => (clone $articles)->inState(ContentItemState::Published)->count(),
             ],
-            'social' => [
+            'social' => config('social.enabled') ? [
                 'planned' => (clone $social)->inState(ContentItemState::Idea)->count(),
                 'drafted' => (clone $social)->inState(ContentItemState::Draft)->count(),
                 'approved' => (clone $social)->inState(ContentItemState::Approved)->count(),
@@ -283,7 +309,7 @@ class HomeController extends Controller
                 // version is what says a planner ran — not the row's existence.
                 'month_proposed' => $plannedMonth !== null
                     && $plannedMonth->assistant_version > 0,
-            ],
+            ] : null,
         ];
     }
 }

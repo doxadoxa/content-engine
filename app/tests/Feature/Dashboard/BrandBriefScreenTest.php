@@ -332,7 +332,9 @@ final class BrandBriefScreenTest extends TestCase
             ->get(route('content.index'))
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
-                ->has('items.data', 25)
+                // The manager list stays compact while preserving the complete
+                // unit history through normal pagination.
+                ->has('items.data', 12)
                 ->where('items.total', 26)
                 ->where('items.current_page', 1)
                 ->where('items.next_page_url', fn (mixed $url): bool => is_string($url))
@@ -342,8 +344,18 @@ final class BrandBriefScreenTest extends TestCase
             ->get(route('content.index', ['page' => 2]))
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
-                ->has('items.data', 1)
+                ->has('items.data', 12)
                 ->where('items.current_page', 2)
+                ->where('items.next_page_url', fn (mixed $url): bool => is_string($url))
+            );
+
+        $this->actingAs($this->operator)
+            ->get(route('content.index', ['page' => 3]))
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->has('items.data', 2)
+                ->where('items.current_page', 3)
+                ->where('items.next_page_url', null)
             );
     }
 

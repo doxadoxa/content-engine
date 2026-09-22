@@ -8,6 +8,7 @@ use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
+use App\Models\ArticleSchedule;
 use App\Models\Asset;
 use App\Models\Channel;
 use App\Models\ContentItem;
@@ -379,8 +380,14 @@ final class WebhookDeliveryTest extends TestCase
 
         $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
 
-        $unit = ContentItem::factory()->draft()->create(['slug' => 'via-console']);
+        $unit = ContentItem::factory()->draft()->create(['slug' => 'via-console', 'factcheck' => ['passed' => true]]);
         $unit->approve();
+        ArticleSchedule::query()->create([
+            'content_item_id' => $unit->id, 'channel_id' => $this->channel->id,
+            'publish_at' => now(), 'local_date' => now($this->project->timezone)->toDateString(),
+            'local_time' => now($this->project->timezone)->format('H:i'), 'timezone' => $this->project->timezone,
+            'mode' => 'automatic', 'origin' => 'manager', 'status' => 'active', 'version' => 1,
+        ]);
 
         /** @var PendingCommand $command */
         $command = $this->artisan('publish:approved', ['project' => $this->project->slug]);

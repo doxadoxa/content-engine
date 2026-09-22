@@ -9,6 +9,7 @@ use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\SocialBand;
 use App\Enums\WebhookEvent;
+use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
@@ -78,13 +79,13 @@ final class ChannelPublisherRegistryTest extends TestCase
     #[Test]
     public function a_type_no_transport_claims_throws_rather_than_quietly_doing_nothing(): void
     {
-        // WordPress is a valid value of the `type` column with no adapter
+        // Pull API is a valid value of the `type` column with no adapter
         // behind it. Answering null would read as "delivered nothing,
         // successfully" — the exact lie phase 6 spent a release removing.
         $this->expectException(UnknownChannelPublisher::class);
-        $this->expectExceptionMessage('wordpress');
+        $this->expectExceptionMessage('pull_api');
 
-        $this->registry()->for(ChannelType::WordPress);
+        $this->registry()->for(ChannelType::PullApi);
     }
 
     #[Test]
@@ -129,10 +130,10 @@ final class ChannelPublisherRegistryTest extends TestCase
         // "webhook is the only one" — that was a count of the transports that
         // happened to exist — it is that a type nobody claims is not
         // publishable, which is what the three selection rules below stand on.
-        $this->assertSame([ChannelType::Webhook, ChannelType::Threads], $registry->publishableTypes());
+        $this->assertSame([ChannelType::Webhook, ChannelType::WordPress, ChannelType::Threads], $registry->publishableTypes());
         $this->assertTrue($registry->publishes(ChannelType::Webhook));
         $this->assertTrue($registry->publishes(ChannelType::Threads));
-        $this->assertFalse($registry->publishes(ChannelType::WordPress));
+        $this->assertTrue($registry->publishes(ChannelType::WordPress));
         $this->assertFalse($registry->publishes(ChannelType::LinkedIn));
     }
 
@@ -166,6 +167,13 @@ final class ChannelPublisherRegistryTest extends TestCase
     public function automatic_publishing_selects_only_verified_channels_that_opted_in(): void
     {
         $channels = $this->aChannelOfEveryKind();
+        $this->unit->forceFill(['state' => ContentItemState::Approved, 'published_at' => null, 'factcheck' => ['passed' => true]])->save();
+        ArticleSchedule::query()->create([
+            'content_item_id' => $this->unit->id, 'channel_id' => $channels['auto']->id,
+            'publish_at' => now(), 'local_date' => now($this->project->timezone)->toDateString(),
+            'local_time' => now($this->project->timezone)->format('H:i'), 'timezone' => $this->project->timezone,
+            'mode' => 'automatic', 'origin' => 'manager', 'status' => 'active', 'version' => 1,
+        ]);
 
         // Unattended, so both halves matter: somebody turned it on, and the
         // connection has answered at least once.

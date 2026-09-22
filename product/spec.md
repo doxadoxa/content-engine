@@ -1,5 +1,12 @@
 # Content Engine — продуктовый план
 
+> **Owner correction:** [Restore the content autopilot](content-autopilot-correction.md) now governs the primary journey: AI content creation, visible Calendar and automatic scheduled publishing with optional review first. Earlier existing-page-first and zero-article decisions are superseded.
+
+> **15 September 2026:** Current product direction and future scope are defined in
+> [SEO/GEO focus plan](seo-geo-focus-plan.md). This original specification is
+> retained as implementation history; its broad social roadmap and competitive
+> assumptions no longer define the next commercial release.
+
 Мультитенантный сервис автоматизации контент-менеджмента: стратегия → контент-план → ежедневная генерация → публикация в блог и соцсети → петля обратной связи. Референс по UX — контент-план BabyLoveGrowth; по качеству и архитектуре движок должен его превосходить в четырёх местах: GEO-слой, петля обратной связи, дерево репурпоза в соцсети, полноценный webhook-контракт.
 
 Стек: Laravel + Laragent (пайплайны агентов), Horizon + очереди, Postgres + pgvector, publish-адаптеры.

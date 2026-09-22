@@ -9,12 +9,16 @@ use App\Billing\Metric;
 use App\Content\PostScore;
 use App\Content\UnitScore;
 use App\Enums\ContentItemState;
+use App\Enums\ContentItemType;
 use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Http\Requests\RejectContentRequest;
+use App\Models\ArticleSchedule;
 use App\Models\ContentItem;
 use App\Models\WebhookDelivery;
 use App\Pipelines\Core\PipelineRunner;
+use App\Publishing\Articles\ArticleApproval;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
 use App\Support\Social\ChannelPayload;
@@ -70,6 +74,7 @@ class ApprovalController extends Controller
             ->where(fn (QueryBuilder $query) => $query->roots()->orWhere(
                 fn (QueryBuilder $social) => $social->social(),
             ))
+            ->when(! config('social.enabled'), fn ($query) => $query->where('type', '!=', ContentItemType::SocialPost->value))
             ->inState(ContentItemState::Draft)
             ->with(['localeVariants', 'derivatives', 'assets'])
             ->orderByRaw('scheduled_for is null, scheduled_for asc')
@@ -124,6 +129,26 @@ class ApprovalController extends Controller
 
     public function approve(ContentItem $item): RedirectResponse
     {
+        abort_if($item->isSocial() && ! config('social.enabled'), 404);
+
+        if (! $item->isSocial()) {
+            abort_unless(in_array($item->state, [ContentItemState::Draft, ContentItemState::Approved], true), 409, 'Only a finished draft can be approved.');
+            try {
+                app(ArticleApproval::class)->approve($item);
+            } catch (ValidationException $exception) {
+                if (isset($exception->errors()['article_allowance'])) {
+                    abort(409, $exception->getMessage());
+                }
+                throw $exception;
+            }
+            $deliveries = app(ArticleSchedules::class)->dispatch($item);
+            $item->loadMissing('articleSchedule');
+            Inertia::flash('toast', ['type' => 'success', 'message' => $deliveries === []
+                ? ($item->articleSchedule === null ? 'Article approved. Choose a publication time or publish it now.' : 'Article approved. It will publish at its scheduled time.') : 'Article approved and queued for publishing.']);
+
+            return back();
+        }
+
         $deliveries = DB::transaction(function () use ($item): array {
             $draft = ContentItem::query()
                 ->whereKey($item->getKey())
@@ -202,6 +227,8 @@ class ApprovalController extends Controller
 
     public function publish(ContentItem $item): RedirectResponse
     {
+        abort_if($item->isSocial() && ! config('social.enabled'), 404);
+
         abort_unless(
             in_array($item->state, [ContentItemState::Approved, ContentItemState::Published], true),
             409,
@@ -239,6 +266,15 @@ class ApprovalController extends Controller
 
     public function reject(RejectContentRequest $request, ContentItem $item): RedirectResponse
     {
+        abort_if($item->isSocial() && ! config('social.enabled'), 404);
+
+        if (! $item->isSocial()) {
+            $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->first();
+            if ($schedule !== null && ! in_array($schedule->status, ['paused', 'canceled', 'completed'], true)) {
+                app(ArticleSchedules::class)->change($item, $schedule->version, 'pause');
+            }
+        }
+
         DB::transaction(function () use ($request, $item): void {
             $draft = ContentItem::query()
                 ->whereKey($item->getKey())

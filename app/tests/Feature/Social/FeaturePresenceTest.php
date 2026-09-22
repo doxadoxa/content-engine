@@ -4,15 +4,31 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Social;
 
+use App\Ai\Assistant\MarketingTools;
+use App\Content\UnitScore;
 use App\Enums\ChannelType;
+use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
+use App\Enums\DeliveryStatus;
+use App\Enums\PipelineRunStatus;
+use App\Enums\PipelineStepStatus;
 use App\Enums\SocialBand;
 use App\Models\Channel;
 use App\Models\ContentItem;
+use App\Models\Interaction;
+use App\Models\PipelineRun;
+use App\Models\PipelineStep;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\WebhookDelivery;
+use App\Pipelines\Core\PipelineRunner;
+use App\Pipelines\Jobs\RunStepJob;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\PublishToChannels;
+use App\Publishing\WebhookPublisher;
+use App\Social\Jobs\DraftInteractionReplyJob;
+use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
@@ -20,43 +36,19 @@ use Illuminate\Contracts\Console\Kernel as ConsoleKernel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\PendingCommand;
+use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia;
+use Mockery\Expectation;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
- * `SOCIAL_PRESENCE_ENABLED=false`: the feature is absent, not idle.
- *
- * An operator with no Meta app has nothing for phases 12.1–12.6 to do, and
- * "nothing to do" was previously expressed by running everything and finding
- * out. Five contours woke up hourly to skip every project; two sidebar entries
- * led to screens with nothing on them; Meta could have subscribed to a webhook
- * this installation would never have an app for. One environment variable,
- * read once in `config/social.php`, removes all of it.
- *
- * # Why the switch is set before the application exists
- *
- * It is read while configuration and routes are being built — `config/social.php`
- * calls `env()`, `routes/console.php` and `routes/web.php` ask the config
- * whether to register anything — and none of that can be re-decided afterwards.
- * `config()->set()` in a test body would change the value and change nothing
- * else, which is the worst possible outcome: assertions about routes and the
- * schedule would go on passing for the wrong reason. So the environment is
- * written in {@see setUp()} and the application is built from it, once per
- * test.
- *
- * # Why one test here runs with the feature on
- *
- * Every assertion below is an absence, and an absence proves nothing on its
- * own: a typo in a route name, a schedule that failed to load, a test that
- * silently stopped booting the console kernel would all satisfy them.
- * {@see the_switch_is_what_removes_all_of_it()} runs the same checks inverted
- * against an application built with the switch on, in the same file, so that
- * the off-state expectations cannot pass vacuously. It is the only test here
- * that gets the suite's ordinary environment (`tests/bootstrap.php` keeps the
- * feature on for the other 1097, which exercise it heavily).
+ * Focused product boundaries, exercised against preserved historical records.
+ * The legacy control test explicitly enables archived workflows in testing;
+ * production and local environments cannot enable them through the old flag.
  */
 final class FeaturePresenceTest extends TestCase
 {
@@ -91,8 +83,8 @@ final class FeaturePresenceTest extends TestCase
      * exactly the same way a Threads one does.
      */
     private const GENERIC_COMMANDS = [
-        'engine:tick',
         'publish:approved',
+        'engine:tick',
         'publish:sweep-stranded',
     ];
 
@@ -173,9 +165,8 @@ final class FeaturePresenceTest extends TestCase
     #[Test]
     public function the_feature_has_no_urls(): void
     {
-        // Not registered, rather than registered and refusing. The webhook is
-        // the reason: a 503 tells Meta there is an endpoint here having a bad
-        // day and invites it to keep delivering.
+        // Historical route names remain for generated clients, but every
+        // retired endpoint must answer 404 before any work can happen.
         foreach (self::SOCIAL_PATHS as [$method, $path]) {
             $this->assertSame(
                 404,
@@ -193,7 +184,7 @@ final class FeaturePresenceTest extends TestCase
 
         foreach (['engage.index', 'threads.connect', 'threads.disconnect',
             'threads.callback', 'threads.webhook.verify', 'threads.webhook.receive'] as $name) {
-            $this->assertFalse(Route::has($name), "The route {$name} still exists.");
+            $this->assertTrue(Route::has($name), "The historical route name {$name} must remain for generated clients.");
         }
     }
 
@@ -394,6 +385,234 @@ final class FeaturePresenceTest extends TestCase
             ->get('/home')
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page->where('social.enabled', true));
+    }
+
+    #[Test]
+    public function archived_social_and_studio_routes_refuse_direct_access_and_writes(): void
+    {
+        $post = ContentItem::factory()->create(['type' => ContentItemType::SocialPost, 'state' => ContentItemState::Draft]);
+
+        foreach ([
+            ['GET', '/social'], ['POST', '/social/goal'], ['GET', '/social/create'],
+            ['GET', '/social/plan'], ['GET', '/studio'], ['POST', '/studio/propose'],
+            ['POST', '/studio/ideas'], ['GET', "/social/posts/{$post->id}"],
+            ['PATCH', "/social/posts/{$post->id}"], ['POST', "/social/posts/{$post->id}/edit"],
+            ['POST', "/content/{$post->id}/approve"], ['POST', "/content/{$post->id}/publish"],
+        ] as [$method, $url]) {
+            $this->actingAs($this->operator)->call($method, $url)->assertNotFound();
+        }
+
+        $this->assertSame(ContentItemState::Draft, $post->refresh()->state);
+        $this->assertDatabaseCount('pipeline_runs', 0);
+    }
+
+    #[Test]
+    public function no_social_channel_or_assistant_action_is_offered(): void
+    {
+        foreach (ChannelType::offered() as $type) {
+            $this->assertFalse($type->isSocial());
+        }
+
+        $tools = collect(app(MarketingTools::class)->all());
+        $this->assertNotContains('write_post', $tools->map(fn ($tool) => $tool->getName())->all());
+        $this->assertArrayNotHasKey('social', $tools->first(fn ($tool) => $tool->getName() === 'read_content_state')->execute([]));
+    }
+
+    #[Test]
+    public function retired_pipeline_jobs_cancel_without_spending_or_discarding_history(): void
+    {
+        Queue::fake();
+        $runner = app(PipelineRunner::class);
+
+        foreach (['repurpose', 'content_studio', 'social_draft', 'social_listen', 'social_plan', 'social_engage'] as $pipeline) {
+            $run = PipelineRun::factory()->running()->create(['pipeline' => $pipeline, 'cost_micros' => 123]);
+            $step = PipelineStep::factory()->pending()->create(['pipeline_run_id' => $run->id, 'step_key' => 'not_executed']);
+            (new RunStepJob($run->id, $step->step_key))->handle($runner);
+            $runner->resume($run);
+            $runner->dispatchReady($run);
+
+            $this->assertSame(PipelineRunStatus::Cancelled, $run->refresh()->status);
+            $this->assertSame(123, $run->cost_micros);
+            $this->assertSame(PipelineStepStatus::Pending, $step->refresh()->status);
+            $this->assertSame(0, $step->attempt);
+
+            try {
+                $runner->start($pipeline, $this->project);
+                $this->fail("{$pipeline} started while retired.");
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('pipeline', $exception->errors());
+            }
+        }
+
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function approval_waits_for_an_explicit_publish_even_on_an_automatic_channel(): void
+    {
+        Queue::fake();
+        /** @var Expectation $expectation */
+        $expectation = $this->mock(UnitScore::class)->shouldReceive('for');
+        $expectation->once()->andReturn([
+            'score' => 100, 'publishable' => true, 'blocking' => [], 'checks' => [],
+        ]);
+        Channel::factory()->create([
+            'type' => ChannelType::Webhook, 'autopublish' => true, 'verified_at' => now(),
+            'is_enabled' => true, 'config' => ['endpoint' => 'https://receiver.test/blog'],
+        ]);
+        $article = ContentItem::factory()->draft()->create();
+
+        $this->actingAs($this->operator)->post("/content/{$article->id}/approve")->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertSame(ContentItemState::Approved, $article->refresh()->state);
+        $this->assertDatabaseCount('webhook_deliveries', 0);
+        Queue::assertNothingPushed();
+
+        /** @var PendingCommand $command */
+        $command = $this->artisan('publish:approved', ['project' => $this->project->slug]);
+        $command->assertSuccessful()->run();
+        $this->assertDatabaseCount('webhook_deliveries', 0);
+
+        $this->actingAs($this->operator)->post("/content/{$article->id}/publish")->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertDatabaseCount('webhook_deliveries', 1);
+        Queue::assertPushed(DeliverWebhookJob::class, 1);
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function historical_social_channels_do_not_consume_the_website_connection_allowance(): void
+    {
+        config()->set('billing.plans.1.medium.limits.channels', 1);
+        $social = Channel::factory()->create(['type' => ChannelType::Threads]);
+        $before = $social->refresh()->getAttributes();
+        $website = ['name' => 'Website', 'type' => 'webhook', 'config' => ['endpoint' => 'https://receiver.test/blog'], 'secret' => 'test-secret'];
+
+        $this->actingAs($this->operator)->post('/channels', $website)->assertRedirect()->assertSessionHasNoErrors();
+        $this->actingAs($this->operator)->post('/channels', [...$website, 'name' => 'Second website'])->assertSessionHasErrors('name');
+        $this->actingAs($this->operator)->patch("/channels/{$social->id}", $website)->assertNotFound();
+        $this->actingAs($this->operator)->post("/channels/{$social->id}/ping")->assertNotFound();
+        $this->actingAs($this->operator)->patch("/channels/{$social->id}/autopublish")->assertNotFound();
+
+        $this->assertSame($before, $social->refresh()->getAttributes());
+        $this->assertDatabaseCount('channels', 2);
+    }
+
+    #[Test]
+    public function the_article_calendar_can_research_topics_while_social_stays_retired(): void
+    {
+        Queue::fake();
+        $run = app(MonthPlanner::class)->start($this->project);
+        $this->assertSame('research', $run->pipeline);
+        $this->assertSame(1, PipelineRun::query()->count());
+        $this->assertDatabaseCount('content_plans', 0);
+    }
+
+    #[Test]
+    public function a_generic_pipeline_cannot_be_used_to_continue_a_social_item(): void
+    {
+        Queue::fake();
+        $post = ContentItem::factory()->create(['type' => ContentItemType::SocialPost]);
+        $runner = app(PipelineRunner::class);
+
+        foreach ([true, false] as $inColumn) {
+            $id = $inColumn ? $post->id : null;
+            $input = $inColumn ? [] : ['content_item_id' => $post->id];
+            $run = PipelineRun::factory()->pending()->create(['pipeline' => 'generation', 'content_item_id' => $id, 'input' => $input]);
+
+            (new RunStepJob($run->id, 'compile_brief'))->handle($runner);
+            $this->assertSame(PipelineRunStatus::Cancelled, $run->refresh()->status);
+
+            try {
+                $runner->start('generation', $this->project, $input, $id);
+                $this->fail('A generic pipeline started on a retired social item.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('pipeline', $exception->errors());
+            }
+        }
+
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function queued_reply_drafts_stop_without_modifying_the_conversation(): void
+    {
+        Queue::fake();
+        $interaction = Interaction::factory()->create();
+        $before = $interaction->refresh()->getAttributes();
+
+        (new DraftInteractionReplyJob($interaction->id))->handle(app(CurrentProject::class), app(PipelineRunner::class));
+
+        $this->assertSame($before, $interaction->refresh()->getAttributes());
+        $this->assertDatabaseCount('pipeline_runs', 0);
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function old_social_deliveries_and_retries_stop_without_network_or_replay(): void
+    {
+        Queue::fake();
+        $post = ContentItem::factory()->published()->create(['type' => ContentItemType::SocialPost]);
+
+        foreach ([ChannelType::Threads, ChannelType::Webhook] as $type) {
+            $channel = Channel::factory()->create(['type' => $type]);
+            $delivery = WebhookDelivery::factory()->failed()->create([
+                'channel_id' => $channel->id,
+                'content_item_id' => $post->id,
+                'payload_snapshot' => ['content' => ['type' => 'social_post']],
+            ]);
+            $attempts = $delivery->attempts;
+
+            (new DeliverWebhookJob($delivery->id))->handle(app(ChannelPublisherRegistry::class), app(CurrentProject::class));
+
+            $this->assertSame(DeliveryStatus::DeadLetter, $delivery->refresh()->status);
+            $this->assertNull($delivery->next_attempt_at);
+            $this->assertSame($attempts, $delivery->attempts);
+            $this->actingAs($this->operator)->post("/deliveries/{$delivery->id}/replay")->assertStatus(409);
+        }
+
+        $this->assertDatabaseCount('webhook_deliveries', 2);
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function the_article_tick_drafts_due_work_without_reviving_social_or_approving_historical_drafts(): void
+    {
+        Queue::fake();
+        $this->project->update(['autopublish' => true, 'weekly_target' => 7]);
+        $plan = $this->project->contentPlans()->create(['month' => now()->startOfMonth()]);
+        $idea = ContentItem::factory()->create([
+            'state' => ContentItemState::Idea,
+            'content_plan_id' => $plan->id,
+            'scheduled_for' => now(),
+        ]);
+        $draft = ContentItem::factory()->create(['state' => ContentItemState::Draft]);
+        ContentItem::factory()->published()->create(['planned_derivatives' => ['linkedin']]);
+        PipelineRun::factory()->pending()->create(['pipeline' => 'repurpose']);
+        $post = ContentItem::factory()->create(['type' => ContentItemType::SocialPost]);
+        PipelineRun::factory()->pending()->create(['pipeline' => 'generation', 'content_item_id' => $post->id]);
+        PipelineRun::factory()->pending()->create(['pipeline' => 'generation', 'input' => ['content_item_id' => $post->id]]);
+
+        /** @var PendingCommand $command */
+        $command = $this->artisan('engine:tick', ['--project' => $this->project->slug]);
+        $command->assertSuccessful()->run();
+
+        $this->assertSame(ContentItemState::Idea, $idea->refresh()->state);
+        $this->assertSame(ContentItemState::Draft, $draft->refresh()->state);
+        $this->assertSame(['generation', 'generation', 'generation', 'repurpose'], PipelineRun::query()->orderBy('pipeline')->pluck('pipeline')->all());
+        $this->assertSame(1, PipelineRun::query()->where('pipeline', 'generation')->where('content_item_id', $idea->id)->count());
+    }
+
+    #[Test]
+    public function a_direct_webhook_attempt_cannot_send_an_archived_social_snapshot(): void
+    {
+        $delivery = WebhookDelivery::factory()->pending()->create([
+            'payload_snapshot' => ['content' => ['type' => 'social_post']],
+        ]);
+
+        app(WebhookPublisher::class)->attempt($delivery);
+
+        $this->assertSame(DeliveryStatus::DeadLetter, $delivery->refresh()->status);
+        Http::assertNothingSent();
     }
 
     // ------------------------------------------------------------- machinery

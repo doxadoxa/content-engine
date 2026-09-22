@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Generation;
 
+use App\Content\ArticleBusinessFacts;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
@@ -32,7 +33,7 @@ class FactCheck extends AbstractStep
     /** @return list<string> */
     public function dependsOn(): array
     {
-        return [WriteDraft::key()];
+        return [WriteDraft::key(), BuildGeoLayer::key(), VerifyLinks::key(), LinkToSite::key()];
     }
 
     public function queue(): string
@@ -44,14 +45,28 @@ class FactCheck extends AbstractStep
     {
         $brief = $context->output(CompileBrief::key(), BriefContextPayload::class);
         $draft = $context->output(WriteDraft::key(), DraftPayload::class);
+        $geo = $context->output(BuildGeoLayer::key(), GeoPayload::class);
+        $markdown = $context->hasOutput(VerifyLinks::key())
+            ? $context->output(VerifyLinks::key(), VerifiedLinksPayload::class)->markdown
+            : $draft->markdown;
+        $unit = $this->unit($context);
 
         $answer = $context->ask(
             role: 'factcheck',
             prompt: implode("\n\n", [
+                app(ArticleBusinessFacts::class)->pinnedPrompt($context) ?? 'No additional confirmed business information was supplied.',
                 $brief->originalData === []
-                    ? 'No business facts were supplied, so any specific price, figure or date in the text is unsupported.'
-                    : "The only facts about this business that are true:\n".json_encode($brief->originalData),
-                "The article:\n".$draft->markdown,
+                    ? 'No additional original business data was supplied. Judge business-specific claims against confirmed information above; general educational guidance is not a claim about this company.'
+                    : "Additional original business data (confirmed information above takes precedence):\n".json_encode($brief->originalData),
+                "The article:\n".$markdown,
+                'Other published fields (check every factual claim, including summary, FAQ answers, author and link labels):'."\n".json_encode([
+                    'title' => $unit->title,
+                    'summary' => $draft->summary,
+                    'json_ld' => $geo->jsonLd,
+                    'faq_json_ld' => $geo->faqJsonLd,
+                    'author' => $brief->author,
+                    'internal_links' => $unit->internal_links,
+                ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'List every claim that is unsupported or contradicts the facts above, one per line. '
                     .'If there are none, reply with exactly: PASS',
             ]),
@@ -73,7 +88,7 @@ class FactCheck extends AbstractStep
         $trimmed = trim($text);
 
         if ($trimmed === '') {
-            return [];
+            return ['The fact check returned no verdict. Review or retry this article before automatic publication.'];
         }
 
         $lines = array_values(array_filter(
@@ -100,6 +115,8 @@ class FactCheck extends AbstractStep
             }
         }
 
-        return $findings;
+        return $findings === []
+            ? ['The fact check returned no clear verdict. Review or retry this article before automatic publication.']
+            : $findings;
     }
 }

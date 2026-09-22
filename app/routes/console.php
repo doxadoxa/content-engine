@@ -86,10 +86,9 @@ Schedule::command('billing:reconcile')
     ->runInBackground()
     ->sentryMonitor();
 
-// Anything approved goes out. Separate from the tick because publishing is the
-// one step with an outside effect, and it should be readable on its own line.
+// Only explicitly scheduled articles are selected while social is retired.
 Schedule::command('publish:approved')
-    ->everyThirtyMinutes()
+    ->everyMinute()
     ->withoutOverlapping()
     ->runInBackground()
     ->sentryMonitor();
@@ -321,4 +320,34 @@ Schedule::command('project:capture')
     ->dailyAt('04:10')
     ->withoutOverlapping()
     ->runInBackground()
+    ->sentryMonitor();
+
+Schedule::command('pages:measure')
+    ->dailyAt('07:20')
+    ->withoutOverlapping()
+    ->sentryMonitor();
+
+Schedule::command('pages:reconcile-publications')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sentryMonitor();
+
+Schedule::command('visibility:reconcile')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sentryMonitor();
+
+Schedule::command('visibility:scheduled')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sentryMonitor();
+
+Schedule::command('visibility:reconcile-accuracy')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sentryMonitor();
+
+Schedule::command('facts:reconcile-maintenance')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
     ->sentryMonitor();

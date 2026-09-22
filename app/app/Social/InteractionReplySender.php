@@ -143,6 +143,10 @@ final class InteractionReplySender
         string $text,
         array $acknowledged = [],
     ): Interaction {
+        if (! config('social.enabled')) {
+            throw ReplyRefused::refused('Social publishing is retired.');
+        }
+
         $this->assertBandForbidsAutomation();
         $this->assertAHumanIsPressingTheButton($operator);
 
@@ -259,6 +263,10 @@ final class InteractionReplySender
         ?string $reference,
         array $acknowledged = [],
     ): Interaction {
+        if (! config('social.enabled')) {
+            throw ReplyRefused::refused('Social publishing is retired.');
+        }
+
         $this->assertBandForbidsAutomation();
         $this->assertAHumanIsPressingTheButton($operator);
 

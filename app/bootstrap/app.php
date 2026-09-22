@@ -51,7 +51,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // authenticated by the HMAC over its raw body instead — see
         // App\Http\Middleware\VerifyThreadsSignature, which the route carries.
         // Narrow on purpose: this one path and nothing under it.
-        $middleware->validateCsrfTokens(except: ['api/threads/webhook']);
+        $middleware->validateCsrfTokens(except: ['api/threads/webhook', 'api/purchases/*']);
 
         // Read by the inline script in app.blade.php before React mounts, so
         // the page does not flash light before switching to dark.

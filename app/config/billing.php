@@ -34,13 +34,12 @@ return [
     | a price. This is the plan it names — the free days are the same whichever
     | one it is, so this only decides what happens on day three.
     |
-    | Medium, because that is the plan the engine's own default cadence fits: a
-    | project written at seven a week does not fit Small, and starting somebody
-    | on a plan their first month would overflow is a bad first invoice.
+    | Version 2 focuses on reviewed existing-page improvements. Historical
+    | article packages remain pinned to version 1 for their subscribers.
     |
     */
 
-    'default_plan' => env('BILLING_DEFAULT_PLAN', 'medium'),
+    'default_plan' => env('BILLING_DEFAULT_PLAN', 'starter'),
 
     /*
     |--------------------------------------------------------------------------
@@ -56,27 +55,18 @@ return [
     |
     */
 
-    'version' => 1,
+    'version' => 4,
 
     /*
     |--------------------------------------------------------------------------
     | The trial
     |--------------------------------------------------------------------------
     |
-    | Three days, no card, capped three ways: time, units, and money.
+    | Three days with a payment method at checkout, capped by time, units and cost.
     |
-    | The money cap is the one that makes a card-free trial defensible. Every
-    | signup spends real dollars at a provider — measured, a trial of this size
-    | costs about $2.83 — so a hundred of them is a marketing budget with a
-    | known worst case rather than an open tab.
-    |
-    | The clock starts when the engine does, not when the account is created.
-    | Somebody who registers on Friday and finishes onboarding on Monday has not
-    | had a trial over the weekend.
-    |
-    | Three articles in three days rather than two, deliberately: what Medium
-    | sells is an article a day, and a trial delivering fewer than one a day
-    | demonstrates something other than the thing being sold.
+    | Version 2 includes one first-accepted page improvement and a bounded
+    | provider budget. The clock starts when launch begins, not registration.
+    | Legacy version 1 article trial allowances remain unchanged below.
     |
     */
 
@@ -103,7 +93,7 @@ return [
     | The plans
     |--------------------------------------------------------------------------
     |
-    | Measured cost of goods, from three weeks of real spend (see
+    | Historical version 1 cost observations, from three weeks of spend (see
     | `product/billing-and-admin-spec.md`): an article is about $0.16 all in and
     | a social post about $0.47, of which the picture is most of it. Pictures
     | cost three times what prose does, which is why no plan counts articles and
@@ -111,10 +101,10 @@ return [
     |
     | `cost_micros` is the second layer of limit and is invisible to the
     | customer. The unit quotas are what they agreed to; this is what protects
-    | the margin when a unit turns out to cost more than it was priced at — a
+    | the delivery budget when a unit turns out to cost more than it was priced at — a
     | longer article, a redraw loop, a provider's price rising between the day a
-    | plan was written and the day it is used. It sits at roughly three times
-    | measured COGS.
+    | plan was written and the day it is used. Version 2 caps are provisional;
+    | sustainable delivery economics require actual operator-time records.
     |
     | `weekly_target` is not a counter but a ceiling on the project's own dial,
     | the one `engine:tick` already reads. Clamping it makes the engine pace
@@ -124,6 +114,90 @@ return [
     */
 
     'plans' => [
+
+        4 => [
+            'trial' => [
+                'name' => 'Website growth trial', 'price_cents' => 0, 'currency' => 'usd',
+                'self_serve' => false, 'stripe_price' => null,
+                'limits' => [
+                    'articles' => 3, 'content_plans' => 1, 'social_posts' => 0,
+                    'page_improvements' => 1, 'site_audits' => 1, 'assistant_turns' => 20,
+                    'ai_answers' => 12, 'ai_questions' => 3, 'ai_frequency_days' => 30,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 7, 'audit_refresh_days' => 7, 'cost_micros' => 5_000_000,
+                ],
+            ],
+            'starter' => [
+                'name' => 'Starter', 'price_cents' => 2_900, 'currency' => 'usd',
+                'self_serve' => true, 'stripe_price' => env('STRIPE_PRICE_STARTER_V4'),
+                'limits' => [
+                    'articles' => 12, 'content_plans' => 1, 'social_posts' => 0,
+                    'page_improvements' => 0, 'site_audits' => 1, 'assistant_turns' => 100,
+                    'ai_answers' => 12, 'ai_questions' => 3, 'ai_frequency_days' => 30,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 3, 'audit_refresh_days' => 30, 'cost_micros' => 25_000_000,
+                ],
+            ],
+            'growth' => [
+                'name' => 'Growth', 'price_cents' => 8_900, 'currency' => 'usd',
+                'self_serve' => true, 'stripe_price' => env('STRIPE_PRICE_GROWTH_V4'),
+                'limits' => [
+                    'articles' => 30, 'content_plans' => 1, 'social_posts' => 0,
+                    'page_improvements' => 4, 'site_audits' => 1, 'assistant_turns' => 100,
+                    'ai_answers' => 200, 'ai_questions' => 10, 'ai_frequency_days' => 7,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 7, 'audit_refresh_days' => 30, 'cost_micros' => 75_000_000,
+                ],
+            ],
+        ],
+
+        3 => [
+            'trial' => [
+                'name' => 'Content growth trial', 'price_cents' => 0, 'currency' => 'usd',
+                'self_serve' => false, 'stripe_price' => null,
+                'limits' => [
+                    'articles' => 3, 'content_plans' => 1, 'social_posts' => 0,
+                    'page_improvements' => 1, 'site_audits' => 1, 'assistant_turns' => 20,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 7, 'audit_refresh_days' => 7, 'cost_micros' => 5_000_000,
+                ],
+            ],
+            'local-search' => [
+                'name' => 'Content Growth', 'price_cents' => 8_900, 'currency' => 'usd',
+                'self_serve' => true, 'stripe_price' => env('STRIPE_PRICE_CONTENT_GROWTH'),
+                'limits' => [
+                    'articles' => 30, 'content_plans' => 1, 'social_posts' => 0,
+                    'page_improvements' => 4, 'site_audits' => 1, 'assistant_turns' => 100,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 7, 'audit_refresh_days' => 30, 'cost_micros' => 25_000_000,
+                ],
+            ],
+        ],
+
+        2 => [
+            'trial' => [
+                'name' => 'Website improvement trial', 'price_cents' => 0, 'currency' => 'usd',
+                'self_serve' => false, 'stripe_price' => null,
+                'limits' => [
+                    'page_improvements' => 1, 'articles' => 0, 'social_posts' => 0,
+                    'site_audits' => 1, 'content_plans' => 0, 'assistant_turns' => 20,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 1, 'audit_refresh_days' => 7, 'cost_micros' => 5_000_000,
+                ],
+            ],
+            'local-search' => [
+                'name' => 'Local Search', 'price_cents' => 8_900, 'currency' => 'usd',
+                'self_serve' => true, 'stripe_price' => env('STRIPE_PRICE_LOCAL_SEARCH'),
+                // Initial package to validate with measured support time. No
+                // existing subscription is migrated to this version implicitly.
+                'limits' => [
+                    'page_improvements' => 4, 'articles' => 0, 'social_posts' => 0,
+                    'site_audits' => 1, 'content_plans' => 0, 'assistant_turns' => 100,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 1, 'audit_refresh_days' => 30, 'cost_micros' => 25_000_000,
+                ],
+            ],
+        ],
 
         1 => [
 

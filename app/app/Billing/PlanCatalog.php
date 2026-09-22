@@ -28,6 +28,16 @@ class PlanCatalog
         return (int) config('billing.version', 1);
     }
 
+    public function defaultPlan(): Plan
+    {
+        $key = (string) config('billing.default_plan', 'starter');
+
+        // A retired deployment default must not break new signup after repricing.
+        return $this->has($key) && $this->get($key)->selfServe
+            ? $this->get($key)
+            : $this->selfServe()[0];
+    }
+
     public function get(string $key, ?int $version = null): Plan
     {
         $version ??= $this->currentVersion();
@@ -77,6 +87,30 @@ class PlanCatalog
         }
 
         return $plans;
+    }
+
+    /** @return list<Plan> */
+    public function allVersions(): array
+    {
+        /** @var array<int, array<string, array<string, mixed>>> $lists */
+        $lists = config('billing.plans', []);
+        $plans = [];
+        foreach (array_keys($lists) as $version) {
+            array_push($plans, ...$this->all($version));
+        }
+
+        return $plans;
+    }
+
+    public function forStripePrice(string $price, ?Plan $pinned = null): ?Plan
+    {
+        if ($pinned?->stripePrice === $price) {
+            return $pinned;
+        }
+        $matches = array_values(array_filter($this->allVersions(), static fn (Plan $plan): bool => $plan->stripePrice === $price));
+
+        // A reused price without the original arrangement is ambiguous.
+        return count($matches) === 1 ? $matches[0] : null;
     }
 
     /**

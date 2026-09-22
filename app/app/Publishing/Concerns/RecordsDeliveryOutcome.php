@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\Publishing\Concerns;
 
+use App\Content\ArticleBusinessFacts;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
 use App\Http\Controllers\ApprovalController;
+use App\Models\ArticleSchedule;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\ArticleDeliveryGuard;
+use App\Publishing\RetiredSocialDelivery;
 use App\Publishing\ThreadsPublisher;
 use App\Publishing\WebhookPublisher;
 use Illuminate\Support\Carbon;
@@ -75,6 +79,12 @@ trait RecordsDeliveryOutcome
 
         if (($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value) {
             $delivery->channel->forceFill(['verified_at' => now()])->save();
+        }
+
+        if ($delivery->article_schedule_id !== null) {
+            ArticleSchedule::query()->whereKey($delivery->article_schedule_id)
+                ->where('version', $delivery->article_schedule_version)->where('delivery_id', $delivery->id)
+                ->update(['status' => 'completed', 'blocked_reason' => null]);
         }
 
         return $delivery;
@@ -175,10 +185,22 @@ trait RecordsDeliveryOutcome
      */
     protected function refuseIfWithdrawn(WebhookDelivery $delivery): ?WebhookDelivery
     {
+        if (RetiredSocialDelivery::stop($delivery)) {
+            return $delivery;
+        }
+
         $unit = $delivery->contentItem;
 
         if ($unit === null) {
             return null;
+        }
+
+        if (! $unit->isSocial()) {
+            $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
+                ?? app(ArticleBusinessFacts::class)->refusal($unit);
+            if ($refusal !== null) {
+                return $this->deadLetter($delivery, $refusal);
+            }
         }
 
         // `refreshing` is on the list deliberately. It is live text being
@@ -200,6 +222,14 @@ trait RecordsDeliveryOutcome
             $delivery,
             'The unit was sent back for rework before this delivery went out, so it was not sent.',
         );
+    }
+
+    /** Persist the possibility of a remote effect before crossing the transport boundary. */
+    protected function markArticleAttemptStarted(WebhookDelivery $delivery): void
+    {
+        if ($delivery->article_schedule_id !== null && $delivery->article_attempt_started_at === null) {
+            $delivery->forceFill(['article_attempt_started_at' => now()])->save();
+        }
     }
 
     protected function deadLetter(

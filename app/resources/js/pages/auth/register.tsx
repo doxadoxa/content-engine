@@ -16,6 +16,12 @@ import { store } from '@/routes/register';
 type Props = {
     passwordRules: string;
     trialDays: number;
+    selectedPlan: {
+        name: string;
+        price_cents: number;
+        currency: string;
+        limits: { articles: number };
+    };
     socialProviders: SocialProvider[];
     socialError?: string;
 };
@@ -47,6 +53,7 @@ type Props = {
 export default function Register({
     passwordRules,
     trialDays,
+    selectedPlan,
     socialProviders,
     socialError,
 }: Props) {
@@ -57,6 +64,24 @@ export default function Register({
             <Head title="Create your account" />
 
             <div className="flex flex-col gap-6">
+                <div className="rounded-xl border bg-muted/40 p-4 text-sm">
+                    <p className="font-medium">
+                        {selectedPlan.name} ·{' '}
+                        {new Intl.NumberFormat(undefined, {
+                            style: 'currency',
+                            currency: selectedPlan.currency.toUpperCase(),
+                            maximumFractionDigits: 0,
+                        }).format(selectedPlan.price_cents / 100)}
+                        /month
+                    </p>
+                    <p className="mt-1 text-muted-foreground">
+                        {selectedPlan.limits.articles} articles per month. Your{' '}
+                        {trialDays}-day trial starts at checkout after setup.
+                    </p>
+                    <a href="/#pricing" className="mt-2 inline-block underline">
+                        Compare plans
+                    </a>
+                </div>
                 {socialError && <AlertError errors={[socialError]} />}
 
                 {!withEmail ? (

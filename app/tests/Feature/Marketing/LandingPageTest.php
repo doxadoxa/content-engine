@@ -29,8 +29,15 @@ final class LandingPageTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->has('pricing.plans', 2)
-                ->where('pricing.plans.1.key', 'medium')
-                ->where('pricing.plans.1.price_cents', 9_900)
+                ->where('pricing.plans.0.key', 'starter')
+                ->where('pricing.plans.1.key', 'growth')
+                ->where('pricing.plans.0.version', 4)
+                ->where('pricing.plans.0.currency', 'usd')
+                ->where('pricing.plans.0.price_cents', 2_900)
+                ->where('pricing.plans.1.price_cents', 8_900)
+                ->where('pricing.plans.0.limits.improvements', 0)
+                ->where('pricing.plans.1.limits.improvements', 4)
+                ->where('pricing.plans.0.limits.articles', 12)
                 ->where('pricing.plans.1.limits.articles', 30)
                 ->where('pricing.trial_days', (int) config('billing.trial.days'))
                 ->etc()
@@ -40,14 +47,14 @@ final class LandingPageTest extends TestCase
     #[Test]
     public function the_landing_page_offers_no_plan_nobody_can_buy(): void
     {
-        // Enterprise is a conversation and a custom price. A card with a
-        // "Choose" button under it would promise a checkout there is no code
-        // for.
+        // Historical plans retain their purchased access but are not offered
+        // to new customers. Only the current public package gets a card.
         $this->get('/')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('pricing.plans.0.key', 'small')
-                ->where('pricing.plans.1.key', 'medium')
+                ->has('pricing.plans', 2)
+                ->where('pricing.plans.0.key', 'starter')
+                ->where('pricing.plans.1.key', 'growth')
                 ->etc()
             );
     }

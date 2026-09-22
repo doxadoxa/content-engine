@@ -10,7 +10,9 @@ use App\Enums\DeliveryStatus;
 use App\Http\Requests\ChannelRequest;
 use App\Models\Channel;
 use App\Models\Project;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\Pages\PageReceiverClient;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Validation\ValidationException;
@@ -53,7 +55,9 @@ class ChannelController extends Controller
                 // Whether a secret exists, never the secret. The model hides
                 // the attribute too; this is the deliberate, redacted answer.
                 'has_secret' => $channel->hasSecret(),
+                'native_config' => ['page_receiver_base' => $channel->config['page_receiver_base'] ?? '', 'username' => $channel->config['username'] ?? '', 'endpoint' => $channel->config['endpoint'] ?? ''],
                 'autopublish' => $channel->autopublish,
+                'can_schedule_articles' => app(ArticleSchedules::class)->compatible($channel),
                 'verified_at' => $channel->verified_at?->toIso8601String(),
                 'test_pending' => (bool) $channel->getAttribute('test_pending'),
                 'target' => $this->target($channel),
@@ -81,7 +85,9 @@ class ChannelController extends Controller
             ? $this->entitlements->for($project)->limit('channels')
             : null;
 
-        if ($limit !== null && Channel::query()->count() >= $limit) {
+        if ($limit !== null && Channel::query()
+            ->when(! config('social.enabled'), fn ($query) => $query->whereIn('type', ChannelType::offered()))
+            ->count() >= $limit) {
             throw ValidationException::withMessages([
                 'name' => $limit === 1
                     ? 'This plan connects one publishing channel. A larger plan connects more.'
@@ -89,11 +95,13 @@ class ChannelController extends Controller
             ]);
         }
 
-        $channel = Channel::query()->create($request->safe()->all());
+        $attributes = $request->safe()->all();
+        unset($attributes['config']['article_publishing_verified']);
+        $channel = Channel::query()->create($attributes);
 
         Inertia::flash('toast', [
             'type' => 'success',
-            'message' => "{$channel->name} added. Send a test delivery to confirm it answers.",
+            'message' => $channel->type === ChannelType::WordPress ? "{$channel->name} added. Send a test delivery to verify article publishing." : "{$channel->name} added. Send a test delivery or bind a compatible tracked page to confirm it answers.",
         ]);
 
         return to_route('channels.index');
@@ -101,6 +109,8 @@ class ChannelController extends Controller
 
     public function update(ChannelRequest $request, Channel $channel): RedirectResponse
     {
+        abort_if($channel->type->isSocial() && ! config('social.enabled'), 404);
+
         // A blank secret means "leave it alone", not "clear it". An operator
         // toggling auto-publish should not have to re-paste a token they
         // cannot read back out of the form.
@@ -112,12 +122,17 @@ class ChannelController extends Controller
 
         $connectionChanged = (string) ($changes['type'] ?? $channel->type->value) !== $channel->type->value
             || (array_key_exists('config', $changes)
-                && ($changes['config']['endpoint'] ?? null) !== ($channel->config['endpoint'] ?? null))
+                && ! PageReceiverClient::same(array_intersect_key($changes['config'], array_flip(['endpoint', 'page_receiver_base', 'username'])), array_intersect_key($channel->config, array_flip(['endpoint', 'page_receiver_base', 'username']))))
             || array_key_exists('secret', $changes);
 
         if ($connectionChanged) {
             $changes['verified_at'] = null;
             $changes['autopublish'] = false;
+            $changes['config'] = array_merge($changes['config'] ?? $channel->config, ['article_publishing_verified' => false]);
+        }
+
+        if (array_key_exists('config', $changes) && ! $connectionChanged) {
+            $changes['config']['article_publishing_verified'] = ($channel->config['article_publishing_verified'] ?? false) === true;
         }
 
         $channel->update($changes);
@@ -138,6 +153,8 @@ class ChannelController extends Controller
      */
     public function ping(Channel $channel, ChannelPublisherRegistry $publishers, CurrentProject $current): RedirectResponse
     {
+        abort_if($channel->type->isSocial() && ! config('social.enabled'), 404);
+
         abort_unless($publishers->canPing($channel->type), 409, 'This kind of channel cannot receive a test delivery.');
 
         $project = $current->get();
@@ -159,18 +176,20 @@ class ChannelController extends Controller
 
     public function autopublish(Channel $channel, ChannelPublisherRegistry $publishers): RedirectResponse
     {
+        abort_if($channel->type->isSocial() && ! config('social.enabled'), 404);
+
         abort_unless($publishers->canAutopublish($channel->type), 409, 'This kind of channel cannot publish automatically.');
 
         $enable = ! $channel->autopublish;
 
-        abort_if($enable && $channel->verified_at === null, 409, 'Test this channel successfully before enabling automatic publishing.');
+        abort_if($enable && ($channel->type->isSocial() ? $channel->verified_at === null : ! app(ArticleSchedules::class)->compatible($channel)), 409, 'Test this channel successfully before enabling automatic publishing.');
 
         $channel->forceFill(['autopublish' => $enable])->save();
 
         Inertia::flash('toast', [
             'type' => 'success',
             'message' => $enable
-                ? "{$channel->name} will publish approved content automatically."
+                ? "{$channel->name} will accept explicitly scheduled automatic articles."
                 : "{$channel->name} now waits for an explicit publish action.",
         ]);
 
@@ -184,7 +203,7 @@ class ChannelController extends Controller
      */
     private function target(Channel $channel): ?string
     {
-        foreach (['endpoint', 'url', 'handle', 'chat_id'] as $key) {
+        foreach (['page_receiver_base', 'endpoint', 'url', 'handle', 'chat_id'] as $key) {
             $value = $channel->config[$key] ?? null;
 
             if (is_string($value) && $value !== '') {

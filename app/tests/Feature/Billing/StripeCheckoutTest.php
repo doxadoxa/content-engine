@@ -46,6 +46,8 @@ final class StripeCheckoutTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // These cases exercise the version 1 offer; FocusedOfferTest covers version 2.
+        config(['billing.version' => 1]);
 
         $this->project = Project::factory()->unbilled()->create([
             'onboarding_status' => OnboardingStatus::Active,

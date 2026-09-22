@@ -42,6 +42,7 @@ use App\Pipelines\Events\PipelineRunFinished;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\ThreadsPublisher;
 use App\Publishing\WebhookPublisher;
+use App\Publishing\WordPressPublisher;
 use App\Research\AhrefsKeywordSource;
 use App\Research\Contracts\KeywordSource;
 use App\Research\DataForSeoKeywordSource;
@@ -177,7 +178,8 @@ class AppServiceProvider extends ServiceProvider
         // discovered later and attributed to Meta.
         $this->app->singleton(ChannelPublisherRegistry::class, function (): ChannelPublisherRegistry {
             $registry = (new ChannelPublisherRegistry($this->app))
-                ->register(ChannelType::Webhook, WebhookPublisher::class);
+                ->register(ChannelType::Webhook, WebhookPublisher::class)
+                ->register(ChannelType::WordPress, WordPressPublisher::class);
 
             if (config('social.enabled')) {
                 $registry->register(ChannelType::Threads, ThreadsPublisher::class);

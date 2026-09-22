@@ -1,5 +1,12 @@
 # Дорожная карта — разбиение на фазы
 
+> **Owner correction:** [Restore the content autopilot](../content-autopilot-correction.md) now governs the primary journey: AI content creation, visible Calendar and automatic scheduled publishing with optional review first. Earlier existing-page-first and zero-article decisions are superseded.
+
+> **15 September 2026:** The next product milestones are in the
+> [SEO/GEO focus plan](../seo-geo-focus-plan.md). The phases and status notes below
+> describe the earlier delivery sequence and are retained as history, not a
+> current runtime audit or the roadmap for the next commercial release.
+
 Разбиение `product/spec.md` на самостоятельно поставляемые фазы. Каждая фаза —
 отдельный документ рядом с этим файлом и заканчивается проверяемым критерием
 выхода: если критерий не выполняется, фаза не закрыта, следующая не начинается.

@@ -1,4 +1,4 @@
-import { Form, Head, Link } from '@inertiajs/react';
+import { Form, Head, Link, usePoll } from '@inertiajs/react';
 import {
     AlertTriangle,
     ArrowLeft,
@@ -7,6 +7,9 @@ import {
     Undo2,
 } from 'lucide-react';
 import { useState } from 'react';
+import { ArticlePublicationPanel } from '@/components/article-publication';
+import type { ArticlePublication } from '@/components/article-publication';
+import { ContextualAssistant } from '@/components/contextual-assistant';
 import { SendBackDialog } from '@/components/send-back-dialog';
 import type { Reason, SendBackTarget } from '@/components/send-back-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +28,7 @@ import {
     workspacePanelClass,
 } from '@/components/workspace-page';
 import { cn } from '@/lib/utils';
-import { index, publish } from '@/routes/content';
+import { approve, index, publish } from '@/routes/content';
 import type { ArticleData, ScoreCheck } from './score-panel';
 import { ArticleDataPanel, ScorePanel } from './score-panel';
 
@@ -49,6 +52,8 @@ type LocaleVersion = {
 };
 
 type Props = {
+    return_to: string | null;
+    publication: ArticlePublication;
     item: {
         id: string;
         title: string;
@@ -106,10 +111,11 @@ type Props = {
  * approval decision does not need a second tab.
  */
 export default function ContentShow({
+    return_to: returnTo,
+    publication,
     item,
     brief,
     locales,
-    derivatives,
     deliveries,
     manual_channels,
     reasons,
@@ -119,6 +125,9 @@ export default function ContentShow({
     // article nobody is sending anywhere.
     const [sendingBack, setSendingBack] = useState<SendBackTarget | null>(null);
     const bodyHtml = demoteArticleHeadings(item.body_html);
+    usePoll(15000, {
+        only: ['item', 'publication', 'rewriting', 'deliveries'],
+    });
 
     return (
         <>
@@ -132,13 +141,13 @@ export default function ContentShow({
 
             <WorkspacePage width="reading">
                 <WorkspaceHeader
-                    eyebrow="Article workspace"
+                    eyebrow="Your content"
                     context={`${item.type_label} · ${item.locale}`}
                     title={item.title}
                     description={
                         item.target_query === null
-                            ? item.slug
-                            : `Target query: ${item.target_query}`
+                            ? 'An article for your website'
+                            : `Helping customers with: ${item.target_query}`
                     }
                     actions={
                         <>
@@ -147,14 +156,54 @@ export default function ContentShow({
                                 className="rounded-full bg-background/70 shadow-sm"
                                 asChild
                             >
-                                <Link href={index()}>
+                                <Link href={returnTo ?? index()}>
                                     <ArrowLeft
                                         className="size-4"
                                         aria-hidden="true"
                                     />
-                                    Content plan
+                                    All content
                                 </Link>
                             </Button>
+                            {item.state === 'draft' && (
+                                <>
+                                    <Form
+                                        action={approve(item.id).url}
+                                        method="post"
+                                        options={{ preserveScroll: true }}
+                                    >
+                                        {({ processing, errors }) => (
+                                            <div>
+                                                <Button
+                                                    type="submit"
+                                                    disabled={
+                                                        processing ||
+                                                        !item.publishable ||
+                                                        rewriting !== null
+                                                    }
+                                                >
+                                                    Approve content
+                                                </Button>
+                                                {errors.approval && (
+                                                    <p className="mt-1 max-w-xs text-xs text-destructive">
+                                                        {errors.approval}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </Form>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() =>
+                                            setSendingBack({
+                                                id: item.id,
+                                                title: item.title,
+                                            })
+                                        }
+                                    >
+                                        Request changes
+                                    </Button>
+                                </>
+                            )}
                             {item.state === 'approved' && (
                                 <Button
                                     type="button"
@@ -173,7 +222,8 @@ export default function ContentShow({
                                     Send back
                                 </Button>
                             )}
-                            {(item.state === 'approved' ||
+                            {((item.state === 'approved' &&
+                                publication.schedule === null) ||
                                 item.state === 'published') && (
                                 <Form
                                     action={publish(item.id).url}
@@ -195,12 +245,8 @@ export default function ContentShow({
                                                     aria-hidden="true"
                                                 />
                                                 {item.state === 'published'
-                                                    ? 'Sync'
-                                                    : 'Publish to'}{' '}
-                                                {manual_channels}{' '}
-                                                {manual_channels === 1
-                                                    ? 'channel'
-                                                    : 'channels'}
+                                                    ? 'Sync published article'
+                                                    : 'Publish now'}
                                             </Button>
                                             {errors.publishing && (
                                                 <p className="max-w-xs text-right text-xs text-destructive">
@@ -232,15 +278,20 @@ export default function ContentShow({
 
                 <LanguageVersionNav locales={locales} />
 
-                <ArticleReviewSummary
-                    state={item.state}
-                    stateLabel={item.state_label}
-                    score={item.score}
-                    publishable={item.publishable}
-                    blocking={item.blocking}
-                    deliveries={deliveries.length}
-                    rewriting={rewriting}
-                />
+                <div id="publication" className="scroll-mt-6">
+                    <ArticlePublicationPanel
+                        approved={item.state === 'approved'}
+                        itemId={item.id}
+                        publication={publication}
+                    />
+                </div>
+                {rewriting !== null && (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Spinner className="size-4" /> Avyo is preparing an
+                        updated draft. It will go through the checks again
+                        before publication.
+                    </p>
+                )}
 
                 {item.factcheck.passed === false && (
                     <Card className="rounded-[1.5rem] border-chart-3/50 bg-chart-3/10 shadow-none">
@@ -255,8 +306,8 @@ export default function ContentShow({
                                 </CardTitle>
                                 <CardDescription>
                                     {item.factcheck.required
-                                        ? 'This project is YMYL, so this draft cannot be approved until it is fixed.'
-                                        : 'Reviewable, but somebody should look.'}
+                                        ? 'This topic needs extra accuracy checks. Fix these findings before approving it.'
+                                        : 'Check these findings before this article is published.'}
                                 </CardDescription>
                             </div>
                         </CardHeader>
@@ -330,10 +381,13 @@ export default function ContentShow({
                         </CardContent>
                     </Card>
 
-                    <aside
-                        className="flex min-w-0 flex-col gap-4"
+                    <details
+                        className="min-w-0 space-y-4 rounded-2xl border p-4"
                         aria-label="Article review details"
                     >
+                        <summary className="cursor-pointer text-sm font-medium">
+                            Quality checks and writing sources
+                        </summary>
                         <ScorePanel
                             score={item.score}
                             checks={item.checks}
@@ -349,7 +403,8 @@ export default function ContentShow({
                                     Editorial context
                                 </CardTitle>
                                 <CardDescription>
-                                    Provenance and coverage for this version.
+                                    The business information and topics behind
+                                    this article.
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="grid gap-5">
@@ -360,7 +415,7 @@ export default function ContentShow({
                                     <p className="mt-2 text-sm font-medium">
                                         {brief === null
                                             ? 'No brief recorded'
-                                            : `Brand brief v${brief.version}`}
+                                            : 'Your business brief'}
                                     </p>
                                     {brief !== null && (
                                         <>
@@ -378,7 +433,7 @@ export default function ContentShow({
 
                                 <section className="border-t pt-5">
                                     <p className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
-                                        Entity coverage
+                                        Topics covered
                                     </p>
                                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                                         Measured against the article text.
@@ -401,14 +456,14 @@ export default function ContentShow({
                                         {Object.keys(item.entity_coverage)
                                             .length === 0 && (
                                             <span className="text-sm text-muted-foreground">
-                                                No entities recorded.
+                                                No topic checks recorded.
                                             </span>
                                         )}
                                     </div>
                                 </section>
                             </CardContent>
                         </Card>
-                    </aside>
+                    </details>
                 </div>
 
                 {item.quotable_blocks.length > 0 && (
@@ -445,28 +500,6 @@ export default function ContentShow({
                                     ))}
                                 </div>
                             </details>
-                        </CardContent>
-                    </Card>
-                )}
-
-                {derivatives.length > 0 && (
-                    <Card className={workspacePanelClass}>
-                        <CardHeader>
-                            <CardTitle>Related social posts</CardTitle>
-                        </CardHeader>
-                        <CardContent className="flex flex-col gap-2">
-                            {derivatives.map((child) => (
-                                <Link
-                                    key={child.id}
-                                    href={`/content/${child.id}`}
-                                    className="flex items-center justify-between rounded-md border p-2 text-sm hover:bg-accent"
-                                >
-                                    <span>{child.title}</span>
-                                    <Badge variant="outline">
-                                        {child.type_label}
-                                    </Badge>
-                                </Link>
-                            ))}
                         </CardContent>
                     </Card>
                 )}
@@ -516,6 +549,10 @@ export default function ContentShow({
                         )}
                     </CardContent>
                 </Card>
+                <ContextualAssistant
+                    context={`Reviewing article "${item.title}" (content ID: ${item.id}, locale: ${item.locale}). ${item.public_url ? `Live page: ${item.public_url}` : 'This article has no live page yet.'}`}
+                    label="Discuss this article"
+                />
             </WorkspacePage>
         </>
     );
@@ -586,155 +623,6 @@ function LanguageVersionNav({ locales }: { locales: LocaleVersion[] }) {
     );
 }
 
-function ArticleReviewSummary({
-    state,
-    stateLabel,
-    score,
-    publishable,
-    blocking,
-    deliveries,
-    rewriting,
-}: {
-    state: string;
-    stateLabel: string;
-    score: number;
-    publishable: boolean;
-    blocking: string[];
-    deliveries: number;
-    rewriting: Props['rewriting'];
-}) {
-    return (
-        <section
-            className={`${workspacePanelClass} grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(13rem,1.2fr)_repeat(3,minmax(0,1fr))] lg:gap-0`}
-            aria-label="Article review status"
-        >
-            <div className="lg:border-r lg:pr-6">
-                <p className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">
-                    Publishing status
-                </p>
-                <div className="mt-2 flex items-center gap-2.5">
-                    <span
-                        className={cn(
-                            'size-2.5 shrink-0 rounded-full',
-                            contentStateDot(state),
-                        )}
-                        aria-hidden="true"
-                    />
-                    <p className="text-xl font-semibold tracking-tight">
-                        {stateLabel}
-                    </p>
-                </div>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {contentStateDescription(state)}
-                </p>
-                {rewriting !== null && (
-                    <p className="mt-3 flex items-center gap-2 text-xs font-medium text-foreground">
-                        <Spinner className="size-3.5" />
-                        Rewriting {rewriting.done} of {rewriting.total}
-                    </p>
-                )}
-            </div>
-
-            <ReviewMetric
-                label="Review score"
-                value={`${score}/100`}
-                hint={
-                    score >= 80 ? 'Strong editorial shape' : 'Review the checks'
-                }
-            />
-            <ReviewMetric
-                label="Readiness"
-                value={publishable ? 'Ready' : 'Needs work'}
-                hint={
-                    publishable
-                        ? 'No publishing blockers'
-                        : `${blocking.length} blocking ${blocking.length === 1 ? 'check' : 'checks'}`
-                }
-            />
-            <ReviewMetric
-                label="Delivery history"
-                value={deliveries.toLocaleString()}
-                hint={
-                    deliveries === 1 ? 'Recorded attempt' : 'Recorded attempts'
-                }
-            />
-        </section>
-    );
-}
-
-function ReviewMetric({
-    label,
-    value,
-    hint,
-}: {
-    label: string;
-    value: string;
-    hint: string;
-}) {
-    return (
-        <dl className="border-t pt-4 lg:border-t-0 lg:border-r lg:px-6 lg:pt-0 last:lg:border-r-0">
-            <dt className="text-xs font-medium text-muted-foreground">
-                {label}
-            </dt>
-            <dd className="mt-1 font-serif text-2xl font-semibold tracking-tight">
-                {value}
-            </dd>
-            <dd className="mt-0.5 text-xs text-muted-foreground">{hint}</dd>
-        </dl>
-    );
-}
-
-function localeDisplayName(locale: string): string {
-    try {
-        return (
-            new Intl.DisplayNames(undefined, { type: 'language' }).of(locale) ??
-            locale
-        );
-    } catch {
-        return locale;
-    }
-}
-
-function contentStateDot(state: string): string {
-    if (state === 'approved') {
-        return 'bg-chart-2';
-    }
-
-    if (state === 'published') {
-        return 'bg-primary';
-    }
-
-    if (state === 'generating' || state === 'queued') {
-        return 'bg-chart-3';
-    }
-
-    if (state === 'refreshing') {
-        return 'animate-pulse bg-chart-1';
-    }
-
-    return 'bg-chart-1';
-}
-
-function contentStateDescription(state: string): string {
-    return (
-        {
-            idea: 'Captured, but not scheduled for production',
-            queued: 'Waiting for a generation worker',
-            generating: 'The article is being written',
-            draft: 'Written and waiting for editorial review',
-            approved: 'Signed off and ready for delivery',
-            published: 'Live on at least one channel',
-            refreshing: 'Live while a refreshed draft is prepared',
-        }[state] ?? 'Current state of this article version'
-    );
-}
-
-/**
- * The workspace title is the document h1. Generated article HTML can also
- * start with an h1, so demote article-body h1s when previewing it inside this
- * page to preserve one coherent heading hierarchy. Public delivery is
- * unchanged.
- */
 function demoteArticleHeadings(html: string | null): string | null {
     if (html === null) {
         return null;
@@ -788,4 +676,15 @@ function UndeliveredNotice({ deliveries }: { deliveries: Delivery[] }) {
             </CardHeader>
         </Card>
     );
+}
+
+function localeDisplayName(locale: string): string {
+    try {
+        return (
+            new Intl.DisplayNames(['en'], { type: 'language' }).of(locale) ??
+            locale
+        );
+    } catch {
+        return locale;
+    }
 }

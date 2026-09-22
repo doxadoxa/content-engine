@@ -1,10 +1,7 @@
-import { Form, Head } from '@inertiajs/react';
-import { Check, Infinity as InfinityIcon } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Form, Head, Link, usePage } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
 import {
     Card,
-    CardContent,
     CardDescription,
     CardHeader,
     CardTitle,
@@ -14,24 +11,21 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
-import { checkout, index, portal } from '@/routes/billing';
+import { index } from '@/routes/billing';
 import type { Billing, BillingMetric, BillingUsage } from '@/types/billing';
-
-type PlanLimit = { key: string; label: string; value: number | null };
-
-type PlanCard = {
-    key: string;
-    name: string;
-    price_cents: number;
-    limits: PlanLimit[];
-    current: boolean;
-};
+import { allowanceDefinitions, allowanceLabel } from './allowances';
+import { CurrentPlan } from './current-plan';
+import type { SubscriptionDetails } from './current-plan';
+import { PlanComparison } from './plan-comparison';
+import type { PlanCard } from './plan-comparison';
 
 type Props = {
     entitlement: Billing;
+    subscription_details: SubscriptionDetails;
     plans: PlanCard[];
     currency: string;
     trial_days: number;
+    pending_change: { name: string; effective_at: string | null } | null;
     /**
      * Whether the viewer may commit the account holder's card. Reading which
      * quotas are left is an operator's business; spending is not.
@@ -51,18 +45,35 @@ type Props = {
  */
 export default function BillingPage({
     entitlement,
+    subscription_details,
     plans,
     currency,
     trial_days,
+    pending_change,
     can_pay,
     has_provider,
 }: Props) {
-    const money = (cents: number) =>
+    const { errors } = usePage<{ errors: Record<string, string> }>().props;
+    const money = (cents: number, planCurrency: string = currency) =>
         new Intl.NumberFormat(undefined, {
             style: 'currency',
-            currency: currency.toUpperCase(),
-            maximumFractionDigits: 0,
-        }).format(cents / 100);
+            currency: planCurrency.toUpperCase(),
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 2,
+        })
+            .formatToParts(cents / 100)
+            .map((part) =>
+                part.type === 'currency' && planCurrency.toLowerCase() === 'usd'
+                    ? 'US$'
+                    : part.value,
+            )
+            .join('');
+
+    const exhausted = entitlement.exhausted.filter(
+        (metric) =>
+            metric !== 'social_posts' &&
+            (entitlement.usage[metric]?.limit ?? 1) !== 0,
+    );
 
     return (
         <>
@@ -70,145 +81,143 @@ export default function BillingPage({
 
             <WorkspacePage>
                 <WorkspaceHeader
-                    eyebrow="Administration"
+                    eyebrow="Your subscription"
                     title="Plan & usage"
-                    description="What this project is allowed to make this period, and what it has made."
-                    actions={
-                        <div className="flex items-center gap-2">
-                            {entitlement.plan && (
-                                <Badge
-                                    variant="outline"
-                                    className="rounded-full px-3 py-2"
-                                >
-                                    {entitlement.plan.name}
-                                </Badge>
-                            )}
-                            {can_pay && has_provider && (
-                                <Form action={portal()} method="post">
-                                    <Button type="submit" variant="outline">
-                                        Manage billing
-                                    </Button>
-                                </Form>
-                            )}
-                        </div>
-                    }
+                    description="Your current plan, remaining allowances, and billing details."
                 />
 
-                {entitlement.refusal && (
+                <CurrentPlan
+                    entitlement={entitlement}
+                    details={subscription_details}
+                    canPay={can_pay}
+                    hasProvider={has_provider}
+                    money={money}
+                />
+
+                {errors.plan && (
+                    <p role="alert" className="text-sm text-destructive">
+                        {errors.plan}
+                    </p>
+                )}
+                {entitlement.refusal && entitlement.plan && (
                     <Card
                         className={`${workspacePanelClass} border-amber-500/30 bg-amber-500/5`}
                     >
                         <CardHeader>
                             <CardTitle className="text-base">
-                                The engine is not running
+                                New content is paused
                             </CardTitle>
                             <CardDescription>
                                 {entitlement.refusal.message} Everything this
                                 project has already made stays here, and
-                                anything approved is still being published.
+                                approved work follows the publication access
+                                shown by your plan.
                             </CardDescription>
                         </CardHeader>
                     </Card>
                 )}
 
-                {entitlement.exhausted.length > 0 && !entitlement.refusal && (
+                {exhausted.length > 0 && !entitlement.refusal && (
                     <Card
                         className={`${workspacePanelClass} border-amber-500/30 bg-amber-500/5`}
                     >
                         <CardHeader>
                             <CardTitle className="text-base">
-                                {entitlement.exhausted.length === 1
+                                {exhausted.length === 1
                                     ? 'One allowance is used up'
                                     : 'Some allowances are used up'}
                             </CardTitle>
                             <CardDescription>
-                                The engine is still running everything else. A
-                                larger plan raises these for the rest of the
-                                period.
+                                Other included features remain available.
+                                Compare plans below for more capacity.
                             </CardDescription>
                         </CardHeader>
                     </Card>
                 )}
 
-                <UsagePanel usage={entitlement.usage} />
+                {pending_change && (
+                    <Card className={workspacePanelClass}>
+                        <CardHeader>
+                            <CardTitle className="text-base">
+                                {pending_change.name} starts at renewal
+                            </CardTitle>
+                            <CardDescription>
+                                {pending_change.effective_at
+                                    ? new Date(
+                                          pending_change.effective_at,
+                                      ).toLocaleDateString()
+                                    : 'At the end of this billing period'}
+                                . Your current plan stays active until then.
+                            </CardDescription>
+                            {can_pay && (
+                                <Form
+                                    action="/billing/cancel-change"
+                                    method="post"
+                                >
+                                    <Button variant="outline" type="submit">
+                                        Keep my current plan
+                                    </Button>
+                                </Form>
+                            )}
+                        </CardHeader>
+                    </Card>
+                )}
 
-                <div className="grid gap-4 lg:grid-cols-2">
-                    {plans.map((plan) => (
-                        <Card
-                            key={plan.key}
-                            className={`${workspacePanelClass} ${plan.current ? 'ring-2 ring-primary' : ''}`}
-                        >
-                            <CardHeader>
-                                <div className="flex items-baseline justify-between gap-3">
-                                    <CardTitle>{plan.name}</CardTitle>
-                                    <span className="text-lg font-semibold tabular-nums">
-                                        {money(plan.price_cents)}
-                                        <span className="text-sm font-normal text-muted-foreground">
-                                            /month
-                                        </span>
-                                    </span>
-                                </div>
-                                <CardDescription>
-                                    {plan.current
-                                        ? 'This project is on this plan.'
-                                        : has_provider
-                                          ? 'Switch to this plan. Stripe settles the difference on your next invoice.'
-                                          : `Per project. ${trial_days} days free, then this.`}
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <ul className="space-y-2 text-sm">
-                                    {plan.limits.map((limit) => (
-                                        <li
-                                            key={limit.key}
-                                            className="flex items-center gap-2"
-                                        >
-                                            <Check
-                                                className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
-                                                aria-hidden="true"
-                                            />
-                                            <span className="text-muted-foreground">
-                                                {limit.label}
-                                            </span>
-                                            <span className="ml-auto font-medium tabular-nums">
-                                                {limit.value === null ? (
-                                                    <InfinityIcon
-                                                        className="size-4"
-                                                        aria-label="Unlimited"
-                                                    />
-                                                ) : (
-                                                    limit.value
-                                                )}
-                                            </span>
-                                        </li>
-                                    ))}
-                                </ul>
+                <UsagePanel
+                    usage={entitlement.usage}
+                    version={entitlement.plan?.version ?? 0}
+                />
 
-                                {can_pay && !plan.current && (
-                                    <Form
-                                        action={checkout()}
-                                        method="post"
-                                        className="mt-5"
-                                    >
-                                        <input
-                                            type="hidden"
-                                            name="plan"
-                                            value={plan.key}
-                                        />
-                                        <Button
-                                            type="submit"
-                                            className="w-full"
-                                        >
-                                            {has_provider
-                                                ? `Switch to ${plan.name}`
-                                                : `Choose ${plan.name}`}
-                                        </Button>
-                                    </Form>
-                                )}
-                            </CardContent>
-                        </Card>
-                    ))}
-                </div>
+                <PlanComparison
+                    plans={plans}
+                    entitlement={entitlement}
+                    details={subscription_details}
+                    hasProvider={has_provider}
+                    canPay={can_pay}
+                    trialDays={trial_days}
+                    money={money}
+                />
+
+                <details
+                    className={`${workspacePanelClass} p-5 text-sm leading-6`}
+                >
+                    <summary className="cursor-pointer font-medium">
+                        How allowances work
+                    </summary>
+                    <div className="mt-4 space-y-3 text-muted-foreground">
+                        <p>
+                            Articles count once when approved by you or by
+                            automatic quality checks. Revisions and publication
+                            retries for the same article use no extra allowance.
+                        </p>
+                        <p>
+                            A page improvement counts the first time you accept
+                            a proposal. Revisions and retries are included.
+                            Rejected proposals use no allowance.
+                        </p>
+                        <p>
+                            Article and service allowances apply to each billing
+                            period. Team members, languages, monitored pages,
+                            and website connections are limits on your project
+                            setup.
+                        </p>
+                        {entitlement.plan?.version === 2 && (
+                            <p>
+                                Your earlier page-improvement package does not
+                                include article creation. Starter and Growth
+                                include it.
+                            </p>
+                        )}
+                    </div>
+                </details>
+                {can_pay && (
+                    <Link
+                        href="/delivery-economics"
+                        className="text-xs text-muted-foreground underline"
+                    >
+                        Delivery cost details
+                    </Link>
+                )}
             </WorkspacePage>
         </>
     );
@@ -223,46 +232,51 @@ export default function BillingPage({
  */
 function UsagePanel({
     usage,
+    version,
 }: {
     usage: Partial<Record<BillingMetric, BillingUsage>>;
+    version: number;
 }) {
-    const rows = Object.entries(usage) as [BillingMetric, BillingUsage][];
+    const rows = Object.entries(usage).filter(
+        ([key, row]) =>
+            key !== 'social_posts' &&
+            key !== 'articles' &&
+            (key !== 'page_improvements' || version >= 2 || row.used > 0) &&
+            (key !== 'ai_answers' || version >= 4) &&
+            (row.limit !== 0 || row.used > 0),
+    ) as [BillingMetric, BillingUsage][];
 
     if (rows.length === 0) {
         return null;
     }
 
     return (
-        <Card className={workspacePanelClass}>
-            <CardHeader>
-                <CardTitle className="text-base">This period</CardTitle>
-                <CardDescription>
-                    Counted when work is approved, not when it is generated —
-                    the engine writes several drafts to keep one, and you are
-                    not charged for the ones it discards.
-                </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+        <details
+            className={`${workspacePanelClass} p-5 sm:p-6`}
+            id="other-usage"
+        >
+            <summary className="cursor-pointer font-medium">
+                Other included usage
+            </summary>
+            <div className="mt-5 grid gap-5 sm:grid-cols-2">
                 {rows.map(([metric, row]) => (
-                    <div key={metric} className="space-y-1.5">
-                        <div className="flex items-baseline justify-between gap-3 text-sm">
-                            <span className="capitalize">
-                                {metric.replaceAll('_', ' ')}
-                            </span>
+                    <div key={metric} className="space-y-2" data-usage={metric}>
+                        <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                            <span>{allowanceLabel(metric)}</span>
                             <span className="text-muted-foreground tabular-nums">
                                 {row.limit === null
-                                    ? `${row.used} used`
-                                    : `${row.used} of ${row.limit}`}
+                                    ? `${row.used} used · Unlimited`
+                                    : `${row.used} of ${row.limit} · ${row.remaining} left`}
                             </span>
                         </div>
-                        {row.limit !== null && (
+                        {row.limit !== null && row.limit > 0 && (
                             <div
                                 className="h-1.5 overflow-hidden rounded-full bg-muted"
                                 role="progressbar"
-                                aria-valuenow={row.used}
+                                aria-valuenow={Math.min(row.used, row.limit)}
                                 aria-valuemin={0}
                                 aria-valuemax={row.limit}
-                                aria-label={`${metric.replaceAll('_', ' ')} used`}
+                                aria-label={`${allowanceLabel(metric)} used`}
                             >
                                 <div
                                     className={`h-full rounded-full ${row.remaining === 0 ? 'bg-amber-500' : 'bg-primary'}`}
@@ -272,10 +286,15 @@ function UsagePanel({
                                 />
                             </div>
                         )}
+                        {allowanceDefinitions[metric] && (
+                            <p className="text-sm leading-6 text-muted-foreground">
+                                {allowanceDefinitions[metric]}
+                            </p>
+                        )}
                     </div>
                 ))}
-            </CardContent>
-        </Card>
+            </div>
+        </details>
     );
 }
 

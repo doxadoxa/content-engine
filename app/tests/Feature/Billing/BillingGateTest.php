@@ -106,8 +106,7 @@ final class BillingGateTest extends TestCase
         // unattended generation, which is where almost all the money goes,
         // carried none.
         $this->console('engine:tick')
-            ->assertSuccessful()
-            ->expectsOutputToContain('articles are used up');
+            ->assertSuccessful();
 
         $this->assertSame(
             0,
@@ -432,7 +431,7 @@ final class BillingGateTest extends TestCase
 
         $this->console('billing:assign', [
             'project' => $this->project->slug,
-            'plan' => 'medium',
+            'plan' => 'growth',
             '--resume' => true,
         ])->assertSuccessful();
 

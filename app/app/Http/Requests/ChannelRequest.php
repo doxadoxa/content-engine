@@ -6,6 +6,7 @@ namespace App\Http\Requests;
 
 use App\Enums\ChannelType;
 use App\Models\Channel;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Rules\PublicHttpUrl;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Http\FormRequest;
@@ -15,6 +16,14 @@ use Illuminate\Validation\Validator;
 
 class ChannelRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        $channel = $this->route('channel');
+        abort_if($channel instanceof Channel && $channel->type->isSocial() && ! config('social.enabled'), 404);
+
+        return true;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -35,17 +44,19 @@ class ChannelRequest extends FormRequest
             'type' => ['required', $this->typeRule($channel instanceof Channel ? $channel : null)],
             'config' => ['array'],
             'config.endpoint' => [
-                Rule::requiredIf($type === ChannelType::Webhook),
+                Rule::requiredIf($type === ChannelType::Webhook && ! $this->filled('config.page_receiver_base')),
                 'nullable',
                 'url',
                 'max:2048',
                 app(PublicHttpUrl::class),
             ],
+            'config.page_receiver_base' => [Rule::requiredIf($type === ChannelType::WordPress), 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
+            'config.username' => [Rule::requiredIf($type === ChannelType::WordPress), 'nullable', 'string', 'max:150', 'regex:/^[^:\r\n]+$/'],
             // Nullable on update: blank means "leave the stored one alone",
             // since the form can never show it back.
             'secret' => [
                 Rule::requiredIf(
-                    in_array($type, [ChannelType::Webhook, ChannelType::PullApi], true)
+                    in_array($type, [ChannelType::Webhook, ChannelType::PullApi, ChannelType::WordPress], true)
                     && $channel === null,
                 ),
                 'nullable',
@@ -64,7 +75,7 @@ class ChannelRequest extends FormRequest
             $channel = $this->route('channel');
 
             if ($this->boolean('autopublish')
-                && (! $channel instanceof Channel || $channel->verified_at === null)) {
+                && (! $channel instanceof Channel || ($channel->type->isSocial() ? $channel->verified_at === null : ! app(ArticleSchedules::class)->compatible($channel)))) {
                 $validator->errors()->add(
                     'autopublish',
                     'Send a successful test before enabling automatic publishing.',
