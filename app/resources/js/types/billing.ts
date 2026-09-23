@@ -20,6 +20,7 @@ export type BillingStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
 export type BillingRefusal = {
     code:
         | 'no_subscription'
+        | 'preview_finished'
         | 'trial_ended'
         | 'canceled'
         | 'past_due'
@@ -43,6 +44,13 @@ export type BillingUsage = {
  * inside the onboarding wizard.
  */
 export type Billing = {
+    /**
+     * The card-free sample: a month's plan and one article, made before
+     * anybody is asked for a card. Named by the server rather than inferred
+     * from the plan key, so the rule lives where the bounds do.
+     */
+    preview: boolean;
+    preview_finished: boolean;
     plan: {
         key: string;
         name: string;

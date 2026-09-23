@@ -7,8 +7,10 @@ namespace Tests\Feature\Onboarding;
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
 use App\Billing\Contracts\BillingProvider;
+use App\Billing\Entitlements;
 use App\Billing\FakeBillingProvider;
 use App\Billing\StripeWebhook;
+use App\Billing\TrialEligibility;
 use App\Enums\BillingStatus;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
@@ -442,7 +444,7 @@ final class OnboardingWizardTest extends TestCase
     }
 
     #[Test]
-    public function the_wizard_takes_a_card_and_starts_nothing_until_it_is_accepted(): void
+    public function the_wizard_writes_a_sample_before_it_asks_for_a_card(): void
     {
         Queue::fake();
 
@@ -452,17 +454,83 @@ final class OnboardingWizardTest extends TestCase
         ]);
         $operator->projects()->attach($project, ['role' => 'owner']);
 
+        // No checkout. The last click lands back on the dashboard, where the
+        // sample is being written.
         $this->actingAs($operator)
-            ->withHeaders(['X-Inertia' => 'true'])
             ->post("/onboarding/{$project->getKey()}/launch")
-            ->assertStatus(409);
+            ->assertRedirect('/home');
 
-        // Research is spend, and spend before a subscription exists is what
-        // every gate in this subsystem refuses. So the launch waits for the
-        // event that says a card was accepted.
-        $this->assertSame(0, PipelineRun::acrossProjects()->count());
-        $this->assertSame(0, ProjectSubscription::query()->count());
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame('preview', $subscription->plan);
+
+        // The trial is not spent on the sample. `TrialEligibility` reads this
+        // column to decide whether a site has had its free window, so a date
+        // here would hand the customer a checkout with no free days on it.
+        $this->assertNull($subscription->trial_ends_at);
+        $this->assertTrue(app(TrialEligibility::class)->mayHaveATrial($project->fresh()));
+
+        // And the engine is running, on the sample's allowance.
+        $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'research')->count());
         $this->assertSame(OnboardingStatus::Launching, $project->fresh()?->onboarding_status);
+    }
+
+    #[Test]
+    public function a_sample_never_publishes_and_stops_once_its_launch_is_over(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'autopublish' => true,
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        $this->actingAs($operator)->post("/onboarding/{$project->getKey()}/launch");
+
+        $entitlements = app(Entitlements::class);
+        $entitlements->forget();
+
+        // Mid-sample: the engine may spend, and nothing it makes may go out.
+        $this->assertTrue($entitlements->for($project->fresh())->mayGenerate());
+        $this->assertFalse($entitlements->for($project->fresh())->mayPublish());
+
+        // The launch ends however it ends, and the sample ends with it.
+        $project->fresh()->forceFill([
+            'onboarding' => [...$project->fresh()->onboarding, 'preview_finished_at' => now()->toIso8601String()],
+        ])->save();
+        $entitlements->forget();
+
+        $refusal = $entitlements->for($project->fresh())->refusal();
+
+        $this->assertSame('preview_finished', $refusal?->code);
+    }
+
+    #[Test]
+    public function a_site_only_gets_one_sample(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $first = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://cleaningpoint.net',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($first, ['role' => 'owner']);
+        $this->actingAs($operator)->post("/onboarding/{$first->getKey()}/launch");
+
+        // Same site, second account, spelled differently. A sample costs real
+        // money before anybody has typed a card number, so it is bounded by
+        // the one thing an abuser has to buy.
+        $other = User::factory()->create();
+        $second = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://www.cleaningpoint.net/',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $other->projects()->attach($second, ['role' => 'owner']);
+
+        $this->assertFalse(app(TrialEligibility::class)->mayHaveAPreview($other, $second));
     }
 
     #[Test]
@@ -517,7 +585,7 @@ final class OnboardingWizardTest extends TestCase
     }
 
     #[Test]
-    public function launching_twice_does_not_take_a_second_card(): void
+    public function launching_twice_does_not_start_a_second_sample(): void
     {
         Queue::fake();
 
@@ -528,19 +596,23 @@ final class OnboardingWizardTest extends TestCase
         $operator->projects()->attach($project, ['role' => 'owner']);
 
         $this->actingAs($operator)
-            ->withHeaders(['X-Inertia' => 'true'])
             ->post("/onboarding/{$project->getKey()}/launch")
-            ->assertStatus(409);
+            ->assertRedirect('/home');
 
         // The status flipped inside the lock, so the guard reads Launching and
-        // the second press is a no-op rather than a second checkout.
+        // the second press is a no-op rather than a second sample.
         $this->actingAs($operator)
             ->post("/onboarding/{$project->getKey()}/launch")
             ->assertRedirect('/home');
 
+        // One subscription, one research run, and no checkout: the card is
+        // asked for once the sample exists, not by the button that makes it.
+        $this->assertSame(1, ProjectSubscription::query()->count());
+        $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'research')->count());
+
         $provider = app(BillingProvider::class);
         $this->assertInstanceOf(FakeBillingProvider::class, $provider);
-        $this->assertCount(1, $provider->checkouts);
+        $this->assertCount(0, $provider->checkouts);
     }
 
     #[Test]

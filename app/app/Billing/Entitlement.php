@@ -24,6 +24,9 @@ use Illuminate\Support\Carbon;
  */
 final readonly class Entitlement
 {
+    /** The plan key the card-free sample runs on. */
+    public const string PREVIEW_PLAN = 'preview';
+
     /**
      * @param  array<string, int>  $usage  counters for the current period
      */
@@ -43,12 +46,34 @@ final readonly class Entitlement
         public int $spentMicros,
         public ?Carbon $periodEndsAt,
         public ?Carbon $trialEndsAt,
+        /**
+         * Whether the card-free sample has already been made.
+         *
+         * Computed by {@see Entitlements} from the project rather than read
+         * off the subscription, because it is a fact about the launch having
+         * finished and the launch is the project's business. Meaningless — and
+         * always false — for anything that is not a preview.
+         */
+        public bool $previewFinished = false,
     ) {}
 
     /** A project nobody has ever assigned a plan to. */
     public static function none(): self
     {
         return new self(null, null, null, null, [], 0, null, null);
+    }
+
+    /**
+     * Is this the card-free sample rather than a subscription?
+     *
+     * Asked of the plan, which is where the bounds are. A preview is a
+     * perfectly ordinary subscription to every gate in this subsystem; what is
+     * different about it is one article, two and a half dollars, and that
+     * nothing it makes may be published.
+     */
+    public function isPreview(): bool
+    {
+        return $this->plan?->key === self::PREVIEW_PLAN;
     }
 
     /**
@@ -75,6 +100,18 @@ final readonly class Entitlement
     public function mayPublish(): bool
     {
         if ($this->status === null) {
+            return false;
+        }
+
+        // A sample is read, never sent.
+        //
+        // The preview runs as an Active subscription so that everything which
+        // asks whether work may *start* gets an ordinary yes — and an Active
+        // subscription is otherwise entitled to publish. Somebody who
+        // connected WordPress in the wizard and left the default publishing
+        // preference alone would have had the article they were being shown
+        // put on their website before they were asked for a card.
+        if ($this->isPreview()) {
             return false;
         }
 
@@ -123,6 +160,19 @@ final readonly class Entitlement
 
         if ($this->status === BillingStatus::Trialing && $this->subscription->trialHasExpired()) {
             return Refusal::trialEnded();
+        }
+
+        // The sample spends once.
+        //
+        // Before the quota and before the ceiling, because neither can say
+        // this. The unit counters are recorded at *approval* and a sample is
+        // never approved, so an article count would stay at nought while the
+        // engine happily wrote a second one; and the money ceiling is a fuse
+        // rather than a rule, which would stop the engine eventually and in
+        // the middle of something. What actually bounds a preview is that its
+        // launch finished, which is a fact with a timestamp on it.
+        if ($this->previewFinished) {
+            return Refusal::previewFinished();
         }
 
         // Before the quota, and deliberately. A project that has burnt three
@@ -230,6 +280,8 @@ final readonly class Entitlement
     {
         if ($this->subscription === null || $this->plan === null || $this->status === null) {
             return [
+                'preview' => false,
+                'preview_finished' => false,
                 'plan' => null,
                 'status' => null,
                 'may_generate' => false,
@@ -252,6 +304,10 @@ final readonly class Entitlement
         }
 
         return [
+            // Named rather than inferred from the plan key on the client,
+            // which would put the rule in two places and in the wrong one.
+            'preview' => $this->isPreview(),
+            'preview_finished' => $this->previewFinished,
             'plan' => [
                 'key' => $this->plan->key,
                 'name' => $this->plan->name,

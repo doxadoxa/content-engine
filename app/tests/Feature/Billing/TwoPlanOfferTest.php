@@ -79,7 +79,15 @@ final class TwoPlanOfferTest extends TestCase
             'offer' => ['key' => $plan, 'version' => 4],
             'business' => ['description' => 'We clean offices in Lisbon.', 'audiences' => ['Office managers']],
         ]])->save();
-        $this->actingAs($owner)->withHeaders(['X-Inertia' => 'true'])->post('/onboarding/'.$project->id.'/launch')->assertStatus(409);
+        // Finishing the wizard writes the card-free sample; the checkout is
+        // the button underneath it. The plan selected in the wizard has to
+        // survive both hops, and the sample must not have spent the free days
+        // on the way past.
+        $this->actingAs($owner)->post('/onboarding/'.$project->id.'/launch')->assertRedirect('/home');
+        $this->assertSame('preview', ProjectSubscription::query()->where('project_id', $project->id)->sole()->plan);
+
+        $this->actingAs($owner)->withHeaders(['X-Inertia' => 'true'])
+            ->post('/billing/checkout', ['plan' => $plan, 'plan_version' => 4])->assertStatus(409);
         $provider = $this->provider();
         $this->assertInstanceOf(FakeBillingProvider::class, $provider);
         $this->assertSame($plan, $provider->checkouts[0]['plan']);

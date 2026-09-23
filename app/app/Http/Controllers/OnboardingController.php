@@ -9,6 +9,7 @@ use App\Billing\Entitlements;
 use App\Billing\Plan;
 use App\Billing\PlanCatalog;
 use App\Billing\PlanSelection;
+use App\Billing\Subscriptions;
 use App\Billing\TrialEligibility;
 use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
@@ -18,6 +19,7 @@ use App\Models\BrandBrief;
 use App\Models\Channel;
 use App\Models\Project;
 use App\Models\User;
+use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Duty\DutyHours;
@@ -47,6 +49,15 @@ use Throwable;
  */
 class OnboardingController extends Controller
 {
+    /**
+     * How long an article is, when nobody says.
+     *
+     * Long enough to cover a question properly and short enough that a reader
+     * finishes it. The wizard used to ask, which put a decision about prose in
+     * front of somebody who had come to buy an outcome.
+     */
+    private const int DEFAULT_TARGET_WORDS = 1400;
+
     public function __construct(
         private readonly ProjectManager $projects,
         private readonly CurrentProject $current,
@@ -55,6 +66,8 @@ class OnboardingController extends Controller
         private readonly BillingProvider $provider,
         private readonly PlanCatalog $plans,
         private readonly PlanSelection $selection,
+        private readonly Subscriptions $subscriptions,
+        private readonly ProjectLaunch $launcher,
     ) {}
 
     /** The wizard itself, resuming whatever draft the operator has open. */
@@ -241,22 +254,41 @@ class OnboardingController extends Controller
             return to_route('home.index');
         }
 
-        // Out to Stripe for the card.
+        // The sample, then the card — in that order.
         //
-        // The subscription is created now and charges nothing; the first
-        // invoice falls due when the free days run out. Somebody who stays does
-        // nothing to convert, and somebody who leaves cancels before the date —
-        // which is the whole reason for asking here rather than on day three,
-        // when the only thing left to do would be to take the engine away.
+        // This used to go straight out to Stripe, on the reasoning that
+        // somebody who has just watched us read their homepage is at their
+        // most convinced. They are not: what they have seen at that point is a
+        // form that filled itself in. The card question landed before a single
+        // sentence of what they came to buy existed, and a checkout that was
+        // closed left the project sitting at Launching behind an amber banner
+        // that read, to the person who had just finished setting it up, as an
+        // error.
         //
-        // Asked *after* the wizard, deliberately. They have just watched us
-        // read their site and agreed to what we found; that is the strongest
-        // moment to ask, and a card before any of it is the weakest.
+        // So the engine starts now, on a bounded card-free allowance: the
+        // month's plan of topics and one finished article, both made from
+        // their own site. {@see \App\Billing\Subscriptions::startPreview()}
+        // holds the bounds and the reasoning for each one. Nothing it makes is
+        // published — a sample is read, never sent — and when it is done the
+        // engine stops itself and asks for the card, with the work on the
+        // screen behind the question.
         //
-        // A project whose checkout is abandoned sits at Launching with no
-        // subscription. That is a legible state rather than a stuck one: the
-        // banner says there is no card and links to the same checkout.
+        // The trial is untouched by this and still begins at the checkout,
+        // which is the point: the free days are worth something once somebody
+        // has decided we are worth three of them.
+        $preview = $this->trials->mayHaveAPreview($user, $project)
+            ? $this->subscriptions->startPreview($project, $plan, $user)
+            : null;
 
+        if ($preview !== null) {
+            $this->current->run($project, fn () => $this->launcher->begin($project));
+
+            return to_route('home.index');
+        }
+
+        // No preview to be had — this site has already had one, or this
+        // deployment's price list has none. Straight to the card, as before,
+        // rather than a launch nothing is entitled to run.
         try {
             return Inertia::location($this->provider->checkoutUrl(
                 $user,
@@ -361,11 +393,34 @@ class OnboardingController extends Controller
                 'sitemap_url' => ($answers['sitemap_url'] ?? null) ?: $project->sitemap_url,
                 'authors' => $this->authorsFrom($answers),
             ],
+            // Asked in the publishing step now, beside the other questions
+            // about the website rather than between two about its voice.
+            'channels' => [
+                'sitemap_url' => ($answers['sitemap_url'] ?? null) ?: $project->sitemap_url,
+            ],
             'competitors' => [
                 'competitors' => array_values(array_map('strval', $answers['competitors'] ?? [])),
             ],
             'settings' => [
-                'article_settings' => $answers,
+                // The publishing question was just answered, so record that it
+                // was. This used to be stamped only when the engine started,
+                // which for a project whose checkout was abandoned was never —
+                // so the dashboard greeted somebody who had chosen a
+                // publishing preference thirty seconds earlier with a card
+                // telling them to go and choose one.
+                'onboarding' => [
+                    ...$project->onboarding,
+                    'article_automation_started_at' => $project->onboarding['article_automation_started_at'] ?? now()->toIso8601String(),
+                ],
+                // Length is no longer asked during setup — it is a writing
+                // preference, not a signup decision, and it is on the project
+                // settings screen for anybody who wants a different one. The
+                // installation default is kept here so the column holds a
+                // number rather than nothing.
+                'article_settings' => [
+                    'target_words' => (int) ($project->article_settings['target_words'] ?? self::DEFAULT_TARGET_WORDS),
+                    ...$answers,
+                ],
                 'weekly_target' => max(1, (int) ($answers['weekly_target'] ?? $project->weekly_target)),
                 // A YMYL project cannot opt out of review, whatever the form
                 // sent: the checkbox is disabled in the UI, and a disabled
@@ -423,6 +478,7 @@ class OnboardingController extends Controller
         $voice = $answers['voice'] ?? [];
 
         BrandBrief::revise($project, [
+            ...$this->coloursFor($project),
             'positioning' => $this->positioningFor($project),
             'audience' => implode("\n", array_map(
                 static fn (mixed $item): string => '- '.(string) $item,
@@ -435,6 +491,49 @@ class OnboardingController extends Controller
             'examples_disliked' => $this->oneExample($voice['example_disliked'] ?? null),
             'competitors' => $project->competitors,
         ], 'Compiled from onboarding.');
+    }
+
+    /**
+     * The site's own colours, where reading it found any.
+     *
+     * Applied here rather than offered later, because the first illustrated
+     * article is written within the hour and the Brand brief screen is
+     * somewhere nobody has been yet — so the alternative to this is a month of
+     * pictures in the installation's default navy for a business that has
+     * never been asked. The wizard shows these on the way past, and the brief
+     * screen still owns changing them.
+     *
+     * Empty when the site was unreadable or had no palette worth the name, and
+     * an empty array leaves {@see BrandBrief}'s own defaults where they are.
+     *
+     * @return array<string, string>
+     */
+    private function coloursFor(Project $project): array
+    {
+        $palette = $project->site_analysis['palette'] ?? null;
+
+        if (! is_array($palette)) {
+            return [];
+        }
+
+        $hex = static fn (mixed $value): ?string => is_string($value) && preg_match('/^#[0-9a-f]{6}$/i', $value) === 1
+            ? strtolower($value)
+            : null;
+
+        $fill = $hex($palette['fill'] ?? null);
+        $ink = $hex($palette['ink'] ?? null);
+
+        // Both or neither. A brand colour with the default ink on it is how
+        // you get white text on a pale background.
+        if ($fill === null || $ink === null) {
+            return [];
+        }
+
+        return [
+            'brand_colour' => $fill,
+            'brand_ink' => $ink,
+            ...($hex($palette['accent'] ?? null) === null ? [] : ['brand_accent' => $hex($palette['accent'])]),
+        ];
     }
 
     /**
@@ -457,7 +556,12 @@ class OnboardingController extends Controller
         /** @var array<string, mixed> $answers */
         $answers = $project->onboarding['channels'] ?? [];
 
-        $endpoint = (string) ($answers['webhook_endpoint'] ?? '');
+        // Only the custom-site answer carries an address. Somebody who chose
+        // WordPress, or chose to decide later, must not have a channel made
+        // from a URL they typed and then moved away from.
+        $endpoint = ($answers['destination'] ?? 'custom') === 'custom'
+            ? (string) ($answers['webhook_endpoint'] ?? '')
+            : '';
 
         if ($endpoint !== '') {
             $website = Channel::query()->updateOrCreate(

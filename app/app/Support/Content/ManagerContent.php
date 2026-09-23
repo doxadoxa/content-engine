@@ -20,9 +20,14 @@ final class ManagerContent
         $channels = app(ArticleSchedules::class)->channels($project);
         $eligible = $project->autopublish ? $channels->where('autopublish', true) : $channels;
         $ready = $opted && $eligible->count() === 1 && $project->status->value === 'active';
+        // Somebody who chose "decide later" in setup made a decision, and it
+        // was one we offered. Telling them their publishing setup is missing
+        // is nagging them for an answer they gave.
+        $later = ($project->onboarding['channels']['destination'] ?? null) === 'later';
         $message = match (true) {
             ! $opted => 'Choose how new articles should publish to start using your calendar automatically.',
             $project->status->value !== 'active' => 'Content work is paused. Resume the business when you are ready.',
+            $channels->isEmpty() && $later => 'Articles are waiting in your calendar. Connect your website whenever you are ready, or copy each one across yourself.',
             $channels->isEmpty() => 'Connect and test your website so scheduled articles can go live.',
             $eligible->isEmpty() => 'Enable automatic publishing for your website, or choose review first.',
             $eligible->count() > 1 => 'You have more than one eligible website. Choose the destination on each article’s schedule.',
@@ -33,7 +38,7 @@ final class ManagerContent
         return ['mode' => $project->autopublish ? 'automatic' : 'review_first', 'opted_in' => $opted,
             'ready' => $ready, 'timezone' => $project->timezone, 'message' => $message,
             'action' => ! $opted || $project->status->value !== 'active' ? '/projects/'.$project->id.'/edit#article-publishing' : ($eligible->count() === 1 ? '/calendar' : '/channels'),
-            'action_label' => ! $opted ? 'Choose publishing preference' : ($project->status->value !== 'active' ? 'Resume content work' : ($ready ? 'Manage schedule' : 'Set up website publishing'))];
+            'action_label' => ! $opted ? 'Choose publishing preference' : ($project->status->value !== 'active' ? 'Resume content work' : ($ready ? 'Manage schedule' : ($later && $channels->isEmpty() ? 'Connect my website' : 'Set up website publishing')))];
     }
 
     /** @return Builder<ContentItem> */

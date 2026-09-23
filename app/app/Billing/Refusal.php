@@ -40,6 +40,22 @@ final readonly class Refusal
         );
     }
 
+    /**
+     * The sample is written, and everything past it needs a card.
+     *
+     * Not a fault and not an ending — the month's plan and the first article
+     * are sitting there to be read. Worded as the next step for the same
+     * reason {@see noSubscription()} is: this fires for somebody who has just
+     * seen the product work and has not yet decided.
+     */
+    public static function previewFinished(): self
+    {
+        return new self(
+            'preview_finished',
+            'Your sample is ready to read. Add a card to start the trial and Avyo keeps writing.',
+        );
+    }
+
     public static function trialEnded(): self
     {
         return new self(

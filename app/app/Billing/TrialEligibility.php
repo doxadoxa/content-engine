@@ -98,6 +98,51 @@ class TrialEligibility
     }
 
     /**
+     * Whether this account may have a card-free *sample* for this site.
+     *
+     * A separate question from the trial and deliberately so, because the two
+     * cost different amounts and are spent at different moments. A preview is
+     * about two and a half dollars and is handed out before anybody has typed
+     * a card number, which makes it the cheaper thing to take repeatedly and
+     * therefore the one that needs its own bound.
+     *
+     * Two rules, mirroring {@see refusalFor()}'s: one site gets one sample,
+     * and one account gets one sample at a time. Neither touches
+     * {@see mayHaveATrial()} — somebody who previewed a site and then paid for
+     * it must still get their free days, which is the whole arrangement.
+     *
+     * False is not a refusal. The caller sends them to the checkout instead,
+     * which is where this flow used to send everybody.
+     */
+    public function mayHaveAPreview(User $user, Project $project): bool
+    {
+        $previews = DB::table('project_subscriptions')
+            ->join('projects', 'projects.id', '=', 'project_subscriptions.project_id')
+            ->where('project_subscriptions.project_id', '!=', $project->getKey())
+            ->where('project_subscriptions.plan', 'preview');
+
+        // One at a time, per account. A second sample running beside the first
+        // is a second bill before anybody has answered the first question.
+        if ((clone $previews)->whereIn('project_subscriptions.project_id', $user->projects()->select('projects.id'))->exists()) {
+            return false;
+        }
+
+        $host = self::hostOf((string) $project->website_url);
+
+        if ($host === null) {
+            return false;
+        }
+
+        // And once per site, across accounts, for the reason the domain check
+        // below is the only one of these worth anything: addresses are free
+        // and a domain had to be bought.
+        return ! $previews
+            ->whereNotNull('projects.website_url')
+            ->pluck('projects.website_url')
+            ->contains(fn (mixed $url): bool => is_string($url) && self::hostOf($url) === $host);
+    }
+
+    /**
      * One free window at a time per account, rather than one ever.
      *
      * "Ever" would be the wrong rule: somebody who trialled a site last year,

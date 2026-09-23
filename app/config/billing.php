@@ -116,6 +116,30 @@ return [
     'plans' => [
 
         4 => [
+            'preview' => [
+                'name' => 'Preview', 'price_cents' => 0, 'currency' => 'usd',
+                'self_serve' => false, 'stripe_price' => null,
+                'limits' => [
+                    // One article, and the month's plan around it. The plan is
+                    // most of what this is for: a calendar of topics chosen
+                    // from real search evidence says more about whether this
+                    // is worth paying for than a single article does, and it
+                    // costs one research run to make. `articles` is overridden
+                    // per subscription to the count of whatever plan was
+                    // selected, so the calendar shown is the calendar bought.
+                    'articles' => 12, 'content_plans' => 1, 'social_posts' => 0,
+                    'page_improvements' => 0, 'site_audits' => 1, 'assistant_turns' => 0,
+                    // The AI visibility check is a paid thing and stays one.
+                    'ai_answers' => 0, 'ai_questions' => 0, 'ai_frequency_days' => 30,
+                    'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
+                    'weekly_target' => 7, 'audit_refresh_days' => 7,
+                    // $2.50. Measured, a plan plus an audit plus one article is
+                    // about $1.70, so this is headroom rather than a limit
+                    // anybody reaches — and it is the hard floor under the cost
+                    // of a signup that never adds a card.
+                    'cost_micros' => 2_500_000,
+                ],
+            ],
             'trial' => [
                 'name' => 'Website growth trial', 'price_cents' => 0, 'currency' => 'usd',
                 'self_serve' => false, 'stripe_price' => null,

@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Billing\Entitlements;
+use App\Billing\PlanCatalog;
+use App\Billing\PlanSelection;
+use App\Billing\Subscriptions;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\InteractionState;
@@ -112,6 +116,11 @@ class HomeController extends Controller
             // `WorkInFlight` is also what settles a launch whose chain died, so
             // behind a deferred prop that repair only runs for somebody who
             // stays long enough for the second request.
+            // Not deferred, for the same reason `work` is not: during a
+            // preview this panel *is* the screen, and a dashboard that paints
+            // its empty grid first and fills the point in afterwards is the
+            // version somebody closes.
+            'preview' => $this->preview($request, $project),
             'work' => $this->work->for($project),
             'article_workflow' => ManagerContent::workflow($project),
             'pageWork' => Inertia::defer(fn (): array => $this->pageWork()),
@@ -124,6 +133,63 @@ class HomeController extends Controller
             'halves' => Inertia::defer(fn (): array => $this->halves($now)),
             'health' => Inertia::defer(fn (): array => $health->check()),
         ]);
+    }
+
+    /**
+     * The card-free sample, while it is the thing on this screen.
+     *
+     * Null for everybody else, which is almost everybody: a project is only
+     * ever in this state between finishing the wizard and answering the card
+     * question. See {@see Subscriptions::startPreview()}.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function preview(Request $request, Project $project): ?array
+    {
+        $entitlement = app(Entitlements::class)->for($project);
+
+        if (! $entitlement->isPreview()) {
+            return null;
+        }
+
+        // What the sample is of: the plan chosen in the wizard, which is what
+        // the "start my trial" button has to buy. The preview's own plan is
+        // the allowance it ran on and is not for sale.
+        $plan = app(PlanSelection::class)->selected($request, $project);
+
+        $draft = ContentItem::query()
+            ->roots()
+            ->whereNotIn('state', [ContentItemState::Idea])
+            ->where('locale', $project->default_locale)
+            ->latest()
+            ->first();
+
+        return [
+            'finished' => $entitlement->previewFinished,
+            // Every topic the month's plan holds, drafted or not. This is the
+            // larger half of what a sample is worth: one article says whether
+            // the writing is good, a calendar says whether we understood the
+            // business.
+            'topics' => ContentItem::query()->roots()->whereNotNull('content_plan_id')->count(),
+            'draft' => $draft === null ? null : [
+                'id' => (string) $draft->getKey(),
+                'title' => $draft->title,
+                // Counted off the prose rather than stored, because nothing
+                // stores it and the number is the argument: "1,400 words
+                // written from your site" is what makes the link worth
+                // pressing.
+                'words' => str_word_count(strip_tags((string) $draft->body_markdown)),
+            ],
+            'plan' => [
+                'key' => $plan->key,
+                'version' => $plan->version,
+                'name' => $plan->name,
+                'price_cents' => $plan->priceCents,
+                'currency' => $plan->currency,
+                'articles' => $plan->limit('articles'),
+            ],
+            'trial_days' => app(PlanCatalog::class)->trialDays(),
+        ];
     }
 
     /** @return array<string, mixed> */

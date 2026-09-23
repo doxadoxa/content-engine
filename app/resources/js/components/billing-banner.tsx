@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
-import { AlertTriangle, Clock, CreditCard } from 'lucide-react';
+import { AlertTriangle, Clock, CreditCard, Gift } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { index as billingIndex } from '@/routes/billing';
 import type { Billing } from '@/types/billing';
@@ -62,6 +62,27 @@ type Notice = {
  * line that eventually matters.
  */
 function noticeFor(billing: Billing): Notice | null {
+    // The sample, before anything else and in a different colour.
+    //
+    // This is the one state in here that is not a problem: somebody has just
+    // finished setting up, an article written from their own site is sitting
+    // on the dashboard behind this line, and the next step is a card. Rendered
+    // in amber beside a warning triangle — which is what "no subscription"
+    // looked like and what it was read as — it turned the best moment in the
+    // product into an error message.
+    if (billing.preview) {
+        return {
+            icon: Gift,
+            tone: 'border-sky-500/30 bg-sky-500/10 text-sky-900 dark:text-sky-200',
+            message: billing.preview_finished
+                ? 'This is your free sample. Add a card to start the trial — nothing is charged today.'
+                : 'Writing your sample now. Nothing is charged, and no card is needed to read it.',
+            action: billing.preview_finished
+                ? { href: billingIndex().url, label: 'Start my trial' }
+                : undefined,
+        };
+    }
+
     if (billing.refusal) {
         // Each reason gets its own button, because they are not the same
         // problem: a card that failed is a payment method, an ended trial is a

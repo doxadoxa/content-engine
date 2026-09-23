@@ -61,7 +61,11 @@ final class OnboardingStepRequest extends FormRequest
                 'author_title', 'sitemap_url', 'example_liked', 'example_disliked',
             ],
             'competitors' => ['competitors'],
-            'channels' => ['webhook_endpoint', 'webhook_secret', 'social'],
+            // `sitemap_url` is accepted by both `voice` and `channels`: it was
+            // asked in the voice step until the publishing step gave it a
+            // better home, and a draft half-answered under the old shape must
+            // still be resumable.
+            'channels' => ['destination', 'webhook_endpoint', 'webhook_secret', 'sitemap_url', 'social'],
             'settings' => ['weekly_target', 'target_words', 'autopublish'],
             default => [],
         };
@@ -102,6 +106,8 @@ final class OnboardingStepRequest extends FormRequest
                 'answers.competitors.*' => ['string', 'max:255'],
             ],
             'channels' => [
+                'answers.destination' => ['sometimes', 'nullable', 'string', Rule::in(['wordpress', 'custom', 'later'])],
+                'answers.sitemap_url' => ['sometimes', 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
                 'answers.webhook_endpoint' => ['sometimes', 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
                 'answers.webhook_secret' => ['sometimes', 'nullable', 'string', 'max:500'],
                 'answers.social' => [Rule::prohibitedIf(! config('social.enabled')), 'sometimes', 'array', 'max:10'],
