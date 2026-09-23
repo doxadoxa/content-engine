@@ -10,8 +10,11 @@ use App\Billing\Subscriptions;
 use App\Enums\BillingStatus;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
+use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
+use Throwable;
 
 /**
  * `php artisan billing:reconcile` — because a webhook will be missed.
@@ -66,6 +69,25 @@ class BillingReconcileCommand extends Command
                 // cancelling a paying customer because of a five-second API
                 // outage is far worse than leaving a stale row for an hour.
                 $this->components->warn("  {$slug}: Stripe returned nothing for {$stripeId} — left alone");
+
+                continue;
+            }
+
+            // An archived project Stripe is still billing. Its webhook refused
+            // it and tried to cancel after the commit, but the event was
+            // claimed by then and Stripe will not send it again — so this is
+            // the retry. Stripe's live status is not a reason to restore
+            // anything here; the owner walked away.
+            if ($project->archived_at !== null && ! in_array($theirs->rawStatus, ['canceled', 'incomplete_expired'], true)) {
+                $drifted++;
+
+                if ($dry) {
+                    $this->line("  would cancel {$slug} at Stripe: archived");
+
+                    continue;
+                }
+
+                $this->cancelArchived($provider, $subscriptions, $project, $subscription);
 
                 continue;
             }
@@ -177,6 +199,44 @@ class BillingReconcileCommand extends Command
             : ($dry ? "{$drifted} would be corrected." : "{$drifted} corrected."));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * End at Stripe what the archive, or the webhook after it, could not.
+     *
+     * Never fatal: a failure is logged and tomorrow's run tries again. The
+     * local row stays cancelled either way.
+     */
+    private function cancelArchived(
+        BillingProvider $provider,
+        Subscriptions $subscriptions,
+        Project $project,
+        ProjectSubscription $subscription,
+    ): void {
+        // The owner, when no payer was recorded, as the archive does. The
+        // provider still checks the subscription is theirs.
+        $payer = $subscription->payer
+            ?? $project->users()->wherePivot('role', 'owner')->first();
+
+        try {
+            if (! $payer instanceof User || ! $provider->cancelSubscription($payer, $project)) {
+                throw new RuntimeException('No payer or provider subscription to cancel.');
+            }
+
+            $this->line("  {$project->slug}: archived, canceled at Stripe");
+        } catch (Throwable $e) {
+            Log::error('Could not cancel the subscription of an archived project; the next reconcile will retry', [
+                'project' => $project->getKey(),
+                'stripe_id' => $subscription->stripe_id,
+                'error' => $e->getMessage(),
+            ]);
+
+            $this->components->error("  {$project->slug}: archived, still live at Stripe and could not be canceled");
+        }
+
+        if ($subscription->status !== BillingStatus::Canceled) {
+            $subscriptions->cancel($project);
+        }
     }
 
     /**

@@ -53,12 +53,19 @@ final class ProjectManager
      * finished, and scoping the panel to one shows a dashboard for a project
      * that has no brief, no plan and nothing running.
      *
+     * Nor is an archived one: its owner said they were done with it. Here
+     * rather than at each caller, because this is what the switcher, the
+     * projects list, the session fallback and {@see switchTo()} all ask — one
+     * forgotten filter would put a project somebody got rid of back in front
+     * of them.
+     *
      * @return BelongsToMany<Project, User>
      */
     public static function live(User $user): BelongsToMany
     {
         return $user->projects()
-            ->where('onboarding_status', '!=', OnboardingStatus::Draft->value);
+            ->where('onboarding_status', '!=', OnboardingStatus::Draft->value)
+            ->whereNull('projects.archived_at');
     }
 
     /**

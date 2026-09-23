@@ -262,6 +262,40 @@ class StripeBillingProvider implements BillingProvider
         return true;
     }
 
+    public function cancelSubscription(User $payer, Project $project): bool
+    {
+        $local = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
+        if ($local?->stripe_id === null) {
+            return false;
+        }
+
+        // By our own row's id rather than through Cashier's named subscription,
+        // which is only there once its webhook has landed — and a subscription
+        // this cannot find is one that goes on being billed.
+        $options = ['api_key' => config('cashier.secret')];
+        $remote = StripeSubscription::retrieve($local->stripe_id, $options);
+        if ($remote->customer !== $payer->stripe_id) {
+            throw new RuntimeException('The subscription does not belong to this payer.');
+        }
+        if (in_array($remote->status, ['canceled', 'incomplete_expired'], true)) {
+            return true;
+        }
+
+        // A scheduled downgrade goes first. Its schedule manages the
+        // subscription, and releasing it leaves nothing that could start the
+        // subscription again at the next phase. The trade-off: if the cancel
+        // below then fails, the pending downgrade is already gone.
+        if ($local->stripe_schedule_id !== null) {
+            $this->cancelPlanChange($payer, $project);
+        }
+
+        // No proration and no final invoice: whatever was paid for the current
+        // period stays paid, and nothing further is charged.
+        $remote->cancel([], [...$options, 'idempotency_key' => 'avyo-cancel-'.$remote->id]);
+
+        return true;
+    }
+
     public function portalUrl(User $payer, string $returnUrl): string
     {
         return $payer->billingPortalUrl($returnUrl);

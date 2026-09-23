@@ -53,6 +53,12 @@ class FakeBillingProvider implements BillingProvider
     /** @var list<array{project: string, until: string}> */
     public array $trialExtensions = [];
 
+    /** @var list<string> */
+    public array $canceledSubscriptions = [];
+
+    /** Whether ending a subscription fails, as an outage at Stripe would. */
+    public bool $cancelFails = false;
+
     /** @var array<string, ProviderSubscription> */
     private array $subscriptions = [];
 
@@ -124,6 +130,17 @@ class FakeBillingProvider implements BillingProvider
             'project' => $project->getKey(),
             'until' => $until->format(DATE_ATOM),
         ];
+
+        return true;
+    }
+
+    public function cancelSubscription(User $payer, Project $project): bool
+    {
+        if ($this->cancelFails) {
+            throw new \RuntimeException('Stripe could not be reached.');
+        }
+
+        $this->canceledSubscriptions[] = $project->getKey();
 
         return true;
     }

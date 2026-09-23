@@ -81,6 +81,7 @@ class OnboardingController extends Controller
 
         $draft = $user->projects()
             ->where('onboarding_status', OnboardingStatus::Draft->value)
+            ->whereNull('projects.archived_at')
             ->latest()
             ->first();
 
@@ -408,6 +409,7 @@ class OnboardingController extends Controller
             $existing = $user->projects()
                 ->whereKey($projectId)
                 ->where('onboarding_status', OnboardingStatus::Draft->value)
+                ->whereNull('projects.archived_at')
                 ->first();
 
             if ($existing !== null) {

@@ -46,6 +46,13 @@ class BillingAssignCommand extends Command
             return self::FAILURE;
         }
 
+        // Before anything is written, so a refused resume is not half a change.
+        if ($this->option('resume') && $project->archived_at !== null) {
+            $this->components->error("{$project->slug} was archived by its owner and cannot be resumed.");
+
+            return self::FAILURE;
+        }
+
         $payer = $this->resolvePayer();
 
         if ($payer === false) {

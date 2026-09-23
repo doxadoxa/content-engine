@@ -245,6 +245,9 @@ class Subscriptions
     public function changeWithinPeriod(Project $project, Plan $plan): ProjectSubscription
     {
         return DB::transaction(function () use ($project, $plan): ProjectSubscription {
+            // Project before subscription, the order the webhook and the
+            // archive lock in; pacing below writes the project row anyway.
+            Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
             $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->lockForUpdate()->firstOrFail();
             $this->syncPacing($project, $subscription, $plan);
             $subscription->fill(['plan' => $plan->key, 'plan_version' => $plan->version, 'limit_overrides' => []])->save();
@@ -368,6 +371,14 @@ class Subscriptions
         $subscription = $this->find($project);
 
         if ($subscription === null || ! $subscription->paused_by_billing) {
+            return;
+        }
+
+        // Nor a project its owner archived. That pause is theirs, and a late
+        // webhook or a reconcile run saying the card is fine again is not a
+        // reason to start writing for a site somebody walked away from. Read
+        // fresh, because the instance a webhook holds may predate the archive.
+        if (Project::query()->whereKey($project->getKey())->whereNotNull('archived_at')->exists()) {
             return;
         }
 

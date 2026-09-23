@@ -193,6 +193,10 @@ Route::middleware(['auth'])->group(function (): void {
         ->middleware('project.owner')->name('projects.edit');
     Route::patch('projects/{project}', [ProjectController::class, 'update'])
         ->middleware('project.owner')->name('projects.update');
+    // Owner-only: it ends the subscription as well as the work. Throttled
+    // because each press can reach Stripe.
+    Route::post('projects/{project}/archive', [ProjectController::class, 'archive'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('projects.archive');
 
     Route::post('projects/{project}/switch', [ProjectController::class, 'switch'])->name('projects.switch');
 

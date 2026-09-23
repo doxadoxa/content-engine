@@ -27,6 +27,7 @@ type Row = {
     slug: string;
     website_url: string | null;
     status: string;
+    archived_at: string | null;
     plan: string | null;
     billing_status: string | null;
     trial_ends_at: string | null;
@@ -181,7 +182,13 @@ export default function AdminProjects({ q, cost_currency, projects }: Props) {
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-muted-foreground capitalize">
-                                                {project.status}
+                                                {project.archived_at ? (
+                                                    <Badge variant="outline">
+                                                        Archived
+                                                    </Badge>
+                                                ) : (
+                                                    project.status
+                                                )}
                                             </TableCell>
                                             <TableCell className="text-right tabular-nums">
                                                 {project.currency
