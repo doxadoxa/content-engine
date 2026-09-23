@@ -371,6 +371,14 @@ class Subscriptions
             return;
         }
 
+        // Nor a project its owner archived. That pause is theirs, and a late
+        // webhook or a reconcile run saying the card is fine again is not a
+        // reason to start writing for a site somebody walked away from. Read
+        // fresh, because the instance a webhook holds may predate the archive.
+        if (Project::query()->whereKey($project->getKey())->whereNotNull('archived_at')->exists()) {
+            return;
+        }
+
         if ($project->status === ProjectStatus::Paused) {
             $project->forceFill(['status' => ProjectStatus::Active])->save();
         }

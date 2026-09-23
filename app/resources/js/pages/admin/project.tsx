@@ -33,6 +33,7 @@ type Props = {
         slug: string;
         website_url: string | null;
         status: string;
+        archived_at: string | null;
         weekly_target: number;
         locales: string[];
         created_at: string | null;
@@ -127,6 +128,9 @@ export default function AdminProject({
                              * Two bare "active" badges side by side read as
                              * one badge drawn twice.
                              */}
+                            {project.archived_at && (
+                                <Badge variant="destructive">Archived</Badge>
+                            )}
                             <Badge variant="outline">
                                 Engine: {project.status}
                             </Badge>
@@ -280,7 +284,10 @@ export default function AdminProject({
                                         <Button
                                             type="submit"
                                             variant="outline"
-                                            disabled={processing}
+                                            disabled={
+                                                processing ||
+                                                project.archived_at !== null
+                                            }
                                         >
                                             Extend
                                         </Button>
@@ -310,19 +317,32 @@ export default function AdminProject({
                                         : 'active'
                                 }
                             />
-                            <Button type="submit" variant="outline">
+                            <Button
+                                type="submit"
+                                variant="outline"
+                                disabled={
+                                    project.archived_at !== null &&
+                                    project.status !== 'active'
+                                }
+                            >
                                 {project.status === 'active'
                                     ? 'Pause the engine'
                                     : 'Start the engine'}
                             </Button>
                         </Form>
-                        <p className="text-sm text-muted-foreground">
-                            Writes {project.weekly_target} a week
-                            {entitlement.plan
-                                ? `, capped by ${entitlement.plan.name}`
-                                : ''}
-                            .
-                        </p>
+                        {project.archived_at ? (
+                            <p className="text-sm text-muted-foreground">
+                                Archived by its owner, so it stays stopped.
+                            </p>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">
+                                Writes {project.weekly_target} a week
+                                {entitlement.plan
+                                    ? `, capped by ${entitlement.plan.name}`
+                                    : ''}
+                                .
+                            </p>
+                        )}
                     </CardContent>
                 </Card>
 

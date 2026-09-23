@@ -86,6 +86,7 @@ class AdminProjectController extends Controller
                     'slug' => $project->slug,
                     'website_url' => $project->website_url,
                     'status' => $project->status->value,
+                    'archived_at' => $project->archived_at?->toIso8601String(),
                     'plan' => $subscription?->plan()->name,
                     'billing_status' => $subscription?->status->value,
                     'trial_ends_at' => $subscription?->trial_ends_at?->toIso8601String(),
@@ -119,6 +120,7 @@ class AdminProjectController extends Controller
                 'slug' => $project->slug,
                 'website_url' => $project->website_url,
                 'status' => $project->status->value,
+                'archived_at' => $project->archived_at?->toIso8601String(),
                 'weekly_target' => $project->weekly_target,
                 'locales' => $project->locales,
                 'created_at' => $project->created_at?->toIso8601String(),
@@ -190,6 +192,7 @@ class AdminProjectController extends Controller
         ]);
 
         abort_unless($this->plans->has((string) $validated['plan']), 422);
+        $this->refuseToRestart($project, 'plan');
 
         $plan = $this->plans->get((string) $validated['plan']);
         $before = $this->snapshot($project);
@@ -241,6 +244,8 @@ class AdminProjectController extends Controller
         $validated = $request->validate([
             'days' => ['required', 'integer', 'min:1', 'max:60'],
         ]);
+
+        $this->refuseToRestart($project, 'days');
 
         $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->firstOrFail();
         $before = $this->snapshot($project);
@@ -298,13 +303,33 @@ class AdminProjectController extends Controller
             'status' => ['required', 'string', 'in:active,paused'],
         ]);
 
+        $status = ProjectStatus::from((string) $validated['status']);
+
+        if ($status === ProjectStatus::Active) {
+            $this->refuseToRestart($project, 'status');
+        }
+
         $before = $this->snapshot($project);
 
-        $project->forceFill([
-            'status' => ProjectStatus::from((string) $validated['status']),
-        ])->save();
+        $project->forceFill(['status' => $status])->save();
 
         return $this->recorded($request, 'project.status', $project, $before);
+    }
+
+    /**
+     * An archived project stays stopped, from here as from anywhere.
+     *
+     * Its owner ended it and its subscription with it, and nobody can see it
+     * from the application any more — an engine started from this panel would
+     * write and spend for a site with no one left to read what it made.
+     */
+    private function refuseToRestart(Project $project, string $field): void
+    {
+        if ($project->archived_at !== null) {
+            throw ValidationException::withMessages([
+                $field => 'This project was archived by its owner and cannot be started again from here.',
+            ]);
+        }
     }
 
     /**

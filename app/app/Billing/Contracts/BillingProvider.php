@@ -92,6 +92,19 @@ interface BillingProvider
     public function extendTrial(User $payer, Project $project, DateTimeInterface $until): bool;
 
     /**
+     * End the provider's subscription now, so nothing more is invoiced.
+     *
+     * Immediately rather than at period end: this is for a project its owner
+     * has archived, and a renewal the day after would charge them for a month
+     * of an engine we had already stopped.
+     *
+     * Returns false when there is no provider-backed subscription to cancel.
+     * Throws when there is one and it could not be ended — the caller must not
+     * go on as though it had been.
+     */
+    public function cancelSubscription(User $payer, Project $project): bool;
+
+    /**
      * Where to send somebody to change their card, their plan, or their mind.
      *
      * The Billing Portal, for the same reason: plan changes, card updates,

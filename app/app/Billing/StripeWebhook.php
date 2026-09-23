@@ -17,6 +17,7 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -191,6 +192,10 @@ class StripeWebhook
         $rawStatus = (string) ($object['status'] ?? '');
         $status = StripeBillingProvider::statusFrom($rawStatus);
 
+        if ($project->archived_at !== null && ! in_array($rawStatus, ['canceled', 'incomplete_expired'], true)) {
+            return $this->refuseForArchived($project, $plan, $object, $rawStatus, $happenedAt);
+        }
+
         // Read, and left null when Stripe sends no window we can recognise —
         // a metadata-only edit, or a payload shape the `items` fallback misses.
         //
@@ -277,6 +282,62 @@ class StripeWebhook
     }
 
     /**
+     * A live subscription for a project its owner has archived.
+     *
+     * A checkout opened before the archive and finished after it: Stripe is now
+     * charging for a project nobody can see. Nothing is arranged and no engine
+     * starts; the id is kept so the provider can find it, and it is ended after
+     * the commit — outside the claim, for the reason a schedule release is.
+     * Logged as an error because the first invoice may already have been paid
+     * and want refunding by hand.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    private function refuseForArchived(Project $project, Plan $plan, array $object, string $rawStatus, ?Carbon $happenedAt): string
+    {
+        $payer = $this->payer($object, $project);
+        $subscription = $this->existing($project) ?? ProjectSubscription::query()->create([
+            'project_id' => $project->getKey(),
+            'plan' => $plan->key,
+            'plan_version' => $plan->version,
+            'status' => BillingStatus::Canceled,
+            'limit_overrides' => [],
+            'canceled_at' => Carbon::now(),
+        ]);
+
+        $subscription->fill([
+            'stripe_id' => is_string($object['id'] ?? null) ? $object['id'] : null,
+            'stripe_status' => $rawStatus,
+            'billing_user_id' => $payer?->getKey() ?? $subscription->billing_user_id,
+        ])->save();
+        $this->stamp($subscription, $happenedAt);
+
+        if ($subscription->status !== BillingStatus::Canceled) {
+            $this->subscriptions->cancel($project);
+        }
+
+        Log::error('Stripe subscription started for an archived project; canceling it', [
+            'project' => $project->getKey(),
+            'stripe_id' => $object['id'] ?? null,
+        ]);
+
+        DB::afterCommit(function () use ($project, $payer): void {
+            try {
+                if (! $payer instanceof User || ! $this->provider->cancelSubscription($payer, $project)) {
+                    throw new RuntimeException('No payer or provider subscription to cancel.');
+                }
+            } catch (Throwable $e) {
+                Log::error('Could not cancel the subscription of an archived project', [
+                    'project' => $project->getKey(),
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
+
+        return 'archived';
+    }
+
+    /**
      * Let go of a schedule whose change has already taken effect.
      *
      * After the commit, and never fatal: this runs inside the event's claim
@@ -360,7 +421,8 @@ class StripeWebhook
      */
     private function startTheEngineIfWaiting(Project $project): void
     {
-        if ($project->onboarding_status !== OnboardingStatus::Launching) {
+        // Nor for one its owner archived, whatever state the wizard left it in.
+        if ($project->onboarding_status !== OnboardingStatus::Launching || $project->archived_at !== null) {
             return;
         }
 

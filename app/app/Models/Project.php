@@ -17,6 +17,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Carbon;
 
 /**
  * A tenant: one site the engine writes for.
@@ -55,6 +56,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property array<string, mixed> $onboarding
  * @property list<string> $competitors
  * @property array<string, mixed> $article_settings
+ * @property Carbon|null $archived_at
  */
 class Project extends Model
 {
@@ -305,6 +307,7 @@ class Project extends Model
             'site_analysis' => 'array',
             'onboarding' => 'array',
             'onboarded_at' => 'datetime',
+            'archived_at' => 'datetime',
             'competitors' => 'array',
             'article_settings' => 'array',
         ];

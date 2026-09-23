@@ -26,7 +26,10 @@ final class RequireProjectOwner
 
         $membership = $user->projects()->whereKey($project->getKey())->first();
 
-        abort_if($membership === null, 404);
+        // An archived project is gone as far as its members are concerned, so
+        // it answers like one they were never in rather than like a settings
+        // screen that still takes changes.
+        abort_if($membership === null || $membership->archived_at !== null, 404);
         abort_unless($membership->pivot->getAttribute('role') === 'owner', 403);
 
         return $next($request);

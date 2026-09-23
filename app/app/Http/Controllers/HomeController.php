@@ -33,6 +33,7 @@ use App\Support\Content\ManagerContent;
 use App\Support\Engine\WorkInFlight;
 use App\Support\Health\StackHealth;
 use App\Support\Tenancy\CurrentProject;
+use App\Support\Tenancy\ProjectManager;
 use App\Visibility\VisibilityReport;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -64,8 +65,9 @@ class HomeController extends Controller
                 'project' => null,
                 // "Pick one" and "make your first" are different screens, and
                 // this distinction came off the dashboard's own empty state —
-                // the one part of it worth keeping verbatim.
-                'hasProjects' => $user->projects()->exists(),
+                // the one part of it worth keeping verbatim. Archived ones are
+                // nothing to pick.
+                'hasProjects' => ProjectManager::live($user)->exists(),
                 'checklist' => [],
                 'kinds' => [],
             ]);

@@ -155,8 +155,13 @@ class TrialEligibility
 
         // One at a time, per account. A second sample running beside the first
         // is a second bill before anybody has answered the first question.
+        //
+        // An archived sample is not running, so somebody who started one on
+        // the wrong address can start over. Only here: the per-site rule below
+        // still counts it.
         if ((clone $others)
             ->where('project_subscriptions.plan', 'preview')
+            ->whereNull('projects.archived_at')
             ->whereIn('project_subscriptions.project_id', $user->projects()->select('projects.id'))
             ->exists()) {
             return false;
