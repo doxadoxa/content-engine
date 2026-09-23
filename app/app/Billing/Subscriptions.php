@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\ProjectUsagePeriod;
 use App\Models\User;
+use App\Pipelines\Steps\Planning\PlanningWindow;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -70,6 +71,80 @@ class Subscriptions
             // company the moment somebody subscribes mid-trial.
             'period_ends_at' => $ends,
             'trial_ends_at' => $ends,
+        ]);
+
+        $this->entitlements->forget($project);
+
+        return $subscription;
+    }
+
+    /**
+     * The card-free sample, before the trial.
+     *
+     * What somebody finishing the wizard gets to read *before* being asked for
+     * a card: one month's plan of topics and one finished article, made from
+     * their own site. The alternative — a checkout, immediately, for a product
+     * they have watched read their homepage and nothing else — is where this
+     * flow used to send people, and an amber banner is what they came back to.
+     *
+     * A real subscription row rather than a special case threaded through the
+     * gates, because *every* one of those gates already asks a subscription
+     * the same question and a second kind of answer is a second place to get
+     * it wrong. What makes it a preview is which plan it is on: see the
+     * `preview` entry in `config/billing.php` for the bounds, which are one
+     * article and two and a half dollars.
+     *
+     * **`trial_ends_at` stays null**, and that is the load-bearing detail.
+     * {@see TrialEligibility} reads that column to decide whether a site has
+     * had its free window; stamping one here would spend the trial on the
+     * sample and hand the customer a checkout with no free days on it.
+     *
+     * Active rather than trialing for the same reason — `Trialing` with no end
+     * date is a window that never closes, and {@see PlanningWindow}
+     * reads the trial's end as the period it paces across.
+     *
+     * Idempotent like {@see startTrial()}: a project that already has any
+     * subscription keeps it, so a double-pressed final button cannot mint a
+     * second sample and a customer who is already paying cannot be demoted
+     * into one.
+     */
+    public function startPreview(Project $project, Plan $selected, ?User $payer = null, ?Carbon $at = null): ?ProjectSubscription
+    {
+        $existing = $this->find($project);
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        // A deployment whose current price list has no preview in it does not
+        // get a broken launch; it gets the checkout it had before.
+        if (! $this->plans->has('preview')) {
+            return null;
+        }
+
+        $preview = $this->plans->get('preview');
+        $at ??= Carbon::now();
+
+        $subscription = ProjectSubscription::query()->create([
+            'project_id' => $project->getKey(),
+            'billing_user_id' => $payer?->getKey(),
+            'plan' => $preview->key,
+            'plan_version' => $preview->version,
+            'status' => BillingStatus::Active,
+            // The calendar is the selected plan's, so what the sample shows is
+            // the month that would actually be bought rather than a token one.
+            // Only the *planning* shape is borrowed; what may be spent stays
+            // the preview's, and the money ceiling under it is what holds.
+            'limit_overrides' => array_filter([
+                'articles' => $selected->limit('articles'),
+                'weekly_target' => $selected->weeklyTarget(),
+            ], static fn (?int $limit): bool => $limit !== null),
+            'period_started_at' => $at,
+            // Long enough to pace a month of topics across, so the plan the
+            // sample shows is a month's plan. Nothing renews it: the preview
+            // stops when its one article is written, not when this runs out.
+            'period_ends_at' => $at->copy()->addMonth(),
+            'trial_ends_at' => null,
         ]);
 
         $this->entitlements->forget($project);

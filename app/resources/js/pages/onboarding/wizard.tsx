@@ -51,7 +51,11 @@ type Analysis = {
     language: string;
     market: string;
     is_ymyl: boolean;
+    palette: Palette | null;
 };
+
+/** Counted off a picture of the site. Offered, never applied behind your back. */
+type Palette = { fill: string; ink: string; accent: string | null };
 
 type Draft = {
     id: string;
@@ -92,8 +96,7 @@ const STEPS = [
     'Business',
     'Voice',
     'Competitors',
-    'Website connection',
-    'Publishing preferences',
+    'Publishing',
 ] as const;
 
 /**
@@ -281,26 +284,42 @@ export default function Wizard({
                                 step={step}
                                 busy={busy}
                                 onBack={() => setStep((current) => current - 1)}
-                                onSave={async (name, answers) => {
+                                /*
+                                 * A list, because the last step answers two
+                                 * questions — where articles go, and whether
+                                 * they wait for you — and the two are saved
+                                 * under the names the server already knows
+                                 * them by rather than merged into a third.
+                                 */
+                                onSave={async (answers) => {
                                     setBusy(true);
                                     setError(null);
 
-                                    const result = await postJson<{
-                                        project: Draft;
-                                    }>(save(draft.id).url, {
-                                        step: name,
-                                        answers,
-                                    });
+                                    let saved: Draft | null = null;
+
+                                    for (const [name, values] of answers) {
+                                        const result = await postJson<{
+                                            project: Draft;
+                                        }>(save(draft.id).url, {
+                                            step: name,
+                                            answers: values,
+                                        });
+
+                                        if (!result.ok) {
+                                            setBusy(false);
+                                            setError(result.message);
+
+                                            return;
+                                        }
+
+                                        saved = result.data.project;
+                                    }
 
                                     setBusy(false);
 
-                                    if (!result.ok) {
-                                        setError(result.message);
-
-                                        return;
+                                    if (saved !== null) {
+                                        setDraft(saved);
                                     }
-
-                                    setDraft(result.data.project);
 
                                     if (step === STEPS.length - 1) {
                                         setBusy(true);
@@ -366,7 +385,12 @@ function Progress({ step }: { step: number }) {
                     </span>
                 </p>
             </div>
-            <ol className="hidden grid-cols-7 gap-2 lg:grid">
+            <ol
+                className="hidden gap-2 lg:grid"
+                style={{
+                    gridTemplateColumns: `repeat(${STEPS.length}, minmax(0, 1fr))`,
+                }}
+            >
                 {STEPS.map((label, index) => (
                     <li
                         key={label}
@@ -565,7 +589,7 @@ function Steps({
     step: number;
     busy: boolean;
     onBack: () => void;
-    onSave: (step: string, answers: Record<string, unknown>) => void;
+    onSave: (answers: [string, Record<string, unknown>][]) => void;
 }) {
     const saved = <T,>(name: string, key: string, fallback: T): T =>
         (draft.onboarding?.[name]?.[key] as T | undefined) ?? fallback;
@@ -614,17 +638,27 @@ function Steps({
     const [endpoint, setEndpoint] = useState(
         saved('channels', 'webhook_endpoint', ''),
     );
-    const [words, setWords] = useState(
-        String(saved('settings', 'target_words', 1400)),
-    );
-    const [weeklyTarget, setWeeklyTarget] = useState(
-        String(
-            saved(
-                'settings',
-                'weekly_target',
-                Math.min(7, draft.weekly_target),
-            ),
+    /*
+     * How articles reach the site, as a decision rather than as a blank
+     * technical field. "Later" is a real answer and the one most people
+     * arriving here can honestly give — articles queue either way — so it is
+     * where the step starts rather than something to be talked into.
+     */
+    const [destination, setDestination] = useState<Destination>(
+        saved(
+            'channels',
+            'destination',
+            saved('channels', 'webhook_endpoint', '') !== ''
+                ? 'custom'
+                : 'later',
         ),
+    );
+    // Kept, not asked. Packaged plans set the cadence themselves; older ones
+    // keep whatever the project already had rather than losing it here.
+    const weeklyTarget = saved(
+        'settings',
+        'weekly_target',
+        Math.min(7, draft.weekly_target),
     );
     const [automatic, setAutomatic] = useState(
         !draft.is_ymyl && saved('settings', 'autopublish', draft.autopublish),
@@ -632,41 +666,53 @@ function Steps({
     const submit = () => {
         switch (step) {
             case 1:
-                return onSave('market', {
-                    market,
-                    language,
-                });
+                return onSave([['market', { market, language }]]);
             case 2:
-                return onSave('business', { name, description, audiences });
+                return onSave([['business', { name, description, audiences }]]);
             case 3:
-                return onSave('voice', {
-                    tone,
-                    visual_language: visual,
-                    forbidden,
-                    author_name: authorName,
-                    author_title: authorTitle,
-                    sitemap_url: sitemap,
-                    example_liked: liked,
-                    example_disliked: disliked,
-                });
+                return onSave([
+                    [
+                        'voice',
+                        {
+                            tone,
+                            visual_language: visual,
+                            forbidden,
+                            author_name: authorName,
+                            author_title: authorTitle,
+                            example_liked: liked,
+                            example_disliked: disliked,
+                        },
+                    ],
+                ]);
             case 4:
-                return onSave('competitors', { competitors });
-            case 5:
-                return onSave('channels', {
-                    webhook_endpoint: focused ? null : endpoint,
-                });
+                return onSave([['competitors', { competitors }]]);
             default:
-                return onSave('settings', {
-                    ...(focused
-                        ? {}
-                        : {
-                              target_words: Number(words),
-                              ...(!packaged
-                                  ? { weekly_target: Number(weeklyTarget) }
-                                  : {}),
-                          }),
-                    autopublish: !focused && !draft.is_ymyl && automatic,
-                });
+                return onSave([
+                    [
+                        'channels',
+                        {
+                            destination: focused ? 'later' : destination,
+                            // Only a custom site has an address to send to.
+                            // Picking WordPress or "later" and leaving a
+                            // half-typed URL behind must not connect anything.
+                            webhook_endpoint:
+                                !focused && destination === 'custom'
+                                    ? endpoint
+                                    : null,
+                            sitemap_url: sitemap,
+                        },
+                    ],
+                    [
+                        'settings',
+                        {
+                            ...(focused || packaged
+                                ? {}
+                                : { weekly_target: Number(weeklyTarget) }),
+                            autopublish:
+                                !focused && !draft.is_ymyl && automatic,
+                        },
+                    ],
+                ]);
         }
     };
 
@@ -738,9 +784,17 @@ function Steps({
                                 hint="Read off the site. Correct anything we got wrong — every article is written from this."
                                 suggested={analysis !== null}
                             >
+                                {/*
+                                 * The longest thing anybody reads in this
+                                 * wizard, and the one paragraph every article
+                                 * for the next month is written from. It was
+                                 * set at the same line height as a one-line
+                                 * hint, which is what made it a wall.
+                                 */}
                                 <Textarea
                                     id="description"
-                                    rows={4}
+                                    rows={6}
+                                    className="min-h-40 text-base leading-7"
                                     value={description}
                                     onChange={(e) =>
                                         setDescription(e.target.value)
@@ -776,14 +830,22 @@ function Steps({
                                     onChange={(e) => setTone(e.target.value)}
                                 />
                             </Field>
-                            <Field id="visual" label="Visual language">
+                            <Field
+                                id="visual"
+                                label="Visual language"
+                                hint="What pictures in your articles should look like."
+                            >
                                 <Textarea
                                     id="visual"
                                     rows={2}
+                                    className="leading-7"
                                     value={visual}
                                     onChange={(e) => setVisual(e.target.value)}
                                 />
                             </Field>
+                            {analysis?.palette && (
+                                <SitePalette palette={analysis.palette} />
+                            )}
                             <Field
                                 id="forbidden"
                                 label="Never write about"
@@ -853,22 +915,6 @@ function Steps({
                                     />
                                 </Field>
                             </div>
-                            <Field
-                                id="sitemap"
-                                label="Sitemap"
-                                hint={
-                                    focused
-                                        ? 'Find existing pages and avoid recommending another page for the same purpose.'
-                                        : 'Used to find pages worth linking to from new articles.'
-                                }
-                            >
-                                <Input
-                                    id="sitemap"
-                                    value={sitemap}
-                                    onChange={(e) => setSitemap(e.target.value)}
-                                    placeholder="https://example.com/sitemap.xml"
-                                />
-                            </Field>
                         </>
                     )}
 
@@ -907,7 +953,7 @@ function Steps({
                         </>
                     )}
 
-                    {step === 5 && (
+                    {last && (
                         <>
                             {focused ? (
                                 <div className="rounded-xl border p-4 text-sm leading-6">
@@ -926,139 +972,125 @@ function Steps({
                                     </p>
                                 </div>
                             ) : (
-                                <Field
-                                    id="endpoint"
-                                    label="Your site's receiving endpoint"
-                                    hint="Optional: enter an article receiving address supplied by your website developer. You can connect WordPress or a custom website from Settings after setup. Articles wait safely until a compatible connection is ready."
-                                >
-                                    <Input
-                                        id="endpoint"
-                                        value={endpoint}
-                                        onChange={(e) =>
-                                            setEndpoint(e.target.value)
-                                        }
-                                        placeholder="https://example.com/api/content-engine"
-                                    />
-                                    <p className="text-sm text-muted-foreground">
-                                        We send a signed test request when you
-                                        finish. If your site answers with
-                                        anything other than success, nothing
-                                        will publish and the dashboard will say
-                                        so.
-                                    </p>
-                                </Field>
-                            )}
-                        </>
-                    )}
-
-                    {last && (
-                        <>
-                            {!focused && (
-                                <Field
-                                    id="words"
-                                    label="Preferred length for new articles"
-                                >
-                                    <Select
-                                        value={words}
-                                        onValueChange={setWords}
-                                    >
-                                        <SelectTrigger id="words">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {['800', '1400', '2200'].map(
-                                                (n) => (
-                                                    <SelectItem
-                                                        key={n}
-                                                        value={n}
-                                                    >
-                                                        {n} words
-                                                    </SelectItem>
-                                                ),
-                                            )}
-                                        </SelectContent>
-                                    </Select>
-                                </Field>
-                            )}
-                            {!focused && (
                                 <>
-                                    {!packaged && (
+                                    <fieldset className="flex flex-col gap-2">
+                                        <legend className="mb-2 text-sm font-medium">
+                                            Where should finished articles go?
+                                        </legend>
+                                        <DestinationChoice
+                                            value={destination}
+                                            onChange={setDestination}
+                                        />
+                                        {destination === 'custom' && (
+                                            <div className="mt-2">
+                                                <Field
+                                                    id="endpoint"
+                                                    label="The address your developer gave you"
+                                                    hint="We send a signed test request when you finish. If your site answers with anything other than success, nothing publishes and your dashboard says so."
+                                                >
+                                                    <Input
+                                                        id="endpoint"
+                                                        value={endpoint}
+                                                        onChange={(e) =>
+                                                            setEndpoint(
+                                                                e.target.value,
+                                                            )
+                                                        }
+                                                        placeholder="https://example.com/api/content-engine"
+                                                    />
+                                                </Field>
+                                            </div>
+                                        )}
+                                    </fieldset>
+
+                                    {/*
+                                     * Beside the destination rather than in
+                                     * the Voice step, where it used to sit
+                                     * between two questions about how the
+                                     * writing should sound: a sitemap is a
+                                     * fact about the website.
+                                     */}
+                                    <Field
+                                        id="sitemap"
+                                        label="Sitemap address"
+                                        hint="Optional. Used to find your own pages worth linking to from new articles."
+                                    >
+                                        <Input
+                                            id="sitemap"
+                                            value={sitemap}
+                                            onChange={(e) =>
+                                                setSitemap(e.target.value)
+                                            }
+                                            placeholder="https://example.com/sitemap.xml"
+                                        />
+                                    </Field>
+
+                                    {draft.is_ymyl ? (
+                                        /*
+                                         * A rule, said as one.
+                                         *
+                                         * This used to be a disabled dropdown
+                                         * showing "Let me review each article
+                                         * first", which reads as a default
+                                         * somebody chose for you rather than
+                                         * as something the topic requires.
+                                         */
+                                        <div className="rounded-xl border bg-background/30 p-4 text-sm leading-6">
+                                            <p className="font-medium">
+                                                Every article waits for your
+                                                approval
+                                            </p>
+                                            <p className="mt-1 text-muted-foreground">
+                                                Your site covers money, health
+                                                or safety topics. Avyo
+                                                fact-checks those and holds them
+                                                for you rather than publishing
+                                                them itself.
+                                            </p>
+                                        </div>
+                                    ) : (
                                         <Field
-                                            id="cadence"
-                                            label="How often should articles go out?"
-                                            hint="We spread articles across the calendar, within your plan’s allowance."
+                                            id="publishing-mode"
+                                            label="Once an article is written"
+                                            hint="You can change this at any time, and pause any single article."
                                         >
                                             <Select
-                                                value={weeklyTarget}
-                                                onValueChange={setWeeklyTarget}
+                                                value={
+                                                    automatic
+                                                        ? 'automatic'
+                                                        : 'review'
+                                                }
+                                                onValueChange={(value) =>
+                                                    setAutomatic(
+                                                        value === 'automatic',
+                                                    )
+                                                }
                                             >
-                                                <SelectTrigger id="cadence">
+                                                <SelectTrigger id="publishing-mode">
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    {[1, 2, 3, 5, 7].map(
-                                                        (n) => (
-                                                            <SelectItem
-                                                                key={n}
-                                                                value={String(
-                                                                    n,
-                                                                )}
-                                                            >
-                                                                {n === 7
-                                                                    ? 'Daily, within my allowance'
-                                                                    : `${n} per week`}
-                                                            </SelectItem>
-                                                        ),
-                                                    )}
+                                                    <SelectItem value="automatic">
+                                                        Publish it for me, on
+                                                        the calendar
+                                                    </SelectItem>
+                                                    <SelectItem value="review">
+                                                        Let me read it first
+                                                    </SelectItem>
                                                 </SelectContent>
                                             </Select>
                                         </Field>
                                     )}
-                                    <Field
-                                        id="publishing-mode"
-                                        label="Publishing preference"
-                                        hint={
-                                            draft.is_ymyl
-                                                ? 'Health and financial topics always need your review.'
-                                                : 'You can switch to review-first whenever you need to.'
-                                        }
-                                    >
-                                        <Select
-                                            value={
-                                                automatic
-                                                    ? 'automatic'
-                                                    : 'review'
-                                            }
-                                            onValueChange={(value) =>
-                                                setAutomatic(
-                                                    value === 'automatic',
-                                                )
-                                            }
-                                            disabled={draft.is_ymyl}
-                                        >
-                                            <SelectTrigger id="publishing-mode">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="automatic">
-                                                    Publish automatically on the
-                                                    calendar
-                                                </SelectItem>
-                                                <SelectItem value="review">
-                                                    Let me review each article
-                                                    first
-                                                </SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </Field>
                                 </>
                             )}
                             <p className="rounded-xl border bg-background/30 p-4 text-sm leading-6">
                                 {focused
                                     ? 'Start with an existing page and current confirmed facts. The site audit runs during setup. Choose a bounded opportunity in Plan; review and publication each need your separate decision.'
-                                    : automatic
-                                      ? 'Avyo writes useful articles and publishes them on schedule once your website is connected and the article passes its checks. Articles that need attention wait for you.'
-                                      : 'Avyo plans and writes your articles. Each article waits for your approval before its scheduled publication.'}
+                                    : destination === 'later'
+                                      ? 'Avyo researches your topics, plans the month and writes the articles. They wait in your calendar until you connect your website — nothing is lost in the meantime.'
+                                      : automatic && !draft.is_ymyl
+                                        ? 'Avyo writes your articles and publishes them on schedule, once your website answers our test and the article passes its checks. Anything that needs attention waits for you.'
+                                        : 'Avyo plans and writes your articles. Each one waits for your approval before its scheduled publication.'}
                             </p>
                         </>
                     )}
@@ -1124,16 +1156,138 @@ const HEADINGS = [
             'We read what they rank for and look for what they have missed.',
     },
     {
-        title: 'Where does it go?',
+        title: 'What happens to a finished article?',
         description:
-            'Connect your website, or leave this empty to publish reviewed changes with assistance.',
-    },
-    {
-        title: 'How should publishing work?',
-        description:
-            'Choose your pace and whether articles publish automatically or wait for your review.',
+            'Where it goes, and whether it waits for you. Neither has to be settled today.',
     },
 ] as const;
+
+/** Where finished articles go. "Later" is an answer, not a postponement. */
+type Destination = 'wordpress' | 'custom' | 'later';
+
+const DESTINATIONS: {
+    value: Destination;
+    label: string;
+    detail: string;
+}[] = [
+    {
+        value: 'later',
+        label: 'Decide later',
+        detail: 'Articles wait in your calendar. Connect your site whenever you are ready, or copy each one across yourself.',
+    },
+    {
+        value: 'wordpress',
+        label: 'My site runs on WordPress',
+        detail: 'We will give you a small plugin and a key after setup. Installing it takes a few minutes.',
+    },
+    {
+        value: 'custom',
+        label: 'Something else',
+        detail: 'Your web developer gives you an address we send finished articles to.',
+    },
+];
+
+/**
+ * The destination, as three plainly worded cards.
+ *
+ * This step used to be one empty field labelled "your site's receiving
+ * endpoint", which is a sentence written for whoever built the site rather
+ * than for whoever owns it — and it had no visible way past, so the only
+ * obvious move was to guess at a URL or abandon setup.
+ */
+function DestinationChoice({
+    value,
+    onChange,
+}: {
+    value: Destination;
+    onChange: (value: Destination) => void;
+}) {
+    return (
+        <div className="flex flex-col gap-2">
+            {DESTINATIONS.map((option) => (
+                <label
+                    key={option.value}
+                    className={`flex cursor-pointer gap-3 rounded-xl border p-4 text-sm transition-colors ${
+                        value === option.value
+                            ? 'border-primary bg-primary/5'
+                            : 'hover:bg-muted/40'
+                    }`}
+                >
+                    <input
+                        type="radio"
+                        name="destination"
+                        className="mt-1 size-4 shrink-0 accent-primary"
+                        value={option.value}
+                        checked={value === option.value}
+                        onChange={() => onChange(option.value)}
+                    />
+                    <span>
+                        <span className="block font-medium">
+                            {option.label}
+                        </span>
+                        <span className="mt-0.5 block leading-relaxed text-muted-foreground">
+                            {option.detail}
+                        </span>
+                    </span>
+                </label>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * The colours counted off a picture of the site.
+ *
+ * Shown, not applied. They already existed at this point in setup and were
+ * only ever offered on the Brand brief screen, which is somewhere nobody new
+ * has been yet — so the first illustrated article arrived in colours the
+ * owner had never been shown.
+ */
+function SitePalette({ palette }: { palette: Palette }) {
+    const swatches = [
+        { hex: palette.fill, label: 'Brand colour' },
+        { hex: palette.ink, label: 'Text on it' },
+        ...(palette.accent ? [{ hex: palette.accent, label: 'Accent' }] : []),
+    ];
+
+    return (
+        <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium">
+                Your colours{' '}
+                <Badge
+                    variant="outline"
+                    className="ml-1 rounded-full text-xs font-normal"
+                >
+                    from your site
+                </Badge>
+            </p>
+            <div className="flex flex-wrap gap-4 rounded-xl border p-4">
+                {swatches.map((swatch) => (
+                    <div
+                        key={swatch.label}
+                        className="flex items-center gap-2 text-sm"
+                    >
+                        <span
+                            className="size-8 rounded-lg border"
+                            style={{ backgroundColor: swatch.hex }}
+                            aria-hidden="true"
+                        />
+                        <span>
+                            <span className="block">{swatch.label}</span>
+                            <span className="block font-mono text-xs text-muted-foreground uppercase">
+                                {swatch.hex}
+                            </span>
+                        </span>
+                    </div>
+                ))}
+            </div>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+                Used for the pictures in your articles. Change them in Brand
+                brief at any time.
+            </p>
+        </div>
+    );
+}
 
 function YmylNotice() {
     return (
@@ -1165,8 +1319,19 @@ function Field({
     children: React.ReactNode;
 }) {
     return (
-        <div className="grid gap-2">
-            <div className="flex items-center gap-2">
+        /*
+         * `flex`, not `grid`.
+         *
+         * Two of these sit side by side in a two-column grid, and a grid child
+         * stretches to the row's height. An auto-row grid inside that stretched
+         * box distributes the spare height between its own rows — so the field
+         * whose neighbour carries a hint had its label and its input pushed
+         * apart by however many lines that hint ran to, and the two columns
+         * lined up on nothing. A column flex leaves the spare height at the
+         * bottom, where nobody can see it.
+         */
+        <div className="flex flex-col gap-2">
+            <div className="flex min-h-6 items-center gap-2">
                 <Label htmlFor={id}>{label}</Label>
                 {suggested && (
                     <Badge
@@ -1178,7 +1343,11 @@ function Field({
                 )}
             </div>
             {children}
-            {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
+            {hint && (
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                    {hint}
+                </p>
+            )}
         </div>
     );
 }

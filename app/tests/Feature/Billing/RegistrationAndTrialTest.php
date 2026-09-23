@@ -227,10 +227,13 @@ final class RegistrationAndTrialTest extends TestCase
         $second = User::factory()->create();
         $secondProject = $this->draftFor($second, 'https://shop.example.test');
 
+        // Not blocked: the launch goes through and writes the sample. A
+        // hand-assigned plan is not a free run somebody has already had.
         $this->actingAs($second)
-            ->withHeaders(['X-Inertia' => 'true'])
             ->post("/onboarding/{$secondProject->getKey()}/launch")
-            ->assertStatus(409);
+            ->assertRedirect('/home');
+
+        $this->assertTrue(app(TrialEligibility::class)->mayHaveATrial($secondProject->fresh()));
     }
 
     #[Test]
@@ -246,13 +249,13 @@ final class RegistrationAndTrialTest extends TestCase
         $second = $this->draftFor($user, 'https://another-site.test');
 
         $this->actingAs($user)
-            ->withHeaders(['X-Inertia' => 'true'])
             ->post("/onboarding/{$second->getKey()}/launch")
-            ->assertStatus(409);
+            ->assertRedirect('/home');
 
-        $provider = app(BillingProvider::class);
-        $this->assertInstanceOf(FakeBillingProvider::class, $provider);
-        $this->assertSame($second->getKey(), $provider->checkouts[0]['project']);
+        $this->assertSame(
+            'preview',
+            ProjectSubscription::query()->where('project_id', $second->getKey())->sole()->plan,
+        );
     }
 
     #[Test]
@@ -261,18 +264,30 @@ final class RegistrationAndTrialTest extends TestCase
         $user = User::factory()->create();
         $project = $this->draftFor($user);
 
+        // The wizard's last click writes the sample instead of opening a
+        // checkout. The card is asked for from the dashboard afterwards, with
+        // the month's plan and the first article on the screen behind it.
+        $this->actingAs($user)
+            ->post("/onboarding/{$project->getKey()}/launch")
+            ->assertRedirect('/home');
+
         $this->actingAs($user)
             ->withHeaders(['X-Inertia' => 'true'])
-            ->post("/onboarding/{$project->getKey()}/launch")
+            ->post('/billing/checkout', ['plan' => 'starter', 'plan_version' => 4])
             ->assertStatus(409)
             ->assertHeader(
                 'X-Inertia-Location',
                 'https://checkout.stripe.test/starter/'.$project->getKey(),
             );
 
-        // Nothing local is created by pressing the button. The subscription —
-        // and with it the free window and its end date — arrives from Stripe.
-        $this->assertSame(0, ProjectSubscription::query()->count());
+        // The sample did not spend the free window. What the row holds until
+        // Stripe answers is a preview with no trial end on it, which is what
+        // keeps the free days available at the checkout above.
+        $subscription = ProjectSubscription::query()->sole();
+
+        $this->assertSame('preview', $subscription->plan);
+        $this->assertNull($subscription->trial_ends_at);
+        $this->assertNull($subscription->stripe_id);
     }
 
     #[Test]

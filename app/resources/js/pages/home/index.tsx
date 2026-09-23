@@ -58,8 +58,25 @@ type Dashboard = {
     attention: Article[];
     recent: Article[];
 };
+/** The card-free sample, while it is what this screen is about. */
+type Preview = {
+    finished: boolean;
+    topics: number;
+    draft: { id: string; title: string; words: number } | null;
+    plan: {
+        key: string;
+        version: number;
+        name: string;
+        price_cents: number;
+        currency: string;
+        articles: number | null;
+    };
+    trial_days: number;
+};
+
 type Props = {
     project: { id: string; name: string; site_name: string } | null;
+    preview?: Preview | null;
     hasProjects: boolean;
     checklist: Step[];
     work?: Work;
@@ -70,6 +87,7 @@ type Props = {
 
 export default function Home({
     project,
+    preview,
     hasProjects,
     checklist,
     work,
@@ -77,7 +95,17 @@ export default function Home({
     results,
     health,
 }: Props) {
-    usePoll(15000, { only: ['work', 'manager', 'checklist', 'results'] });
+    /*
+     * `preview` is in this list because the panel below promises in so many
+     * words that the page keeps itself up to date, and the sample it is
+     * waiting on lands minutes later. `finished` arriving on that prop is the
+     * only thing that turns the spinner into a finished article and the button
+     * that starts the trial — so leaving it out asked the server, every
+     * fifteen seconds, for everything except the one prop that had changed.
+     */
+    usePoll(15000, {
+        only: ['preview', 'work', 'manager', 'checklist', 'results'],
+    });
     const planning =
         work?.active.some((run) =>
             ['research', 'planning'].includes(run.pipeline),
@@ -139,8 +167,9 @@ export default function Home({
                         </>
                     }
                 />
+                {preview && <PreviewPanel preview={preview} />}
                 {results && <ManagerResults results={results} />}
-                {manager && <PublishingStatus manager={manager} />}
+                {manager && !preview && <PublishingStatus manager={manager} />}
                 {results && (
                     <DashboardCharts results={results} projectId={project.id} />
                 )}
@@ -290,6 +319,138 @@ export default function Home({
         </>
     );
 }
+/**
+ * The sample, and the question that follows it.
+ *
+ * What used to be here at this moment was an amber warning strip reading "add
+ * a card to start the engine" over a dashboard of empty tiles — somebody who
+ * had just spent five minutes answering questions about their business, shown
+ * a row of dashes and what looked like an error. The engine now writes first
+ * and asks second, so this is the reading material and the question together.
+ *
+ * It replaces the publishing-status panel rather than sitting above it. During
+ * a preview nothing publishes at all, and two panels arguing about publication
+ * is how the point gets lost.
+ */
+function PreviewPanel({ preview }: { preview: Preview }) {
+    /*
+     * A sample that finished with nothing in it.
+     *
+     * Research can fail — a keyword provider that is down, a site that stopped
+     * answering — and the launch settles either way, because a project stuck
+     * on a spinner is worse than one that says what happened. What must not
+     * happen is this panel announcing that a sample is ready to read over an
+     * empty page, which is the same lie the amber banner used to tell.
+     */
+    const empty = preview.finished && preview.topics === 0 && !preview.draft;
+
+    const price = new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: preview.plan.currency.toUpperCase(),
+        maximumFractionDigits: 0,
+    }).format(preview.plan.price_cents / 100);
+
+    return (
+        <section
+            className={`${workspacePanelClass} flex flex-col gap-5 p-5 sm:p-6`}
+            aria-label="Your sample"
+        >
+            <div className="flex items-start gap-3">
+                {empty ? (
+                    <TriangleAlert
+                        className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
+                        aria-hidden="true"
+                    />
+                ) : preview.finished ? (
+                    <Sparkles
+                        className="mt-0.5 size-5 shrink-0 text-terracotta"
+                        aria-hidden="true"
+                    />
+                ) : (
+                    <Spinner className="mt-0.5 size-5 shrink-0" />
+                )}
+                <div>
+                    <h2 className="text-lg font-semibold">
+                        {empty
+                            ? 'Your sample did not finish'
+                            : preview.finished
+                              ? 'Your sample is ready'
+                              : 'Writing your sample now'}
+                    </h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                        {empty
+                            ? 'Something went wrong while researching your market, so there is nothing to show you yet. Nothing was charged. Get in touch and we will look at it, or start the trial and Avyo will try again.'
+                            : preview.finished
+                              ? 'Read it before you decide anything. No card has been asked for and nothing has been published to your website.'
+                              : 'Avyo is researching your market, planning a month of topics and writing the first article. A few minutes — this page keeps itself up to date.'}
+                    </p>
+                </div>
+            </div>
+
+            {(preview.topics > 0 || preview.draft) && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                    {preview.topics > 0 && (
+                        <Link
+                            href="/calendar"
+                            className="rounded-xl border p-4 transition-colors hover:bg-muted/40"
+                        >
+                            <p className="text-2xl font-semibold">
+                                {preview.topics}
+                            </p>
+                            <p className="mt-1 text-sm font-medium">
+                                topics planned for you
+                            </p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                Chosen from what people in your market actually
+                                search for. See the calendar →
+                            </p>
+                        </Link>
+                    )}
+                    {preview.draft && (
+                        <Link
+                            href={`/content/${preview.draft.id}`}
+                            className="rounded-xl border p-4 transition-colors hover:bg-muted/40"
+                        >
+                            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                                Your first article
+                            </p>
+                            <p className="mt-1 text-sm font-medium">
+                                {preview.draft.title}
+                            </p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                {preview.draft.words > 0 &&
+                                    `${preview.draft.words.toLocaleString()} words · `}
+                                written from your site. Read the draft →
+                            </p>
+                        </Link>
+                    )}
+                </div>
+            )}
+
+            {preview.finished && (
+                <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-5">
+                    <p className="text-sm leading-6 text-muted-foreground">
+                        {empty
+                            ? 'Add a card to start your '
+                            : 'Happy with it? Add a card to start your '}
+                        {preview.trial_days}-day trial.{' '}
+                        {preview.plan.articles !== null &&
+                            `${preview.plan.name} then writes ${preview.plan.articles} articles a month for ${price}. `}
+                        Nothing is charged today, and cancelling before the
+                        trial ends costs nothing.
+                    </p>
+                    <Button asChild>
+                        <Link href="/billing">
+                            Start my {preview.trial_days}-day trial{' '}
+                            <ArrowRight className="size-4" />
+                        </Link>
+                    </Button>
+                </div>
+            )}
+        </section>
+    );
+}
+
 function PublishingStatus({ manager }: { manager: Dashboard }) {
     const next = manager.upcoming[0] ?? null;
 

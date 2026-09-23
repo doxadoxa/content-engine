@@ -177,9 +177,11 @@ class Entitlements
 
         $period = $subscription->periodStart();
 
+        $plan = $subscription->plan();
+
         return new Entitlement(
             subscription: $subscription,
-            plan: $subscription->plan(),
+            plan: $plan,
             // What bounds them now, which during a free window is the trial's.
             allowance: $subscription->entitledPlan(),
             status: $subscription->status,
@@ -190,6 +192,11 @@ class Entitlements
             spentMicros: ProjectSpend::total($project, $period),
             periodEndsAt: $subscription->period_ends_at,
             trialEndsAt: $subscription->trial_ends_at,
+            // Only ever asked of a preview, and only ever true once the launch
+            // that the preview exists for has finished. See
+            // {@see \App\Onboarding\ProjectLaunch::settle()}, which writes it.
+            previewFinished: $plan->key === Entitlement::PREVIEW_PLAN
+                && is_string($project->onboarding['preview_finished_at'] ?? null),
         );
     }
 

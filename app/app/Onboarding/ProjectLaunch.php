@@ -49,6 +49,18 @@ class ProjectLaunch
     private const int FIRST_DRAFTS = 3;
 
     /**
+     * How many to draft when this launch is the card-free sample.
+     *
+     * One. The sample exists to answer "is the writing any good", and one
+     * article answers that as well as three do — the other two are the same
+     * question asked again at three times the cost, for somebody who has not
+     * yet decided to pay us anything. The month's *plan* beside it is not
+     * trimmed: a calendar of topics is one research run however many articles
+     * come out of it, and it is the better half of the argument.
+     */
+    private const int PREVIEW_DRAFTS = 1;
+
+    /**
      * The pipelines a launch is waiting for.
      *
      * Named rather than "anything in flight", which is what the two settling
@@ -320,7 +332,7 @@ class ProjectLaunch
                 ->where('content_plan_id', $planId)
                 ->where('locale', $project->default_locale)
                 ->orderBy('scheduled_for')
-                ->limit(min(self::FIRST_DRAFTS, $this->entitlements->for($project)->remaining(Metric::Articles) ?? self::FIRST_DRAFTS))
+                ->limit(min($this->firstDrafts($project), $this->entitlements->for($project)->remaining(Metric::Articles) ?? $this->firstDrafts($project)))
                 ->get();
 
             if ($units->isEmpty()) {
@@ -356,11 +368,33 @@ class ProjectLaunch
         }
     }
 
+    private function firstDrafts(Project $project): int
+    {
+        return $this->entitlements->for($project)->isPreview()
+            ? self::PREVIEW_DRAFTS
+            : self::FIRST_DRAFTS;
+    }
+
     private function settle(Project $project): void
     {
         $project->forceFill([
             'onboarding_status' => OnboardingStatus::Active,
             'onboarded_at' => $project->onboarded_at ?? now(),
+            // A finished preview is a finished preview, however it finished.
+            //
+            // Written here rather than counted from what was produced, because
+            // every way a launch can end has to end the sample: a research run
+            // that failed, a plan with nothing in it, an article that could not
+            // be written. Any of those leaves a project whose launch is over,
+            // and a preview that kept its allowance after that would simply be
+            // an engine running for free for somebody with no card.
+            //
+            // {@see \App\Billing\Entitlement::refusal()} reads it.
+            'onboarding' => $this->entitlements->for($project)->isPreview()
+                ? [...$project->onboarding, 'preview_finished_at' => now()->toIso8601String()]
+                : $project->onboarding,
         ])->save();
+
+        $this->entitlements->forget($project);
     }
 }
