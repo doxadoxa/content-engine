@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Dashboard;
 
 use App\Billing\Contracts\BillingProvider;
+use App\Billing\Contracts\ProviderSubscription;
 use App\Billing\FakeBillingProvider;
 use App\Billing\StripeWebhook;
 use App\Billing\Subscriptions;
@@ -17,7 +18,11 @@ use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Tenancy\ProjectManager;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
@@ -233,6 +238,118 @@ final class ArchiveProjectTest extends TestCase
     }
 
     #[Test]
+    public function a_checkout_that_lands_while_archiving_stops_the_archive(): void
+    {
+        [$owner, $project] = $this->ownerWithProject('Racing');
+        $other = Project::factory()->create();
+        $owner->projects()->attach($other, ['role' => 'owner']);
+
+        // The checkout webhook commits between the archive's first read, which
+        // saw nothing at Stripe to cancel, and its project lock. Written the
+        // moment that lock is taken: one connection in a test, so the recheck
+        // under it reads this row exactly as it would a committed one.
+        $raced = false;
+        DB::listen(function (QueryExecuted $query) use (&$raced, $owner, $project): void {
+            if ($raced || ! str_starts_with($query->sql, 'select * from "projects"') || ! str_ends_with($query->sql, 'for update')) {
+                return;
+            }
+
+            $raced = true;
+            ProjectSubscription::query()->where('project_id', $project->getKey())->update([
+                'stripe_id' => 'sub_late',
+                'billing_user_id' => $owner->getKey(),
+            ]);
+        });
+
+        $this->actingAs($owner)
+            ->from('/projects')
+            ->post("/projects/{$project->getKey()}/archive", ['confirmation' => 'Racing'])
+            ->assertRedirect('/projects');
+
+        $this->assertTrue($raced);
+        $this->assertNull($project->refresh()->archived_at);
+        $this->assertSame(ProjectStatus::Active, $project->status);
+        $this->assertSame(
+            BillingStatus::Active,
+            ProjectSubscription::query()->where('project_id', $project->getKey())->sole()->status,
+        );
+        $this->assertSame([], $this->provider()->canceledSubscriptions);
+
+        $this->actingAs($owner)
+            ->get('/projects')
+            ->assertSee('A billing change for this project just came in', escape: false);
+    }
+
+    #[Test]
+    public function a_webhook_reads_the_archive_under_its_lock_rather_than_trusting_its_first_read(): void
+    {
+        Queue::fake();
+        [$owner, $project] = $this->ownerWithProject('Launching', ['onboarding_status' => OnboardingStatus::Launching]);
+        ProjectSubscription::query()->where('project_id', $project->getKey())->delete();
+        $owner->forceFill(['stripe_id' => 'cus_test'])->save();
+
+        // Archived just after the webhook resolved the project, as a
+        // concurrent archive committing then would.
+        $archived = false;
+        DB::listen(function (QueryExecuted $query) use (&$archived, $project): void {
+            if ($archived || ! str_starts_with($query->sql, 'select * from "projects"') || str_contains($query->sql, 'for update')) {
+                return;
+            }
+
+            $archived = true;
+            DB::table('projects')->where('id', $project->getKey())->update([
+                'archived_at' => now(),
+                'status' => ProjectStatus::Paused->value,
+            ]);
+        });
+
+        app(StripeWebhook::class)->handle($this->subscriptionEvent($project, 'active', 'customer.subscription.created'));
+
+        $this->assertTrue($archived);
+        $this->assertSame(
+            BillingStatus::Canceled,
+            ProjectSubscription::query()->where('project_id', $project->getKey())->sole()->status,
+        );
+        $this->assertSame([$project->getKey()], $this->provider()->canceledSubscriptions);
+        $this->assertSame(0, PipelineRun::acrossProjects()->where('project_id', $project->getKey())->count());
+        $this->assertSame(ProjectStatus::Paused, $project->refresh()->status);
+    }
+
+    #[Test]
+    public function reconcile_cancels_what_stripe_still_bills_an_archived_project_for(): void
+    {
+        // The webhook's late cancel failed, and Stripe will not send a claimed
+        // event again. Its live status must not bring the row back.
+        [$owner, $project] = $this->archivedWithStripeSubscription();
+
+        $this->assertSame(0, Artisan::call('billing:reconcile'));
+
+        // No payer recorded, so the owner's name is used.
+        $this->assertSame([$project->getKey()], $this->provider()->canceledSubscriptions);
+        $this->assertSame(
+            BillingStatus::Canceled,
+            ProjectSubscription::query()->where('project_id', $project->getKey())->sole()->status,
+        );
+        $this->assertSame(ProjectStatus::Paused, $project->refresh()->status);
+    }
+
+    #[Test]
+    public function a_reconcile_cancel_that_fails_leaves_the_row_canceled_for_tomorrow(): void
+    {
+        [, $project] = $this->archivedWithStripeSubscription();
+        $this->provider()->cancelFails = true;
+
+        $this->assertSame(0, Artisan::call('billing:reconcile'));
+
+        $this->assertSame([], $this->provider()->canceledSubscriptions);
+        $this->assertSame(
+            BillingStatus::Canceled,
+            ProjectSubscription::query()->where('project_id', $project->getKey())->sole()->status,
+        );
+        $this->assertSame(ProjectStatus::Paused, $project->refresh()->status);
+    }
+
+    #[Test]
     public function an_administrator_cannot_start_an_archived_project_again(): void
     {
         [$owner, $project] = $this->ownerWithProject('Archived');
@@ -347,6 +464,36 @@ final class ArchiveProjectTest extends TestCase
                 'items' => ['data' => [['price' => ['id' => 'price_medium']]]],
             ]],
         ];
+    }
+
+    /**
+     * Archived, canceled here, and still active at Stripe.
+     *
+     * @return array{User, Project}
+     */
+    private function archivedWithStripeSubscription(): array
+    {
+        [$owner, $project] = $this->ownerWithProject('Archived');
+        $project->forceFill(['archived_at' => now(), 'status' => ProjectStatus::Paused])->save();
+        ProjectSubscription::query()->where('project_id', $project->getKey())->update([
+            'stripe_id' => 'sub_test',
+            'status' => BillingStatus::Canceled,
+            'canceled_at' => now(),
+            'billing_user_id' => null,
+        ]);
+
+        $this->provider()->willReport(new ProviderSubscription(
+            id: 'sub_test',
+            status: BillingStatus::Active,
+            rawStatus: 'active',
+            priceId: 'price_medium',
+            periodStart: Carbon::now()->startOfDay(),
+            periodEnd: Carbon::now()->startOfDay()->addMonth(),
+            trialEnd: null,
+            canceledAt: null,
+        ));
+
+        return [$owner, $project];
     }
 
     private function provider(): FakeBillingProvider

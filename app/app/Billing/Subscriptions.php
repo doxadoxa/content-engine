@@ -245,6 +245,9 @@ class Subscriptions
     public function changeWithinPeriod(Project $project, Plan $plan): ProjectSubscription
     {
         return DB::transaction(function () use ($project, $plan): ProjectSubscription {
+            // Project before subscription, the order the webhook and the
+            // archive lock in; pacing below writes the project row anyway.
+            Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
             $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->lockForUpdate()->firstOrFail();
             $this->syncPacing($project, $subscription, $plan);
             $subscription->fill(['plan' => $plan->key, 'plan_version' => $plan->version, 'limit_overrides' => []])->save();

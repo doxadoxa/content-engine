@@ -155,6 +155,7 @@ class ProjectController extends Controller
             // this one at worst leaves a live project whose subscription has
             // ended, which the billing page already knows how to show.
             $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
+            $canceledAtStripe = null;
 
             if ($subscription?->stripe_id !== null && $subscription->status !== BillingStatus::Canceled) {
                 try {
@@ -165,6 +166,8 @@ class ProjectController extends Controller
                     if (! $this->provider->cancelSubscription($payer, $project)) {
                         throw new RuntimeException('The provider could not confirm the cancellation.');
                     }
+
+                    $canceledAtStripe = $subscription->stripe_id;
                 } catch (Throwable $e) {
                     report($e);
 
@@ -174,11 +177,22 @@ class ProjectController extends Controller
                 }
             }
 
-            DB::transaction(function () use ($project): void {
+            $archived = DB::transaction(function () use ($project, $canceledAtStripe): bool {
                 $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
 
                 if ($locked->archived_at !== null) {
-                    return;
+                    return true;
+                }
+
+                // Read again under the lock the webhook also takes first. A
+                // checkout that completed since the read above has a live
+                // subscription at Stripe nothing here has ended, and archiving
+                // over it would hide a project that is being charged for. The
+                // next attempt sees it up front and cancels it the usual way.
+                $current = ProjectSubscription::query()->where('project_id', $locked->getKey())->first();
+
+                if ($current?->stripe_id !== null && $current->status !== BillingStatus::Canceled && $current->stripe_id !== $canceledAtStripe) {
+                    return false;
                 }
 
                 // Paused is what every scheduler and pipeline already skips, so
@@ -194,9 +208,17 @@ class ProjectController extends Controller
                 if (ProjectSubscription::query()->where('project_id', $locked->getKey())->where('status', '!=', BillingStatus::Canceled->value)->exists()) {
                     $this->subscriptions->cancel($locked);
                 }
+
+                return true;
             });
         } finally {
             $lock->release();
+        }
+
+        if (! $archived) {
+            Inertia::flash('toast', ['type' => 'error', 'message' => 'A billing change for this project just came in. Try again in a moment.']);
+
+            return back();
         }
 
         // Resolved again on the next request, which will now pick another
