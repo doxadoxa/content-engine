@@ -18,6 +18,7 @@ use App\Http\Requests\OnboardingStepRequest;
 use App\Models\BrandBrief;
 use App\Models\Channel;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
@@ -25,8 +26,10 @@ use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Duty\DutyHours;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -276,9 +279,7 @@ class OnboardingController extends Controller
         // The trial is untouched by this and still begins at the checkout,
         // which is the point: the free days are worth something once somebody
         // has decided we are worth three of them.
-        $preview = $this->trials->mayHaveAPreview($user, $project)
-            ? $this->subscriptions->startPreview($project, $plan, $user)
-            : null;
+        $preview = $this->startPreviewFor($user, $project, $plan);
 
         if ($preview !== null) {
             $this->current->run($project, fn () => $this->launcher->begin($project));
@@ -286,9 +287,10 @@ class OnboardingController extends Controller
             return to_route('home.index');
         }
 
-        // No preview to be had — this site has already had one, or this
-        // deployment's price list has none. Straight to the card, as before,
-        // rather than a launch nothing is entitled to run.
+        // No preview to be had — this site has already had one, this
+        // deployment's price list has none, or another launch was holding the
+        // decision when we asked. Straight to the card, as before, rather than
+        // a launch nothing is entitled to run.
         try {
             return Inertia::location($this->provider->checkoutUrl(
                 $user,
@@ -314,6 +316,77 @@ class OnboardingController extends Controller
             ]);
 
             return to_route('home.index');
+        }
+    }
+
+    /**
+     * Ask whether a sample is allowed and mint it, with nobody in between.
+     *
+     * {@see TrialEligibility::mayHaveAPreview()} reads rows that
+     * {@see Subscriptions::startPreview()} then writes, and between the two
+     * there is a gap wide enough to drive a second launch through. The
+     * `lockForUpdate` above does not close it: that lock is on *this*
+     * project's row, so it serialises two presses of one final button and
+     * nothing else. Two different draft projects hold two different rows, both
+     * read "no sample yet", and both start an engine — five dollars and two
+     * research runs, spent before anybody has been asked for a card, which is
+     * the exact bound the eligibility rules exist to hold.
+     *
+     * **Two locks, because there are two rules and either can be broken on its
+     * own.** One account with two drafts open violates the one-at-a-time rule
+     * while touching two different hostnames; two accounts pointed at one site
+     * violate the one-per-site rule while sharing no account. A lock on either
+     * key alone lets the other race through, so both are taken.
+     *
+     * Always account first, then site. Not because that order is better —
+     * because it is fixed. Two requests reaching for the same pair in opposite
+     * orders is the whole recipe for a deadlock, and a single agreed sequence
+     * is what makes a cycle between these two keys impossible to construct.
+     *
+     * **A lock we cannot get is not an error.** It means another launch is
+     * mid-decision under one of these rules, and the likeliest truth is that
+     * this one is the launch that rule would have refused anyway. Saying so
+     * out loud would put a red banner on the last click of a wizard that has
+     * just worked; instead this answers null and {@see launch()} falls through
+     * to the checkout — the pre-existing path, and already what a `false` from
+     * the eligibility check does.
+     */
+    private function startPreviewFor(User $user, Project $project, Plan $plan): ?ProjectSubscription
+    {
+        $host = TrialEligibility::hostOf((string) $project->website_url);
+
+        // Nothing to serialise and nothing to allow: a project with no
+        // readable hostname cannot be held to the per-site rule, and
+        // `mayHaveAPreview()` refuses it for that reason.
+        if ($host === null) {
+            return null;
+        }
+
+        /** @var list<Lock> $held */
+        $held = [];
+
+        try {
+            foreach (['preview-launch-account:'.$user->getKey(), 'preview-launch-site:'.$host] as $key) {
+                $lock = Cache::lock($key, 60);
+
+                if (! $lock->get()) {
+                    return null;
+                }
+
+                $held[] = $lock;
+            }
+
+            // Asked again here rather than before the locks, because an answer
+            // given outside them is the answer this method exists to distrust.
+            return $this->trials->mayHaveAPreview($user, $project)
+                ? $this->subscriptions->startPreview($project, $plan, $user)
+                : null;
+        } finally {
+            // Released in reverse, and in a `finally` so that a failure to
+            // take the second lock cannot strand the first one for a minute.
+            foreach (array_reverse($held) as $lock) {
+                $lock->release();
+            }
         }
     }
 

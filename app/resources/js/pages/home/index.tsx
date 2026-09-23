@@ -95,7 +95,17 @@ export default function Home({
     results,
     health,
 }: Props) {
-    usePoll(15000, { only: ['work', 'manager', 'checklist', 'results'] });
+    /*
+     * `preview` is in this list because the panel below promises in so many
+     * words that the page keeps itself up to date, and the sample it is
+     * waiting on lands minutes later. `finished` arriving on that prop is the
+     * only thing that turns the spinner into a finished article and the button
+     * that starts the trial — so leaving it out asked the server, every
+     * fifteen seconds, for everything except the one prop that had changed.
+     */
+    usePoll(15000, {
+        only: ['preview', 'work', 'manager', 'checklist', 'results'],
+    });
     const planning =
         work?.active.some((run) =>
             ['research', 'planning'].includes(run.pipeline),

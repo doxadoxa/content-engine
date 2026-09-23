@@ -8,6 +8,7 @@ use App\Enums\BillingStatus;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
+use App\Onboarding\ProjectLaunch;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -106,24 +107,58 @@ class TrialEligibility
      * a card number, which makes it the cheaper thing to take repeatedly and
      * therefore the one that needs its own bound.
      *
-     * Two rules, mirroring {@see refusalFor()}'s: one site gets one sample,
-     * and one account gets one sample at a time. Neither touches
-     * {@see mayHaveATrial()} — somebody who previewed a site and then paid for
-     * it must still get their free days, which is the whole arrangement.
+     * Two rules, mirroring {@see refusalFor()}'s, and deliberately not the same
+     * shape as each other: one site gets one sample **ever**, one account gets
+     * one sample **at a time**. Neither touches {@see mayHaveATrial()} —
+     * somebody who previewed a site and then paid for it must still get their
+     * free days, which is the whole arrangement.
+     *
+     * **The site rule cannot be answered from `plan` alone**, because the
+     * sample that worked is the one that stops looking like a sample. A
+     * conversion goes through {@see Subscriptions::assign()}, which writes the
+     * bought plan over `preview` in the same row; a query asking only for
+     * `plan = 'preview'` therefore forgot every successful preview there had
+     * ever been. The site's subscription said `starter`, the check found
+     * nothing, and the next project on that hostname — on any account, since
+     * this rule is the cross-account one — was handed a second $2.50 run.
+     *
+     * So the site rule reads `preview_finished_at` as well, which
+     * {@see ProjectLaunch::settle()} stamps into `projects.onboarding` when a
+     * launch ends and which nothing in billing ever writes over. Matching on
+     * that mark *or* the plan covers both halves of a sample's life:
+     * a sample still running has not been stamped yet, and a sample that is
+     * over has been, whatever became of its subscription afterwards.
+     *
+     * The account rule keeps asking `plan` and only `plan`, which is not an
+     * oversight. "At a time" is a question about what is running now, and a
+     * customer whose first sample converted is paying us — refusing them a
+     * look at their second site would be enforcing the concurrency rule as
+     * though it were the lifetime one.
+     *
+     * Both rules skip the project being asked about, which is what makes this
+     * idempotent for its own retry: a launch that already minted its sample
+     * must still be told it may have one.
      *
      * False is not a refusal. The caller sends them to the checkout instead,
      * which is where this flow used to send everybody.
+     *
+     * Nor is a true here durable on its own — nothing stops a concurrent
+     * launch turning it into a lie between the asking and the writing. The
+     * locks that make the asking and the creating a single winner live with
+     * the only caller that creates: `OnboardingController::startPreviewFor()`.
      */
     public function mayHaveAPreview(User $user, Project $project): bool
     {
-        $previews = DB::table('project_subscriptions')
+        $others = DB::table('project_subscriptions')
             ->join('projects', 'projects.id', '=', 'project_subscriptions.project_id')
-            ->where('project_subscriptions.project_id', '!=', $project->getKey())
-            ->where('project_subscriptions.plan', 'preview');
+            ->where('project_subscriptions.project_id', '!=', $project->getKey());
 
         // One at a time, per account. A second sample running beside the first
         // is a second bill before anybody has answered the first question.
-        if ((clone $previews)->whereIn('project_subscriptions.project_id', $user->projects()->select('projects.id'))->exists()) {
+        if ((clone $others)
+            ->where('project_subscriptions.plan', 'preview')
+            ->whereIn('project_subscriptions.project_id', $user->projects()->select('projects.id'))
+            ->exists()) {
             return false;
         }
 
@@ -133,10 +168,19 @@ class TrialEligibility
             return false;
         }
 
-        // And once per site, across accounts, for the reason the domain check
-        // below is the only one of these worth anything: addresses are free
-        // and a domain had to be bought.
-        return ! $previews
+        // And once per site, across accounts, for the reason this is the only
+        // one of the two checks worth anything: addresses are free and a
+        // domain had to be bought.
+        //
+        // `onboarding->>'preview_finished_at' is not null` rather than a
+        // containment test: `onboarding` is a Postgres `json` column, not
+        // `jsonb`, so `?` is unavailable to it without a per-row cast, while
+        // `->>` reads a plain `json` value directly. Verified against the
+        // real column rather than assumed.
+        return ! $others
+            ->where(fn ($query) => $query
+                ->where('project_subscriptions.plan', 'preview')
+                ->orWhereNotNull('projects.onboarding->preview_finished_at'))
             ->whereNotNull('projects.website_url')
             ->pluck('projects.website_url')
             ->contains(fn (mixed $url): bool => is_string($url) && self::hostOf($url) === $host);

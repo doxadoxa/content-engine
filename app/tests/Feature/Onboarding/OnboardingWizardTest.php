@@ -10,6 +10,7 @@ use App\Billing\Contracts\BillingProvider;
 use App\Billing\Entitlements;
 use App\Billing\FakeBillingProvider;
 use App\Billing\StripeWebhook;
+use App\Billing\Subscriptions;
 use App\Billing\TrialEligibility;
 use App\Enums\BillingStatus;
 use App\Enums\ChannelType;
@@ -24,10 +25,12 @@ use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\Contracts\SiteReader;
 use App\Onboarding\FakeSiteReader;
+use App\Onboarding\ProjectLaunch;
 use App\Pipelines\Jobs\RunStepJob;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
@@ -534,6 +537,108 @@ final class OnboardingWizardTest extends TestCase
     }
 
     #[Test]
+    public function a_sample_that_converted_still_counts_against_its_site(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $first = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://cleaningpoint.net',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($first, ['role' => 'owner']);
+        $this->actingAs($operator)->post("/onboarding/{$first->getKey()}/launch");
+
+        // The sample ends, the customer is convinced, and they pay. Both
+        // halves of that, in the order the running system does them:
+        // `ProjectLaunch::settle()` stamps the project when the launch is over,
+        // and the Stripe webhook puts the row on the plan that was bought.
+        $this->finishPreview($first);
+        app(Subscriptions::class)->assign($first->fresh(), 'starter', $operator);
+
+        // Nothing left on the subscription says "preview" any more, which is
+        // exactly how this site used to get a second free run.
+        $this->assertSame('starter', ProjectSubscription::query()->sole()->plan);
+
+        $other = User::factory()->create();
+        $second = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://www.cleaningpoint.net/',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $other->projects()->attach($second, ['role' => 'owner']);
+
+        $this->assertFalse(app(TrialEligibility::class)->mayHaveAPreview($other, $second));
+    }
+
+    #[Test]
+    public function a_finished_sample_does_not_bar_its_own_account_from_another_site(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $first = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://cleaningpoint.net',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($first, ['role' => 'owner']);
+        $this->actingAs($operator)->post("/onboarding/{$first->getKey()}/launch");
+
+        // While it is running, it is the one sample this account gets.
+        $second = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://helpling.pt',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($second, ['role' => 'owner']);
+
+        $this->assertFalse(app(TrialEligibility::class)->mayHaveAPreview($operator, $second));
+
+        // Once it is over and paid for it is no longer a sample, and the
+        // account rule is about what is running rather than what ever ran — a
+        // paying customer's second site is not an abuse to be refused.
+        $this->finishPreview($first);
+        app(Subscriptions::class)->assign($first->fresh(), 'starter', $operator);
+
+        $this->assertTrue(app(TrialEligibility::class)->mayHaveAPreview($operator, $second->fresh()));
+    }
+
+    #[Test]
+    public function a_launch_that_cannot_take_the_sample_lock_buys_a_plan_instead(): void
+    {
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'website_url' => 'https://cleaningpoint.net',
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        // Another launch is mid-decision on this hostname. Two genuinely
+        // concurrent requests cannot be staged inside one PHPUnit process, so
+        // the lock is held directly — which is the same state the loser of
+        // that race finds, and the only part of it this code can act on.
+        $lock = Cache::lock('preview-launch-site:cleaningpoint.net', 60);
+        $this->assertTrue($lock->get());
+
+        try {
+            // Out to Stripe, not an error. The safe fallback is the flow this
+            // whole preview replaced, so the loser of the race buys a plan
+            // rather than reading a red banner on their last click.
+            $this->actingAs($operator)
+                ->withHeaders(['X-Inertia' => 'true'])
+                ->post("/onboarding/{$project->getKey()}/launch")
+                ->assertStatus(409)
+                ->assertHeader('X-Inertia-Location', 'https://checkout.stripe.test/starter/'.$project->getKey());
+        } finally {
+            $lock->release();
+        }
+
+        // And nothing was spent: no sample, no engine.
+        $this->assertSame(0, ProjectSubscription::query()->count());
+        $this->assertSame(0, PipelineRun::acrossProjects()->count());
+    }
+
+    #[Test]
     public function the_engine_starts_when_stripe_confirms_the_trial(): void
     {
         Queue::fake();
@@ -827,6 +932,16 @@ final class OnboardingWizardTest extends TestCase
         $this->actingAs($operator)
             ->post("/onboarding/{$theirs->getKey()}/launch")
             ->assertNotFound();
+    }
+
+    /** What {@see ProjectLaunch::settle()} leaves behind when a sample's launch ends. */
+    private function finishPreview(Project $project): void
+    {
+        $fresh = $project->fresh();
+
+        $fresh?->forceFill([
+            'onboarding' => [...$fresh->onboarding, 'preview_finished_at' => now()->toIso8601String()],
+        ])->save();
     }
 
     /** What Stripe sends once the card is accepted. */
