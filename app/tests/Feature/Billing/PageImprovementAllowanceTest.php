@@ -6,9 +6,7 @@ namespace Tests\Feature\Billing;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
-use App\Billing\Contracts\BillingProvider;
 use App\Billing\Entitlements;
-use App\Billing\FakeBillingProvider;
 use App\Billing\PlanCatalog;
 use App\Billing\PlanPrice;
 use App\Models\BusinessFact;
@@ -28,11 +26,10 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
-use Inertia\Testing\AssertableInertia;
 use RuntimeException;
 use Tests\TestCase;
 
-final class FocusedOfferTest extends TestCase
+final class PageImprovementAllowanceTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -49,10 +46,11 @@ final class FocusedOfferTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['billing.version' => 3, 'billing.default_plan' => 'local-search']);
         $this->project = Project::factory()->create(['website_url' => 'https://example.com']);
         app(CurrentProject::class)->set($this->project);
-        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'local-search', 'plan_version' => 2, 'limit_overrides' => json_encode(['page_improvements' => 1])]);
+        // Growth includes four page improvements; one makes the second
+        // first-acceptance the one the allowance refuses.
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['limit_overrides' => json_encode(['page_improvements' => 1])]);
         $this->owner = User::factory()->create();
         $this->owner->projects()->attach($this->project, ['role' => 'owner']);
         $this->actingAs($this->owner);
@@ -111,27 +109,6 @@ final class FocusedOfferTest extends TestCase
         $this->assertSame(0, DB::table('page_improvement_allowances')->count());
     }
 
-    public function test_public_offer_is_usd_and_a_legacy_subscription_retains_its_original_allowances(): void
-    {
-        $this->get('/')->assertOk()->assertInertia(fn (AssertableInertia $page) => $page->where('pricing.plans.0.key', 'local-search')->where('pricing.plans.0.currency', 'usd')->where('pricing.plans.0.price_cents', 8900)->where('pricing.plans.0.limits.improvements', 4));
-        $legacy = app(PlanCatalog::class)->get('medium', 1);
-        $this->assertSame(9900, $legacy->priceCents);
-        $this->assertSame('eur', $legacy->currency);
-        $this->assertSame(30, $legacy->limit('articles'));
-        $this->assertSame(0, app(PlanCatalog::class)->get('local-search', 2)->limit('articles'));
-        $this->assertSame(1, app(PlanCatalog::class)->trial(2)->limit('page_improvements'));
-    }
-
-    public function test_checkout_keeps_the_offer_version_and_refuses_a_stale_offer(): void
-    {
-        $provider = new FakeBillingProvider;
-        $this->app->instance(BillingProvider::class, $provider);
-        $this->withHeaders(['X-Inertia' => 'true'])->post('/billing/checkout', ['plan' => 'local-search', 'plan_version' => 3])->assertStatus(409);
-        $this->assertCount(1, $provider->checkouts);
-        $this->post('/billing/checkout', ['plan' => 'local-search', 'plan_version' => 2])->assertSessionHasErrors('plan');
-        $this->assertCount(1, $provider->checkouts);
-    }
-
     public function test_page_limit_rejects_new_tracking_but_allows_a_fresh_capture_of_an_existing_page(): void
     {
         ProjectSubscription::query()->where('project_id', $this->project->id)->update(['limit_overrides' => json_encode(['tracked_pages' => 1])]);
@@ -144,9 +121,9 @@ final class FocusedOfferTest extends TestCase
 
     public function test_checkout_price_must_match_currency_amount_and_monthly_interval(): void
     {
-        config(['billing.plans.2.local-search.stripe_price' => 'price_focus']);
-        $plan = app(PlanCatalog::class)->get('local-search', 2);
-        $price = ['id' => 'price_focus', 'active' => true, 'currency' => 'usd', 'unit_amount' => 8900, 'type' => 'recurring', 'recurring' => ['interval' => 'month', 'interval_count' => 1]];
+        config(['billing.plans.growth.stripe_price' => 'price_growth']);
+        $plan = app(PlanCatalog::class)->get('growth');
+        $price = ['id' => 'price_growth', 'active' => true, 'currency' => 'usd', 'unit_amount' => 8900, 'type' => 'recurring', 'recurring' => ['interval' => 'month', 'interval_count' => 1]];
         PlanPrice::verify($plan, $price);
         foreach ([['currency' => 'eur'], ['unit_amount' => 9900], ['recurring' => ['interval' => 'year', 'interval_count' => 1]]] as $change) {
             try {

@@ -46,8 +46,6 @@ final class StripeCheckoutTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // These cases exercise the version 1 offer; FocusedOfferTest covers version 2.
-        config(['billing.version' => 1]);
 
         $this->project = Project::factory()->unbilled()->create([
             'onboarding_status' => OnboardingStatus::Active,
@@ -73,16 +71,16 @@ final class StripeCheckoutTest extends TestCase
         // the client understands as "leave this application".
         $this->actingAs($this->owner)
             ->withHeaders(['X-Inertia' => 'true'])
-            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertStatus(409)
             ->assertHeader(
                 'X-Inertia-Location',
-                'https://checkout.stripe.test/medium/'.$this->project->getKey(),
+                'https://checkout.stripe.test/growth/'.$this->project->getKey(),
             );
 
         // The recorded call, not only the redirect: a stub returning a fixed
         // URL would pass while sending everybody to the wrong plan.
-        $this->assertSame('medium', $this->provider->checkouts[0]['plan']);
+        $this->assertSame('growth', $this->provider->checkouts[0]['plan']);
         $this->assertSame($this->project->getKey(), $this->provider->checkouts[0]['project']);
     }
 
@@ -92,20 +90,20 @@ final class StripeCheckoutTest extends TestCase
         // A checkout opens a *new* recurring subscription. Sending somebody who
         // already pays through one leaves two of them at Stripe — billed for
         // both — while the single local row follows whichever webhook arrives
-        // last.
+        // last. An upgrade, so the change is made now rather than scheduled.
         $this->provider->canChangePlan = true;
 
-        ProjectSubscription::factory()->forProject($this->project)->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create([
             'stripe_id' => 'sub_test',
             'billing_user_id' => $this->owner->getKey(),
         ]);
 
         $this->actingAs($this->owner)
             ->from(route('billing.index'))
-            ->post(route('billing.checkout'), ['plan' => 'small'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertRedirect(route('billing.index'));
 
-        $this->assertSame('small', $this->provider->planChanges[0]['plan']);
+        $this->assertSame('growth', $this->provider->planChanges[0]['plan']);
         $this->assertSame([], $this->provider->checkouts);
     }
 
@@ -121,14 +119,14 @@ final class StripeCheckoutTest extends TestCase
         $second = User::factory()->create();
         $second->projects()->attach($this->project, ['role' => 'owner']);
 
-        ProjectSubscription::factory()->forProject($this->project)->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create([
             'stripe_id' => 'sub_test',
             'billing_user_id' => $this->owner->getKey(),
         ]);
 
         $this->actingAs($second)
             ->from(route('billing.index'))
-            ->post(route('billing.checkout'), ['plan' => 'small'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertRedirect(route('billing.index'));
 
         $this->assertSame([], $this->provider->checkouts);
@@ -141,14 +139,14 @@ final class StripeCheckoutTest extends TestCase
     {
         $this->provider->canChangePlan = false;
 
-        ProjectSubscription::factory()->forProject($this->project)->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create([
             'stripe_id' => 'sub_test',
             'billing_user_id' => $this->owner->getKey(),
         ]);
 
         $this->actingAs($this->owner)
             ->from(route('billing.index'))
-            ->post(route('billing.checkout'), ['plan' => 'small'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertRedirect(route('billing.index'));
 
         // Whatever went wrong, opening a checkout for a project Stripe is
@@ -181,7 +179,7 @@ final class StripeCheckoutTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::Active,
             rawStatus: 'active',
-            priceId: 'price_medium',
+            priceId: 'price_growth',
             periodStart: $thisMonth,
             periodEnd: $thisMonth->copy()->addMonth(),
             trialEnd: null,
@@ -205,7 +203,7 @@ final class StripeCheckoutTest extends TestCase
         // and the caller falls back rather than refusing.
         $this->actingAs($this->owner)
             ->withHeaders(['X-Inertia' => 'true'])
-            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertStatus(409);
 
         $this->assertSame([], $this->provider->planChanges);
@@ -217,7 +215,7 @@ final class StripeCheckoutTest extends TestCase
     {
         $this->actingAs($this->owner)
             ->withHeaders(['X-Inertia' => 'true'])
-            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertStatus(409);
 
         $this->assertTrue($this->provider->checkouts[0]['with_trial']);
@@ -236,7 +234,7 @@ final class StripeCheckoutTest extends TestCase
 
         $this->actingAs($this->owner)
             ->withHeaders(['X-Inertia' => 'true'])
-            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertStatus(409);
 
         $this->assertFalse($this->provider->checkouts[0]['with_trial']);
@@ -250,12 +248,12 @@ final class StripeCheckoutTest extends TestCase
         // the customer was charged for one tier and served another.
         // No price ids are configured in the test environment, so the ones
         // this comparison turns on have to be said out loud.
-        config()->set('billing.plans.1.small.stripe_price', 'price_small');
-        config()->set('billing.plans.1.medium.stripe_price', 'price_medium');
+        config()->set('billing.plans.starter.stripe_price', 'price_starter');
+        config()->set('billing.plans.growth.stripe_price', 'price_growth');
 
-        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create([
             'stripe_id' => 'sub_test',
-            'stripe_price' => 'price_medium',
+            'stripe_price' => 'price_growth',
         ]);
 
         $subscription = ProjectSubscription::query()->sole();
@@ -264,7 +262,7 @@ final class StripeCheckoutTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::Active,
             rawStatus: 'active',
-            priceId: 'price_small',
+            priceId: 'price_starter',
             periodStart: $subscription->period_started_at,
             periodEnd: $subscription->period_ends_at,
             trialEnd: null,
@@ -273,17 +271,17 @@ final class StripeCheckoutTest extends TestCase
 
         $this->reconcile()->assertSuccessful();
 
-        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame('starter', ProjectSubscription::query()->sole()->plan);
     }
 
     #[Test]
-    public function a_plan_that_is_arranged_rather_than_bought_has_no_checkout(): void
+    public function a_plan_that_is_given_rather_than_bought_has_no_checkout(): void
     {
-        // Enterprise is a conversation and a custom price. A checkout for it
-        // would take somebody's money against limits nobody has agreed.
+        // The trial is given, not sold. A checkout for it would take
+        // somebody's card against a plan that has no price.
         $this->actingAs($this->owner)
-            ->post(route('billing.checkout'), ['plan' => 'enterprise'])
-            ->assertSessionHasErrors('plan');
+            ->post(route('billing.checkout'), ['plan' => 'trial'])
+            ->assertSessionHasErrors(['plan' => 'That plan cannot be bought.']);
 
         $this->assertSame([], $this->provider->checkouts);
     }
@@ -304,7 +302,7 @@ final class StripeCheckoutTest extends TestCase
 
         $this->actingAs($operator)->get(route('billing.index'))->assertOk();
         $this->actingAs($operator)
-            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertForbidden();
     }
 
@@ -330,7 +328,7 @@ final class StripeCheckoutTest extends TestCase
     {
         ProjectSubscription::factory()->forProject($this->project)->trialing()->create();
 
-        // A trial, a comped plan and a hand-assigned Enterprise deal have no
+        // A trial, a comped plan and a hand-assigned arrangement have no
         // portal behind them; sending somebody to one lands them on a Stripe
         // error.
         $this->actingAs($this->owner)
@@ -377,7 +375,7 @@ final class StripeCheckoutTest extends TestCase
         // the failure is ours.
         $this->actingAs($this->owner)
             ->from(route('billing.index'))
-            ->post(route('billing.checkout'), ['plan' => 'medium'])
+            ->post(route('billing.checkout'), ['plan' => 'growth'])
             ->assertRedirect(route('billing.index'));
 
         // And the page they land back on says it. Asserting the redirect alone
@@ -404,7 +402,7 @@ final class StripeCheckoutTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::Canceled,
             rawStatus: 'canceled',
-            priceId: 'price_medium',
+            priceId: 'price_growth',
             periodStart: Carbon::now()->subMonth(),
             periodEnd: Carbon::now(),
             trialEnd: null,
@@ -432,7 +430,7 @@ final class StripeCheckoutTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::Active,
             rawStatus: 'active',
-            priceId: 'price_medium',
+            priceId: 'price_growth',
             periodStart: $started,
             periodEnd: $started->copy()->addMonth(),
             trialEnd: null,
@@ -470,7 +468,7 @@ final class StripeCheckoutTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::Active,
             rawStatus: 'active',
-            priceId: 'price_medium',
+            priceId: 'price_growth',
             periodStart: $thisMonth,
             periodEnd: $thisMonth->copy()->addMonth(),
             trialEnd: null,
@@ -504,7 +502,7 @@ final class StripeCheckoutTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::PastDue,
             rawStatus: 'unpaid',
-            priceId: 'price_medium',
+            priceId: 'price_growth',
             periodStart: null,
             periodEnd: null,
             trialEnd: null,
@@ -540,7 +538,7 @@ final class StripeCheckoutTest extends TestCase
     #[Test]
     public function a_subscription_with_no_provider_behind_it_is_not_reconciled(): void
     {
-        // A trial, a comp and an Enterprise deal assigned from the terminal
+        // A trial, a comp and an arrangement assigned from the terminal
         // have nothing at the provider to disagree with.
         ProjectSubscription::factory()->forProject($this->project)->trialing()->create();
 

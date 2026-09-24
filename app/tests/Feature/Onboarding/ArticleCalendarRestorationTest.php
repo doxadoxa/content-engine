@@ -35,7 +35,6 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
-use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 final class ArticleCalendarRestorationTest extends TestCase
@@ -46,20 +45,20 @@ final class ArticleCalendarRestorationTest extends TestCase
     {
         parent::setUp();
         $this->travelTo(Carbon::parse('2026-09-15 12:00:00'));
-        config(['social.enabled' => false, 'billing.version' => 3, 'billing.default_plan' => 'local-search']);
+        config(['social.enabled' => false]);
         Queue::fake();
     }
 
-    public function test_offer_restores_articles_without_rewriting_previous_versions(): void
+    public function test_every_plan_includes_articles_and_a_calendar_but_no_social(): void
     {
         $catalog = app(PlanCatalog::class);
-        $this->assertSame(3, $catalog->currentVersion());
-        $this->assertSame(30, $catalog->get('local-search')->limit('articles'));
-        $this->assertSame(1, $catalog->get('local-search')->limit('content_plans'));
-        $this->assertSame(0, $catalog->get('local-search')->limit('social_posts'));
+        $this->assertSame(30, $catalog->get('growth')->limit('articles'));
+        $this->assertSame(1, $catalog->get('growth')->limit('content_plans'));
+        $this->assertSame(0, $catalog->get('growth')->limit('social_posts'));
+        $this->assertSame(12, $catalog->get('starter')->limit('articles'));
+        $this->assertSame(1, $catalog->get('starter')->limit('content_plans'));
+        $this->assertSame(0, $catalog->get('starter')->limit('social_posts'));
         $this->assertSame(3, $catalog->trial()->limit('articles'));
-        $this->assertSame(0, $catalog->get('local-search', 2)->limit('articles'));
-        $this->assertSame(30, $catalog->get('medium', 1)->limit('articles'));
     }
 
     public function test_article_launch_research_continues_once_and_never_starts_social(): void
@@ -81,14 +80,18 @@ final class ArticleCalendarRestorationTest extends TestCase
     public function test_manual_month_survives_research_and_repeated_requests(): void
     {
         $project = $this->project();
-        $run = app(MonthPlanner::class)->start($project, '2026-10-01');
-        $again = app(MonthPlanner::class)->start($project, '2026-10-01');
+        $run = app(MonthPlanner::class)->start($project, '2026-09-01');
+        $again = app(MonthPlanner::class)->start($project, '2026-09-01');
         $this->assertSame($run->id, $again->id);
         $this->ideas(1);
         $run->forceFill(['status' => PipelineRunStatus::Completed])->save();
         $planned = app(MonthPlanner::class)->afterResearch($run);
         $this->assertNotNull($planned);
-        $this->assertSame('2026-10-01', $planned->input['month']);
+        // A billed project plans its confirmed billing period; the month is
+        // only the calendar bucket that period starts in.
+        $this->assertSame('2026-09-01', $planned->input['month']);
+        $period = ProjectSubscription::query()->where('project_id', $project->id)->sole()->period_started_at;
+        $this->assertTrue(Carbon::parse($planned->input['article_period_started_at'])->equalTo($period));
         $this->assertNull(app(MonthPlanner::class)->afterResearch($run));
         $this->assertSame(1, PipelineRun::query()->where('pipeline', 'planning')->count());
     }
@@ -126,18 +129,13 @@ final class ArticleCalendarRestorationTest extends TestCase
         $this->assertSame(0, ArticleWorkflow::capacity($project));
     }
 
-    public function test_old_project_false_preference_and_version_two_remain_unchanged(): void
+    public function test_old_project_false_preference_remains_unchanged(): void
     {
         $project = $this->project();
         $project->update(['autopublish' => false, 'onboarded_at' => now()->subMonth()]);
         app(ProjectLaunch::class)->begin($project);
         $this->assertFalse($project->refresh()->autopublish);
         $this->assertArrayNotHasKey('article_automation_started_at', $project->onboarding);
-        ProjectSubscription::query()->where('project_id', $project->id)->update(['plan_version' => 2]);
-        app(Entitlements::class)->forget($project);
-        $this->assertFalse(ArticleWorkflow::enabled($project));
-        $this->expectException(ValidationException::class);
-        app(PipelineRunner::class)->start('planning', $project);
     }
 
     public function test_lapsed_subscription_stops_already_queued_generation_before_a_step_runs(): void
@@ -213,9 +211,11 @@ final class ArticleCalendarRestorationTest extends TestCase
     {
         $project = Project::factory()->onboarding()->create(['autopublish' => true, 'weekly_target' => 7, 'research_seeds' => ['cleaning']]);
         ProjectSubscription::query()->where('project_id', $project->id)->update([
-            'plan' => 'local-search', 'plan_version' => 3,
+            'plan' => 'growth',
             'status' => $trial ? BillingStatus::Trialing : BillingStatus::Active,
             'trial_ends_at' => $trial ? now()->addDays(3) : null,
+            // A trial's billing period is the free window itself, starting now.
+            ...($trial ? ['period_started_at' => now(), 'period_ends_at' => now()->addDays(3)] : []),
         ]);
         app(Entitlements::class)->forget($project);
         app(CurrentProject::class)->set($project);

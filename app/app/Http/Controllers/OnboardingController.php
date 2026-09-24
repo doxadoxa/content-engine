@@ -87,11 +87,9 @@ class OnboardingController extends Controller
 
         return Inertia::render('onboarding/wizard', [
             'draft' => $draft === null ? null : $this->toProps($draft),
-            'articlesEnabled' => $this->articleOffer($draft),
             'selectedPlan' => $this->selection->selected($request, $draft)->toArray(),
             'plans' => array_map(static fn (Plan $plan): array => $plan->toArray(), $this->plans->selfServe()),
             'trialDays' => $this->plans->trialDays(),
-            'offerVersion' => ($draft === null ? null : app(Entitlements::class)->for($draft)->plan?->version) ?? $this->plans->currentVersion(),
             'channelTypes' => array_map(static fn (ChannelType $type): array => [
                 'value' => $type->value,
                 'label' => $type->label(),
@@ -159,12 +157,12 @@ class OnboardingController extends Controller
         if ($validated['step'] === 'market') {
             $offer = app(Entitlements::class)->for($project)->plan ?? $this->selection->selected($request, $project);
             $locales = array_unique([(string) $validated['answers']['language'], ...($validated['answers']['extra_languages'] ?? [])]);
-            if ($offer->version >= 4 && $offer->limit('locales') !== null && count($locales) > $offer->limit('locales')) {
+            if ($offer->limit('locales') !== null && count($locales) > $offer->limit('locales')) {
                 throw ValidationException::withMessages(['answers.extra_languages' => 'This plan includes one language. Choose the language for your website.']);
             }
         }
         if ($validated['step'] === 'offer') {
-            $plan = $this->selection->validate((string) $validated['answers']['key'], (int) $validated['answers']['version']);
+            $plan = $this->selection->validate((string) $validated['answers']['key']);
             $request->session()->put(PlanSelection::SESSION_KEY, $this->selection->identity($plan));
             $project->weekly_target = $plan->weeklyTarget() ?? 7;
         }
@@ -188,9 +186,8 @@ class OnboardingController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $selected = $this->selection->selected($request, $project);
-        $plan = $this->selection->validate($selected->key, $selected->version);
-        if ($plan->version >= 4 && count($project->locales) > ($plan->limit('locales') ?? PHP_INT_MAX)) {
+        $plan = $this->selection->validate($this->selection->selected($request, $project)->key);
+        if (count($project->locales) > ($plan->limit('locales') ?? PHP_INT_MAX)) {
             throw ValidationException::withMessages(['plan' => 'Select one website language before starting this plan.']);
         }
 
@@ -391,14 +388,6 @@ class OnboardingController extends Controller
         }
     }
 
-    private function articleOffer(?Project $project): bool
-    {
-        $plan = ($project === null ? null : app(Entitlements::class)->for($project)->plan)
-            ?? $this->plans->defaultPlan();
-
-        return $plan->limit('articles') === null || $plan->limit('articles') > 0;
-    }
-
     /**
      * A project exists from step one, so the analysis and the answers have
      * somewhere to live and a closed tab is resumable.
@@ -500,7 +489,7 @@ class OnboardingController extends Controller
                 // A YMYL project cannot opt out of review, whatever the form
                 // sent: the checkbox is disabled in the UI, and a disabled
                 // checkbox is a suggestion rather than a rule.
-                'autopublish' => $this->articleOffer($project) && ! $project->is_ymyl && (bool) ($answers['autopublish'] ?? $project->autopublish),
+                'autopublish' => ! $project->is_ymyl && (bool) ($answers['autopublish'] ?? $project->autopublish),
             ],
             default => [],
         };

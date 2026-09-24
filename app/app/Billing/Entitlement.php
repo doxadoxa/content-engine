@@ -313,7 +313,6 @@ final readonly class Entitlement
                 'name' => $this->plan->name,
                 'price_cents' => $this->plan->priceCents,
                 'currency' => $this->plan->currency,
-                'version' => $this->plan->version,
             ],
             'status' => $this->status->value,
             'may_generate' => $this->mayGenerate(),

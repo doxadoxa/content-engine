@@ -20,7 +20,7 @@ final class ScheduleAiSampling extends Command
 
     public function handle(SamplingSchedule $schedule): int
     {
-        foreach (Project::query()->where('status', ProjectStatus::Active)->whereIn('id', ProjectSubscription::query()->where('plan_version', '>=', 4)->select('project_id'))->cursor() as $project) {
+        foreach (Project::query()->where('status', ProjectStatus::Active)->whereIn('id', ProjectSubscription::query()->select('project_id'))->cursor() as $project) {
             try {
                 $schedule->dispatchDue($project);
             } catch (Throwable $error) {

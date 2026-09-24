@@ -6,12 +6,14 @@ namespace Tests\Feature\NativePages;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
+use App\Billing\Entitlements;
 use App\Models\BusinessFact;
 use App\Models\Channel;
 use App\Models\PageOpportunity;
 use App\Models\PageProposal;
 use App\Models\PagePublicationOperation;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\SitePage;
 use App\Models\User;
 use App\Pages\BusinessFacts;
@@ -150,6 +152,11 @@ final class NativePagePublicationTest extends TestCase
 
     public function test_native_custom_connection_does_not_require_an_unused_article_delivery_endpoint(): void
     {
+        // The WordPress editor from setUp already fills the one connection a
+        // plan includes; this is about what a second one must be configured
+        // with, so the project is allowed it.
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['limit_overrides' => json_encode(['channels' => 2])]);
+        app(Entitlements::class)->forget($this->project);
         $this->post('/channels', ['name' => 'Existing custom pages', 'type' => 'webhook',
             'config' => ['page_receiver_base' => 'https://example.com/api/avyo/pages/v1'],
             'secret' => 'synthetic-page-secret', 'is_enabled' => true])->assertSessionHasNoErrors()->assertRedirect();

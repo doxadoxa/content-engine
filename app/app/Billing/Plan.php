@@ -22,7 +22,6 @@ final readonly class Plan
      */
     private function __construct(
         public string $key,
-        public int $version,
         public string $name,
         public int $priceCents,
         public string $currency,
@@ -34,7 +33,7 @@ final readonly class Plan
     /**
      * @param  array<string, mixed>  $row
      */
-    public static function fromConfig(string $key, int $version, array $row): self
+    public static function fromConfig(string $key, array $row): self
     {
         /** @var array<string, int|null> $limits */
         $limits = is_array($row['limits'] ?? null) ? $row['limits'] : [];
@@ -42,7 +41,6 @@ final readonly class Plan
 
         return new self(
             key: $key,
-            version: $version,
             name: is_string($row['name'] ?? null) ? $row['name'] : ucfirst($key),
             priceCents: (int) ($row['price_cents'] ?? 0),
             currency: strtolower((string) ($row['currency'] ?? config('billing.currency', 'eur'))),
@@ -55,10 +53,11 @@ final readonly class Plan
     /**
      * A plan whose limits have been widened or narrowed for one customer.
      *
-     * This is what Enterprise is: the config row names the shape and the
-     * subscription row names the numbers. Overrides are merged rather than
-     * replacing the set, so a bespoke article count does not accidentally make
-     * every unnamed limit unlimited.
+     * A comped allowance, or the preview's article count matched to the plan
+     * that was chosen: the config row names the shape and the subscription row
+     * names the numbers. Overrides are merged rather than replacing the set, so
+     * a bespoke article count does not accidentally make every unnamed limit
+     * unlimited.
      *
      * @param  array<string, int|null>  $overrides
      */
@@ -66,7 +65,6 @@ final readonly class Plan
     {
         return new self(
             key: $this->key,
-            version: $this->version,
             name: $this->name,
             priceCents: $this->priceCents,
             currency: $this->currency,
@@ -115,7 +113,6 @@ final readonly class Plan
     {
         return [
             'key' => $this->key,
-            'version' => $this->version,
             'name' => $this->name,
             'price_cents' => $this->priceCents,
             'currency' => $this->currency,

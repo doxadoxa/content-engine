@@ -56,7 +56,9 @@ final class HomeTest extends TestCase
         $this->app->instance(ImageGenerationProvider::class, new FakeImageGeneration);
 
         $this->operator = User::factory()->create();
-        $this->project = Project::factory()->create(['site_analysis' => []]);
+        // Typed ideas are written as social posts, which no plan on sale
+        // includes any more; the allowance is granted as an override.
+        $this->project = Project::factory()->withSocialAllowance()->create(['site_analysis' => []]);
         $this->project->users()->attach($this->operator);
         $this->actingAs($this->operator);
         $this->withSession(['project_id' => $this->project->getKey()]);

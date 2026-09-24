@@ -48,7 +48,7 @@ final class StripeWebhookTest extends TestCase
 
         $subscription = ProjectSubscription::query()->sole();
 
-        $this->assertSame('medium', $subscription->plan);
+        $this->assertSame('growth', $subscription->plan);
         $this->assertSame(BillingStatus::Active, $subscription->status);
         $this->assertSame('sub_test', $subscription->stripe_id);
         $this->assertTrue(app(Entitlements::class)->for($this->project)->mayGenerate());
@@ -180,22 +180,40 @@ final class StripeWebhookTest extends TestCase
     }
 
     #[Test]
-    public function the_metadata_decides_the_plan_and_not_the_price(): void
+    public function the_metadata_names_the_plan_when_the_price_is_not_one_of_ours(): void
     {
-        // Metadata wins because it is what a checkout stamps and it survives a
-        // subscription being edited in the Stripe dashboard. Which is exactly
-        // why a *swap* has to rewrite it: change only the price and the update
-        // that follows still names the old plan, so the local entitlement sits
-        // on the old tier while Stripe charges the new amount.
+        // A price nobody configured here says nothing about which plan was
+        // bought, so the key the checkout stamped is what decides.
         $payload = $this->subscriptionPayload('active');
-        $payload['data']['object']['metadata']['plan'] = 'small';
-        // The price still says Medium. Metadata is the one that must win.
-        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_medium';
+        $payload['data']['object']['metadata']['plan'] = 'starter';
+        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_unconfigured';
 
         $this->send($payload);
 
-        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
-        $this->assertSame(10, $this->entitlement()->limit('articles'));
+        $this->assertSame('starter', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame(12, $this->entitlement()->limit('articles'));
+    }
+
+    #[Test]
+    public function a_configured_price_decides_the_plan_over_metadata_left_behind(): void
+    {
+        // A portal or dashboard swap changes the price and leaves the
+        // checkout's metadata where it was. The price is what Stripe charges,
+        // so trusting the stale key would sit the customer on the old tier
+        // while they pay for the new one.
+        config([
+            'billing.plans.starter.stripe_price' => 'price_starter',
+            'billing.plans.growth.stripe_price' => 'price_growth',
+        ]);
+
+        $payload = $this->subscriptionPayload('active');
+        $payload['data']['object']['metadata']['plan'] = 'growth';
+        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_starter';
+
+        $this->send($payload);
+
+        $this->assertSame('starter', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame(12, $this->entitlement()->limit('articles'));
     }
 
     #[Test]
@@ -258,9 +276,7 @@ final class StripeWebhookTest extends TestCase
         ));
 
         // A renewal is not a plan change. Routing it through `assign()` cleared
-        // an Enterprise customer's bespoke limits at their first renewal and
-        // moved every paying customer onto the newest price list — which is
-        // exactly what `plan_version` exists to prevent.
+        // a comped customer's bespoke limits at their first renewal.
         $subscription = ProjectSubscription::query()->sole();
 
         $this->assertSame(['articles' => 500], $subscription->limit_overrides);
@@ -274,16 +290,16 @@ final class StripeWebhookTest extends TestCase
         ProjectSubscription::query()->sole()->update(['limit_overrides' => ['articles' => 500]]);
 
         $payload = $this->subscriptionPayload('active', eventId: 'evt_downgrade');
-        $payload['data']['object']['metadata']['plan'] = 'small';
-        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_small';
+        $payload['data']['object']['metadata']['plan'] = 'starter';
+        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_starter';
 
         $this->send($payload);
 
         $subscription = ProjectSubscription::query()->sole();
 
-        $this->assertSame('small', $subscription->plan);
+        $this->assertSame('starter', $subscription->plan);
         $this->assertSame([], $subscription->limit_overrides);
-        $this->assertSame(10, $this->entitlement()->limit('articles'));
+        $this->assertSame(12, $this->entitlement()->limit('articles'));
     }
 
     #[Test]
@@ -352,56 +368,6 @@ final class StripeWebhookTest extends TestCase
 
         $this->assertSame('subscribed', StripeEvent::query()->sole()->outcome);
         $this->assertTrue($this->entitlement()->mayGenerate());
-    }
-
-    #[Test]
-    public function a_plan_version_is_read_back_from_the_checkout_that_sold_it(): void
-    {
-        // A session opened under one price list and completed after the next
-        // was published bought the one it was opened under. It would be quite
-        // a trick to charge somebody against a list that did not exist when
-        // they clicked.
-        $payload = $this->subscriptionPayload('active');
-        $payload['data']['object']['metadata']['plan_version'] = '1';
-
-        $this->send($payload);
-
-        $this->assertSame(1, ProjectSubscription::query()->sole()->plan_version);
-    }
-
-    #[Test]
-    public function an_unknown_explicit_version_never_falls_back_to_todays_offer(): void
-    {
-        $payload = $this->subscriptionPayload('active');
-        $payload['data']['object']['metadata']['plan_version'] = '999';
-        $this->send($payload);
-        $this->assertSame(0, ProjectSubscription::query()->count());
-        $this->assertSame('unknown_plan', StripeEvent::query()->sole()->outcome);
-    }
-
-    #[Test]
-    public function a_legacy_dashboard_price_resolves_its_original_version_after_the_new_offer_launches(): void
-    {
-        config(['billing.version' => 2, 'billing.plans.1.medium.stripe_price' => 'price_original']);
-        $payload = $this->subscriptionPayload('active');
-        unset($payload['data']['object']['metadata']['plan'], $payload['data']['object']['metadata']['plan_version']);
-        $payload['data']['object']['items']['data'][0]['price']['id'] = 'price_original';
-        $this->send($payload);
-        $this->assertSame('medium', ProjectSubscription::query()->sole()->plan);
-        $this->assertSame(1, ProjectSubscription::query()->sole()->plan_version);
-    }
-
-    #[Test]
-    public function a_version_two_subscription_records_the_usd_offer_without_migrating_legacy_rows(): void
-    {
-        $payload = $this->subscriptionPayload('active');
-        $payload['data']['object']['metadata']['plan'] = 'local-search';
-        $payload['data']['object']['metadata']['plan_version'] = '2';
-        $this->send($payload);
-        $subscription = ProjectSubscription::query()->sole();
-        $this->assertSame(2, $subscription->plan_version);
-        $this->assertSame('usd', $subscription->plan()->currency);
-        $this->assertSame(4, $subscription->plan()->limit('page_improvements'));
     }
 
     #[Test]
@@ -591,10 +557,9 @@ final class StripeWebhookTest extends TestCase
                 'canceled_at' => null,
                 'metadata' => [
                     'project_id' => $this->project->getKey(),
-                    'plan' => 'medium',
-                    'plan_version' => '1',
+                    'plan' => 'growth',
                 ],
-                'items' => ['data' => [['price' => ['id' => 'price_medium']]]],
+                'items' => ['data' => [['price' => ['id' => 'price_growth']]]],
             ]],
         ];
     }

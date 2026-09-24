@@ -73,7 +73,7 @@ final class OnboardingWizardTest extends TestCase
             // Not null. The database defaults these, but a model that just
             // created its own row has never read them back — and the wizard
             // indexes into `onboarding` on the very next render.
-            ->assertJsonPath('project.onboarding.offer', ['key' => 'starter', 'version' => 4])
+            ->assertJsonPath('project.onboarding.offer', ['key' => 'starter'])
             ->assertJsonPath('project.seed_keywords', [
                 'limpeza lisboa',
                 'end of tenancy cleaning lisbon',
@@ -293,7 +293,7 @@ final class OnboardingWizardTest extends TestCase
     #[Test]
     public function finishing_the_wizard_writes_a_brief_connects_channels_and_starts_research(): void
     {
-        config(['billing.version' => 1, 'billing.default_plan' => 'medium']);
+        config(['billing.default_plan' => 'growth']);
         Queue::fake();
 
         $operator = User::factory()->create();
@@ -345,15 +345,26 @@ final class OnboardingWizardTest extends TestCase
             'answers' => ['weekly_target' => 5, 'autopublish' => true],
         ])->assertOk();
 
+        // A launch that cannot have the card-free sample goes straight to the
+        // card. That path is the one this test follows through to Stripe, so
+        // the site's sample lock is held — the state a launch finds when
+        // another is mid-decision on the same hostname.
+        $lock = Cache::lock('preview-launch-site:cleaningpoint.pt', 60);
+        $this->assertTrue($lock->get());
+
         // Out to Stripe for the card, not home. The subscription is created
         // charging nothing; the first invoice falls due when the free days run
         // out. `Inertia::location()` is the only answer an Inertia form
         // understands as "leave this application".
-        $this->actingAs($operator)
-            ->withHeaders(['X-Inertia' => 'true'])
-            ->post("/onboarding/{$id}/launch")
-            ->assertStatus(409)
-            ->assertHeader('X-Inertia-Location', 'https://checkout.stripe.test/medium/'.$id);
+        try {
+            $this->actingAs($operator)
+                ->withHeaders(['X-Inertia' => 'true'])
+                ->post("/onboarding/{$id}/launch")
+                ->assertStatus(409)
+                ->assertHeader('X-Inertia-Location', 'https://checkout.stripe.test/growth/'.$id);
+        } finally {
+            $lock->release();
+        }
 
         $project->refresh();
 
@@ -962,10 +973,9 @@ final class OnboardingWizardTest extends TestCase
                 'canceled_at' => null,
                 'metadata' => [
                     'project_id' => $project->getKey(),
-                    'plan' => 'medium',
-                    'plan_version' => '1',
+                    'plan' => 'growth',
                 ],
-                'items' => ['data' => [['price' => ['id' => 'price_medium']]]],
+                'items' => ['data' => [['price' => ['id' => 'price_growth']]]],
             ]],
         ]);
     }

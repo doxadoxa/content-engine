@@ -568,7 +568,9 @@ final class OperatorDayTest extends TestCase
         Http::fake(['newsite.test/*' => Http::response(['public_url' => 'https://newsite.test/x'])]);
 
         // No content anywhere: connecting a channel is something you do on a
-        // fresh project, before anything has been written.
+        // fresh project, before anything has been written. Nor any channel —
+        // every plan connects one, and the fixture's would take the slot.
+        $this->channel->delete();
         $this->assertSame(0, ContentItem::query()->count());
 
         $this->actingAs($this->operator)
@@ -835,6 +837,10 @@ final class OperatorDayTest extends TestCase
     #[Test]
     public function pull_channels_require_a_unique_bearer_token(): void
     {
+        // Every plan connects one channel, so the fixture's would refuse the
+        // first pull channel on the limit before its token was ever read.
+        $this->channel->delete();
+
         $this->actingAs($this->operator)->post(route('channels.store'), [
             'name' => 'Missing token',
             'type' => 'pull_api',

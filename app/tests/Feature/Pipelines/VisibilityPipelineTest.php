@@ -46,7 +46,10 @@ final class VisibilityPipelineTest extends TestCase
     {
         parent::setUp();
 
-        $this->project = Project::factory()->create([
+        // Every billed project samples a fixed, quota-limited question set in its
+        // default locale, so the archived multi-locale excerpt sweep this file
+        // covers is only reachable for a project without a subscription.
+        $this->project = Project::factory()->unbilled()->create([
             'name' => 'Cleaning Point',
             'website_url' => 'https://cleaningpoint.net',
             'market' => 'pt',

@@ -726,7 +726,7 @@ function Questions({
 function CellRecheck({ id }: { id: string }) {
     const form = useForm({ request_key: crypto.randomUUID() });
     const { billing } = usePage().props;
-    const limited = (billing?.plan?.version ?? 0) >= 4;
+    const limited = Boolean(billing?.plan);
 
     return (
         <Button

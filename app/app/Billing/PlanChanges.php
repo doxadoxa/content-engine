@@ -12,7 +12,7 @@ final class PlanChanges
 {
     public function atRenewal(?ProjectSubscription $subscription, Plan $target): bool
     {
-        if ($subscription === null || $subscription->status === BillingStatus::Trialing || $target->version < 4) {
+        if ($subscription === null || $subscription->status === BillingStatus::Trialing) {
             return false;
         }
         $current = $subscription->plan();

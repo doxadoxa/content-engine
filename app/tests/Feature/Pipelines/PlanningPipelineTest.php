@@ -19,6 +19,7 @@ use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\SitePage;
 use App\Pipelines\Core\PipelineRunner;
 use App\Pipelines\Steps\Planning\ScheduleCalendar;
@@ -45,13 +46,16 @@ final class PlanningPipelineTest extends TestCase
     {
         parent::setUp();
 
-        // Most cases explicitly plan September and assert a whole month's
-        // capacity. Partial-month cases below set their own clock.
-        $this->travelTo(Carbon::parse('2026-08-31 12:00:00'));
+        // A billed project plans its billing period, not a calendar month, so
+        // the fixture's period is pinned to September: most cases explicitly
+        // plan September and assert a whole period's capacity. Cases about
+        // when a period starts set their own clock and period.
+        $this->travelTo(Carbon::parse('2026-09-01 12:00:00'));
 
         $this->project = Project::factory()->multilingual()->create([
             'weekly_target' => 2,
         ]);
+        $this->billingPeriod('2026-09-01', '2026-10-01');
         app(CurrentProject::class)->set($this->project);
 
         config()->set('queue.default', 'sync');
@@ -661,6 +665,9 @@ final class PlanningPipelineTest extends TestCase
     {
         Carbon::setTestNow('2026-08-15');
 
+        // Somebody who signs up today starts a billing period today.
+        $this->billingPeriod('2026-08-15', '2026-09-15');
+
         $this->idea('topic a', 'cluster-a');
         app(PipelineRunner::class)->start('planning', $this->project, []);
 
@@ -673,54 +680,6 @@ final class PlanningPipelineTest extends TestCase
             ContentItem::query()->whereNotNull('scheduled_for')->orderBy('scheduled_for')->firstOrFail()
                 ->scheduled_for?->toDateString(),
         );
-
-        Carbon::setTestNow();
-    }
-
-    #[Test]
-    public function planning_at_the_end_of_a_month_rolls_into_the_next_one(): void
-    {
-        Carbon::setTestNow('2026-08-29');
-
-        $this->idea('topic a', 'cluster-a');
-        app(PipelineRunner::class)->start('planning', $this->project, []);
-
-        // Two days left is no room for a cadence. The plan rolls, and the first
-        // article is still only three days out rather than a month.
-        $this->assertSame('2026-09-01', ContentPlan::query()->firstOrFail()->month->toDateString());
-        $this->assertSame(
-            '2026-09-01',
-            ContentItem::query()->whereNotNull('scheduled_for')->orderBy('scheduled_for')->firstOrFail()
-                ->scheduled_for?->toDateString(),
-        );
-
-        Carbon::setTestNow();
-    }
-
-    #[Test]
-    public function a_partial_month_is_planned_at_the_same_cadence_not_crammed(): void
-    {
-        Carbon::setTestNow('2026-08-15');
-
-        $this->project->forceFill(['weekly_target' => 7])->save();
-
-        for ($i = 0; $i < 40; $i++) {
-            $this->idea("topic {$i}", 'cluster-a', 500 - $i);
-        }
-
-        app(PipelineRunner::class)->start('planning', $this->project, []);
-
-        // Sixteen days left at seven a week is sixteen articles, not a whole
-        // month's thirty crushed into half a month. Roots only: a locale
-        // variant is planned on the same day and would double the count.
-        $scheduled = ContentItem::query()
-            ->roots()
-            ->where('locale', $this->project->default_locale)
-            ->whereNotNull('scheduled_for')
-            ->count();
-
-        $this->assertGreaterThanOrEqual(14, $scheduled);
-        $this->assertLessThanOrEqual(18, $scheduled);
 
         Carbon::setTestNow();
     }
@@ -886,5 +845,14 @@ final class PlanningPipelineTest extends TestCase
     private function plan(array $input = ['month' => '2026-09-01']): PipelineRun
     {
         return app(PipelineRunner::class)->start('planning', $this->project, $input);
+    }
+
+    /** Pins the project's subscription to one billing period, in its own timezone. */
+    private function billingPeriod(string $start, string $end): void
+    {
+        ProjectSubscription::query()->where('project_id', $this->project->getKey())->firstOrFail()->forceFill([
+            'period_started_at' => Carbon::parse($start, $this->project->timezone),
+            'period_ends_at' => Carbon::parse($end, $this->project->timezone),
+        ])->save();
     }
 }

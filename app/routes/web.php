@@ -48,9 +48,8 @@ use Inertia\Inertia;
  *
  * Read from `config/billing.php` rather than written into the page, because
  * there is one price list and a second copy of it in a marketing component is
- * a second copy to forget. Only the self-serve plans: Enterprise is a
- * conversation, and a "Choose" button under it would promise a checkout that
- * does not exist.
+ * a second copy to forget. Only the self-serve plans: a "Choose" button under
+ * the preview or the trial would promise a checkout that does not exist.
  */
 Route::get('/', fn (PlanCatalog $plans) => Inertia::render('marketing', [
     'pricing' => [
@@ -61,7 +60,6 @@ Route::get('/', fn (PlanCatalog $plans) => Inertia::render('marketing', [
             'name' => $plan->name,
             'price_cents' => $plan->priceCents,
             'currency' => $plan->currency,
-            'version' => $plan->version,
             'limits' => [
                 'improvements' => $plan->limit('page_improvements'),
                 'tracked_pages' => $plan->limit('tracked_pages'),

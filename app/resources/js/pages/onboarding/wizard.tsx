@@ -76,7 +76,6 @@ type Draft = {
 
 type Offer = {
     key: string;
-    version: number;
     name: string;
     price_cents: number;
     currency: string;
@@ -86,7 +85,6 @@ type Props = {
     selectedPlan: Offer;
     plans: Offer[];
     trialDays: number;
-    articlesEnabled: boolean;
     draft: Draft | null;
 };
 
@@ -111,7 +109,6 @@ const STEPS = [
  */
 export default function Wizard({
     draft: initialDraft,
-    articlesEnabled,
     selectedPlan: initialPlan,
     plans,
     trialDays,
@@ -179,9 +176,7 @@ export default function Wizard({
                                     }
 
                                     if (!draft) {
-                                        router.visit(
-                                            `/start?plan=${next.key}&plan_version=${next.version}`,
-                                        );
+                                        router.visit(`/start?plan=${next.key}`);
 
                                         return;
                                     }
@@ -193,7 +188,6 @@ export default function Wizard({
                                         step: 'offer',
                                         answers: {
                                             key: next.key,
-                                            version: next.version,
                                         },
                                     });
                                     setBusy(false);
@@ -223,11 +217,7 @@ export default function Wizard({
                             </select>
                         </label>
                     </div>
-                    {!plans.some(
-                        (plan) =>
-                            plan.key === selectedPlan.key &&
-                            plan.version === selectedPlan.version,
-                    ) && (
+                    {!plans.some((plan) => plan.key === selectedPlan.key) && (
                         <p className="mt-3 text-sm text-amber-700">
                             The available plans have changed since you started
                             setup. Choose a current plan above and review its
@@ -278,8 +268,6 @@ export default function Wizard({
 
                         {step > 0 && draft && (
                             <Steps
-                                packaged={selectedPlan.version >= 4}
-                                focused={!articlesEnabled}
                                 draft={draft}
                                 step={step}
                                 busy={busy}
@@ -340,11 +328,7 @@ export default function Wizard({
                         )}
                     </div>
 
-                    <SetupGuide
-                        step={step}
-                        hasDraft={draft !== null}
-                        focused={!articlesEnabled}
-                    />
+                    <SetupGuide step={step} hasDraft={draft !== null} />
                 </div>
             </WorkspacePage>
         </>
@@ -408,15 +392,7 @@ function Progress({ step }: { step: number }) {
     );
 }
 
-function SetupGuide({
-    step,
-    hasDraft,
-    focused,
-}: {
-    step: number;
-    hasDraft: boolean;
-    focused: boolean;
-}) {
+function SetupGuide({ step, hasDraft }: { step: number; hasDraft: boolean }) {
     return (
         <aside
             className={`${workspacePanelClass} hidden flex-col gap-5 p-5 lg:sticky lg:top-6 lg:flex`}
@@ -448,11 +424,7 @@ function SetupGuide({
                 <GuideItem
                     done={false}
                     title="Launch the project"
-                    detail={
-                        focused
-                            ? 'Your website audit begins. Track a page and confirm facts before choosing an improvement.'
-                            : 'Avyo researches useful topics, plans the calendar and writes your first articles. Your publishing preference controls what happens next.'
-                    }
+                    detail="Avyo researches useful topics, plans the calendar and writes your first articles. Your publishing preference controls what happens next."
                 />
             </ol>
             {hasDraft && (
@@ -575,16 +547,12 @@ function WebsiteStep({
  * still be there when they return to it.
  */
 function Steps({
-    focused,
-    packaged,
     draft,
     step,
     busy,
     onBack,
     onSave,
 }: {
-    focused: boolean;
-    packaged: boolean;
     draft: Draft;
     step: number;
     busy: boolean;
@@ -653,13 +621,6 @@ function Steps({
                 : 'later',
         ),
     );
-    // Kept, not asked. Packaged plans set the cadence themselves; older ones
-    // keep whatever the project already had rather than losing it here.
-    const weeklyTarget = saved(
-        'settings',
-        'weekly_target',
-        Math.min(7, draft.weekly_target),
-    );
     const [automatic, setAutomatic] = useState(
         !draft.is_ymyl && saved('settings', 'autopublish', draft.autopublish),
     );
@@ -691,26 +652,19 @@ function Steps({
                     [
                         'channels',
                         {
-                            destination: focused ? 'later' : destination,
+                            destination,
                             // Only a custom site has an address to send to.
                             // Picking WordPress or "later" and leaving a
                             // half-typed URL behind must not connect anything.
                             webhook_endpoint:
-                                !focused && destination === 'custom'
-                                    ? endpoint
-                                    : null,
+                                destination === 'custom' ? endpoint : null,
                             sitemap_url: sitemap,
                         },
                     ],
                     [
                         'settings',
-                        {
-                            ...(focused || packaged
-                                ? {}
-                                : { weekly_target: Number(weeklyTarget) }),
-                            autopublish:
-                                !focused && !draft.is_ymyl && automatic,
-                        },
+                        // No cadence: the plan sets it.
+                        { autopublish: !draft.is_ymyl && automatic },
                     ],
                 ]);
         }
@@ -749,11 +703,7 @@ function Steps({
                             <Field
                                 id="language"
                                 label="Language"
-                                hint={
-                                    focused
-                                        ? 'The language of the pages you want to improve.'
-                                        : 'What the articles are written in.'
-                                }
+                                hint="What the articles are written in."
                             >
                                 <Input
                                     id="language"
@@ -955,142 +905,110 @@ function Steps({
 
                     {last && (
                         <>
-                            {focused ? (
-                                <div className="rounded-xl border p-4 text-sm leading-6">
-                                    <p>
-                                        You will connect a specific existing
-                                        page after setup. WordPress uses the
-                                        Avyo receiver plugin and an application
-                                        password. Compatible custom sites use a
-                                        signed page receiver. Assisted
-                                        publishing remains available.
+                            <fieldset className="flex flex-col gap-2">
+                                <legend className="mb-2 text-sm font-medium">
+                                    Where should finished articles go?
+                                </legend>
+                                <DestinationChoice
+                                    value={destination}
+                                    onChange={setDestination}
+                                />
+                                {destination === 'custom' && (
+                                    <div className="mt-2">
+                                        <Field
+                                            id="endpoint"
+                                            label="The address your developer gave you"
+                                            hint="We send a signed test request when you finish. If your site answers with anything other than success, nothing publishes and your dashboard says so."
+                                        >
+                                            <Input
+                                                id="endpoint"
+                                                value={endpoint}
+                                                onChange={(e) =>
+                                                    setEndpoint(e.target.value)
+                                                }
+                                                placeholder="https://example.com/api/content-engine"
+                                            />
+                                        </Field>
+                                    </div>
+                                )}
+                            </fieldset>
+
+                            {/*
+                             * Beside the destination rather than in
+                             * the Voice step, where it used to sit
+                             * between two questions about how the
+                             * writing should sound: a sitemap is a
+                             * fact about the website.
+                             */}
+                            <Field
+                                id="sitemap"
+                                label="Sitemap address"
+                                hint="Optional. Used to find your own pages worth linking to from new articles."
+                            >
+                                <Input
+                                    id="sitemap"
+                                    value={sitemap}
+                                    onChange={(e) => setSitemap(e.target.value)}
+                                    placeholder="https://example.com/sitemap.xml"
+                                />
+                            </Field>
+
+                            {draft.is_ymyl ? (
+                                /*
+                                 * A rule, said as one.
+                                 *
+                                 * This used to be a disabled dropdown
+                                 * showing "Let me review each article
+                                 * first", which reads as a default
+                                 * somebody chose for you rather than
+                                 * as something the topic requires.
+                                 */
+                                <div className="rounded-xl border bg-background/30 p-4 text-sm leading-6">
+                                    <p className="font-medium">
+                                        Every article waits for your approval
                                     </p>
-                                    <p className="mt-3 text-muted-foreground">
-                                        Finish setup first, then open Content to
-                                        select the page and inspect what can
-                                        safely be edited.
+                                    <p className="mt-1 text-muted-foreground">
+                                        Your site covers money, health or safety
+                                        topics. Avyo fact-checks those and holds
+                                        them for you rather than publishing them
+                                        itself.
                                     </p>
                                 </div>
                             ) : (
-                                <>
-                                    <fieldset className="flex flex-col gap-2">
-                                        <legend className="mb-2 text-sm font-medium">
-                                            Where should finished articles go?
-                                        </legend>
-                                        <DestinationChoice
-                                            value={destination}
-                                            onChange={setDestination}
-                                        />
-                                        {destination === 'custom' && (
-                                            <div className="mt-2">
-                                                <Field
-                                                    id="endpoint"
-                                                    label="The address your developer gave you"
-                                                    hint="We send a signed test request when you finish. If your site answers with anything other than success, nothing publishes and your dashboard says so."
-                                                >
-                                                    <Input
-                                                        id="endpoint"
-                                                        value={endpoint}
-                                                        onChange={(e) =>
-                                                            setEndpoint(
-                                                                e.target.value,
-                                                            )
-                                                        }
-                                                        placeholder="https://example.com/api/content-engine"
-                                                    />
-                                                </Field>
-                                            </div>
-                                        )}
-                                    </fieldset>
-
-                                    {/*
-                                     * Beside the destination rather than in
-                                     * the Voice step, where it used to sit
-                                     * between two questions about how the
-                                     * writing should sound: a sitemap is a
-                                     * fact about the website.
-                                     */}
-                                    <Field
-                                        id="sitemap"
-                                        label="Sitemap address"
-                                        hint="Optional. Used to find your own pages worth linking to from new articles."
+                                <Field
+                                    id="publishing-mode"
+                                    label="Once an article is written"
+                                    hint="You can change this at any time, and pause any single article."
+                                >
+                                    <Select
+                                        value={
+                                            automatic ? 'automatic' : 'review'
+                                        }
+                                        onValueChange={(value) =>
+                                            setAutomatic(value === 'automatic')
+                                        }
                                     >
-                                        <Input
-                                            id="sitemap"
-                                            value={sitemap}
-                                            onChange={(e) =>
-                                                setSitemap(e.target.value)
-                                            }
-                                            placeholder="https://example.com/sitemap.xml"
-                                        />
-                                    </Field>
-
-                                    {draft.is_ymyl ? (
-                                        /*
-                                         * A rule, said as one.
-                                         *
-                                         * This used to be a disabled dropdown
-                                         * showing "Let me review each article
-                                         * first", which reads as a default
-                                         * somebody chose for you rather than
-                                         * as something the topic requires.
-                                         */
-                                        <div className="rounded-xl border bg-background/30 p-4 text-sm leading-6">
-                                            <p className="font-medium">
-                                                Every article waits for your
-                                                approval
-                                            </p>
-                                            <p className="mt-1 text-muted-foreground">
-                                                Your site covers money, health
-                                                or safety topics. Avyo
-                                                fact-checks those and holds them
-                                                for you rather than publishing
-                                                them itself.
-                                            </p>
-                                        </div>
-                                    ) : (
-                                        <Field
-                                            id="publishing-mode"
-                                            label="Once an article is written"
-                                            hint="You can change this at any time, and pause any single article."
-                                        >
-                                            <Select
-                                                value={
-                                                    automatic
-                                                        ? 'automatic'
-                                                        : 'review'
-                                                }
-                                                onValueChange={(value) =>
-                                                    setAutomatic(
-                                                        value === 'automatic',
-                                                    )
-                                                }
-                                            >
-                                                <SelectTrigger id="publishing-mode">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="automatic">
-                                                        Publish it for me, on
-                                                        the calendar
-                                                    </SelectItem>
-                                                    <SelectItem value="review">
-                                                        Let me read it first
-                                                    </SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </Field>
-                                    )}
-                                </>
+                                        <SelectTrigger id="publishing-mode">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="automatic">
+                                                Publish it for me, on the
+                                                calendar
+                                            </SelectItem>
+                                            <SelectItem value="review">
+                                                Let me read it first
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </Field>
                             )}
                             <p className="rounded-xl border bg-background/30 p-4 text-sm leading-6">
-                                {focused
-                                    ? 'Start with an existing page and current confirmed facts. The site audit runs during setup. Choose a bounded opportunity in Plan; review and publication each need your separate decision.'
-                                    : destination === 'later'
-                                      ? 'Avyo researches your topics, plans the month and writes the articles. They wait in your calendar until you connect your website — nothing is lost in the meantime.'
-                                      : automatic && !draft.is_ymyl
-                                        ? 'Avyo writes your articles and publishes them on schedule, once your website answers our test and the article passes its checks. Anything that needs attention waits for you.'
-                                        : 'Avyo plans and writes your articles. Each one waits for your approval before its scheduled publication.'}
+                                {destination === 'later'
+                                    ? 'Avyo researches your topics, plans the month and writes the articles. They wait in your calendar until you connect your website — nothing is lost in the meantime.'
+                                    : automatic && !draft.is_ymyl
+                                      ? 'Avyo writes your articles and publishes them on schedule, once your website answers our test and the article passes its checks. Anything that needs attention waits for you.'
+                                      : 'Avyo plans and writes your articles. Each one waits for your approval before its scheduled publication.'}
                             </p>
                         </>
                     )}

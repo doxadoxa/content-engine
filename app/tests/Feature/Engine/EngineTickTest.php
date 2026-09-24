@@ -10,6 +10,7 @@ use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Support\Tenancy\CurrentProject;
 use Closure;
@@ -195,11 +196,12 @@ final class EngineTickTest extends TestCase
     }
 
     #[Test]
-    public function next_month_is_planned_before_it_starts(): void
+    public function a_billing_period_with_nothing_on_it_is_planned_now(): void
     {
-        // Three days from the end of the month, with ideas waiting and nothing
-        // scheduled for the next one. Waiting until the 1st means the 1st
-        // arrives with an empty calendar and the month starts late.
+        // Late in the calendar month, with ideas waiting and nothing scheduled.
+        // A billed project plans its billing period rather than a calendar
+        // month, and it plans it now: waiting for dates to run out means the
+        // period starts with an empty calendar and its articles start late.
         Carbon::setTestNow(Carbon::parse('2026-08-29'));
 
         $project = $this->project();
@@ -216,43 +218,14 @@ final class EngineTickTest extends TestCase
 
         $run = PipelineRun::acrossProjects()->where('pipeline', 'planning')->first();
 
-        $this->assertNotNull($run, 'The next month should have been planned before it started.');
-        $this->assertSame('2026-09-01', $run->input['month'] ?? null);
+        $this->assertNotNull($run, 'The current billing period should have been planned.');
 
-        Carbon::setTestNow();
-    }
-
-    #[Test]
-    public function mid_month_the_next_one_is_left_alone(): void
-    {
-        Carbon::setTestNow(Carbon::parse('2026-08-12'));
-
-        $project = $this->project();
-
-        $this->inProject($project, function () use ($project): void {
-            $plan = $project->contentPlans()->create(['month' => now()->startOfMonth()]);
-
-            // A full calendar for the rest of this month, and spare ideas.
-            ContentItem::factory()->count(6)->create([
-                'state' => ContentItemState::Idea,
-                'content_plan_id' => $plan->getKey(),
-                'scheduled_for' => now()->addDays(10),
-            ]);
-
-            ContentItem::factory()->count(6)->create([
-                'state' => ContentItemState::Idea,
-                'content_plan_id' => null,
-                'scheduled_for' => null,
-            ]);
-        });
-
-        $this->tick();
-
-        // Planning the next month on the 12th would fill it from an idea pool
-        // three weeks of research still has to grow.
-        $this->assertFalse(
-            PipelineRun::acrossProjects()->where('pipeline', 'planning')->exists(),
-        );
+        // The period the subscription is in — started three days ago, in
+        // August — and not the calendar month about to start. A renewal is
+        // never planned before it is confirmed.
+        $period = ProjectSubscription::query()->where('project_id', $project->getKey())->firstOrFail()->period_started_at;
+        $this->assertSame('2026-08-01', $run->input['month'] ?? null);
+        $this->assertTrue($period?->equalTo(Carbon::parse($run->input['article_period_started_at'] ?? '')));
 
         Carbon::setTestNow();
     }
@@ -341,7 +314,9 @@ final class EngineTickTest extends TestCase
     #[Test]
     public function social_posts_wait_for_the_article_to_be_published(): void
     {
-        $project = $this->project();
+        // With a social allowance, so it is the draft that holds repurpose
+        // back and not a plan with no social posts in it.
+        $project = Project::factory()->withSocialAllowance()->create(['weekly_target' => 3]);
 
         $this->inProject($project, function (): void {
             ContentItem::factory()->create([
@@ -365,7 +340,9 @@ final class EngineTickTest extends TestCase
     #[Test]
     public function a_published_article_gets_cut_down_for_social(): void
     {
-        $project = $this->project();
+        // No plan on sale includes social posts; the allowance is granted as
+        // an override so the repurpose path still runs.
+        $project = Project::factory()->withSocialAllowance()->create(['weekly_target' => 3]);
 
         $this->inProject($project, function (): void {
             ContentItem::factory()->published()->create([

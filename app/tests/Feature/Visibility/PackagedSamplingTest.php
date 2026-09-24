@@ -226,17 +226,7 @@ final class PackagedSamplingTest extends TestCase
     }
 
     #[Test]
-    public function earlier_catalogs_keep_their_previous_question_and_sampling_behavior(): void
-    {
-        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'medium', 'plan_version' => 1]);
-        app(Entitlements::class)->forget($this->project);
-        $this->collectRun($this->set(5));
-        $this->assertSame(0, AiAnswerReservation::query()->count());
-        $this->assertSame(20, AiSamplingCell::query()->count());
-    }
-
-    #[Test]
-    public function legacy_visibility_cannot_bypass_v4_quota_even_with_the_feature_flag_disabled(): void
+    public function legacy_visibility_cannot_bypass_the_quota_even_with_the_feature_flag_disabled(): void
     {
         config(['visibility.stable_sampling' => false]);
         $this->set(3);
@@ -310,15 +300,14 @@ final class PackagedSamplingTest extends TestCase
     }
 
     #[Test]
-    public function a_queued_cell_from_an_earlier_plan_has_no_free_v4_attempt(): void
+    public function a_queued_cell_without_a_reservation_has_no_free_attempt(): void
     {
-        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'medium', 'plan_version' => 1]);
-        app(Entitlements::class)->forget($this->project);
         $run = $this->collectRun($this->set(1));
-        $this->plan('starter');
+        // Only a reserved unit can pay for a request; a cell that lost its reservation is not a free path.
+        AiAnswerReservation::query()->delete();
         $this->execute($run);
         $this->assertCount(0, $this->provider->asked());
-        $this->assertSame(0, $this->used());
+        $this->assertSame(4, $this->used());
         $this->assertSame(4, AiSamplingCell::query()->where('status', 'unavailable')->count());
     }
 
@@ -394,7 +383,7 @@ final class PackagedSamplingTest extends TestCase
 
     private function plan(string $key, int $days = 31, BillingStatus $status = BillingStatus::Active): void
     {
-        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => $key, 'plan_version' => 4, 'status' => $status,
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => $key, 'status' => $status,
             'period_started_at' => now(), 'period_ends_at' => now()->addDays($days), 'trial_ends_at' => $status === BillingStatus::Trialing ? now()->addDays($days) : null]);
         app(Entitlements::class)->forget($this->project);
     }

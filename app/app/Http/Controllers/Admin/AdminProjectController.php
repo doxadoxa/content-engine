@@ -128,7 +128,6 @@ class AdminProjectController extends Controller
             'entitlement' => $entitlement,
             'subscription' => $subscription === null ? null : [
                 'plan' => $subscription->plan,
-                'plan_version' => $subscription->plan_version,
                 'status' => $subscription->status->value,
                 'limit_overrides' => $subscription->limit_overrides,
                 'period_started_at' => $subscription->period_started_at?->toIso8601String(),
@@ -184,9 +183,8 @@ class AdminProjectController extends Controller
     {
         $validated = $request->validate([
             'plan' => ['required', 'string'],
-            // Enterprise is a shape here and numbers on the row. Optional
-            // because most assignments are an ordinary plan with no bespoke
-            // anything.
+            // A comp is a plan here and numbers on the row. Optional because
+            // most assignments are an ordinary plan with no bespoke anything.
             'overrides' => ['sometimes', 'array'],
             'overrides.*' => ['nullable', 'integer', 'min:0'],
         ]);
@@ -344,7 +342,6 @@ class AdminProjectController extends Controller
         return [
             'project_status' => $project->status->value,
             'plan' => $subscription?->plan,
-            'plan_version' => $subscription?->plan_version,
             'billing_status' => $subscription?->status->value,
             'limit_overrides' => $subscription?->limit_overrides,
             'trial_ends_at' => $subscription?->trial_ends_at?->toIso8601String(),

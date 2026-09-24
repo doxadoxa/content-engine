@@ -50,13 +50,8 @@ class BillingCheckoutController extends Controller
 
         $validated = $request->validate([
             'plan' => ['required', 'string'],
-            'plan_version' => ['nullable', 'integer'],
             'acknowledge_downgrade' => ['sometimes', 'accepted'],
         ]);
-
-        if (isset($validated['plan_version']) && (int) $validated['plan_version'] !== $this->plans->currentVersion()) {
-            throw ValidationException::withMessages(['plan' => 'The available offer changed. Reload its current price and allowance before continuing.']);
-        }
 
         try {
             $plan = $this->plans->get((string) $validated['plan']);
@@ -64,11 +59,10 @@ class BillingCheckoutController extends Controller
             throw ValidationException::withMessages(['plan' => 'There is no such plan.']);
         }
 
-        // Enterprise is a conversation and a custom price. A checkout for it
-        // would take somebody's money against limits nobody has agreed.
+        // The preview and the trial are given, not sold.
         if (! $plan->selfServe) {
             throw ValidationException::withMessages([
-                'plan' => 'That plan is arranged with us rather than bought here.',
+                'plan' => 'That plan cannot be bought.',
             ]);
         }
 
@@ -105,7 +99,7 @@ class BillingCheckoutController extends Controller
             $renewal = false;
             try {
                 $subscription->refresh();
-                if ($subscription->plan === $plan->key && $subscription->plan_version === $plan->version && $subscription->pending_plan === null) {
+                if ($subscription->plan === $plan->key && $subscription->pending_plan === null) {
                     return back();
                 }
                 $renewal = $this->changes->atRenewal($subscription, $plan);
@@ -117,9 +111,9 @@ class BillingCheckoutController extends Controller
                     throw new \RuntimeException('The recorded billing owner is unavailable.');
                 }
                 if ($renewal) {
-                    if ($subscription->pending_plan !== $plan->key || $subscription->pending_plan_version !== $plan->version) {
+                    if ($subscription->pending_plan !== $plan->key) {
                         $schedule = $this->provider->schedulePlanChange($payer, $project, $plan);
-                        $subscription->fill(['pending_plan' => $plan->key, 'pending_plan_version' => $plan->version, 'pending_plan_at' => $subscription->period_ends_at, 'stripe_schedule_id' => $schedule])->save();
+                        $subscription->fill(['pending_plan' => $plan->key, 'pending_plan_at' => $subscription->period_ends_at, 'stripe_schedule_id' => $schedule])->save();
                     }
                 } elseif (! $this->provider->changePlan($payer, $project, $plan)) {
                     throw new \RuntimeException('The provider could not confirm the change.');
@@ -189,7 +183,7 @@ class BillingCheckoutController extends Controller
             if (! $payer instanceof User || ! $this->provider->cancelPlanChange($payer, $project)) {
                 throw new \RuntimeException('The provider could not confirm cancellation.');
             }
-            $subscription->refresh()->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null, 'stripe_schedule_id' => null, 'stripe_schedule_generation' => null])->save();
+            $subscription->refresh()->fill(['pending_plan' => null, 'pending_plan_at' => null, 'stripe_schedule_id' => null, 'stripe_schedule_generation' => null])->save();
             Inertia::flash('toast', ['type' => 'success', 'message' => 'Your current plan will continue at renewal.']);
         } catch (Throwable $e) {
             report($e);

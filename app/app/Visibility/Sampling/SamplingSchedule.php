@@ -30,7 +30,7 @@ final readonly class SamplingSchedule
             $this->entitlements->forget($project);
             $entitlement = $this->entitlements->for($project);
             $subscription = $entitlement->subscription;
-            if (($entitlement->plan->version ?? 0) < 4 || $project->status !== ProjectStatus::Active || $entitlement->refusal(Metric::AiAnswers) !== null
+            if ($entitlement->plan === null || $project->status !== ProjectStatus::Active || $entitlement->refusal(Metric::AiAnswers) !== null
                 || $subscription === null || $subscription->period_ends_at?->isFuture() !== true || $subscription->periodStart()->isFuture()) {
                 return null;
             }
@@ -76,7 +76,7 @@ final readonly class SamplingSchedule
     {
         $this->entitlements->forget($project);
         $entitlement = $this->entitlements->for($project);
-        if (($entitlement->plan->version ?? 0) < 4) {
+        if ($entitlement->plan === null) {
             return;
         }
         $questions = $entitlement->limit('ai_questions') ?? 0;
@@ -95,7 +95,7 @@ final readonly class SamplingSchedule
     {
         $this->entitlements->forget($project);
         $entitlement = $this->entitlements->for($project);
-        if (($entitlement->plan->version ?? 0) < 4) {
+        if ($entitlement->plan === null) {
             return null;
         }
         $subscription = $entitlement->subscription;

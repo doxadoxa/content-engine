@@ -8,10 +8,12 @@ use App\Ai\Assistant\MarketingTools;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -67,15 +69,23 @@ final class MonthPlannerTest extends TestCase
     }
 
     #[Test]
-    public function an_empty_idea_pool_reuses_research_and_keeps_the_requested_month(): void
+    public function an_empty_idea_pool_reuses_research_and_keeps_the_billing_period(): void
     {
         $empty = Project::factory()->create();
-        $month = now()->addMonth()->startOfMonth()->format('Y-m');
+
+        // A billed project plans its billing period; a month is asked for by
+        // the one the period starts in, and the plan is filed under it.
+        $period = ProjectSubscription::query()->where('project_id', $empty->id)->firstOrFail()
+            ->period_started_at?->copy()->setTimezone($empty->timezone);
+        $this->assertNotNull($period);
+        $month = $period->format('Y-m');
+
         $first = app(MonthPlanner::class)->start($empty, $month);
         $second = app(MonthPlanner::class)->start($empty, $month);
         $this->assertSame('research', $first->pipeline);
         $this->assertSame($first->id, $second->id);
         $this->assertSame($month.'-01', $second->context['article_plan_month']);
+        $this->assertTrue($period->equalTo(Carbon::parse($second->context['article_plan_period'])));
         $this->assertSame(1, PipelineRun::acrossProjects()->where('project_id', $empty->id)->count());
     }
 

@@ -73,7 +73,9 @@ final class SocialCreateTest extends TestCase
         );
 
         $this->operator = User::factory()->create();
-        $this->project = Project::factory()->create();
+        // Social posts are in no plan on sale any more; the allowance is
+        // granted as an override so the writer still runs.
+        $this->project = Project::factory()->withSocialAllowance()->create();
         $this->project->users()->attach($this->operator);
         $this->actingAs($this->operator);
         $this->withSession(['project_id' => $this->project->getKey()]);

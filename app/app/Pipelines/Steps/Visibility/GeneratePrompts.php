@@ -61,7 +61,7 @@ class GeneratePrompts extends AbstractStep
         $entitlements = app(Entitlements::class);
         $entitlements->forget($context->project);
         $entitlement = $entitlements->for($context->project);
-        $limited = ($entitlement->plan->version ?? 0) >= 4;
+        $limited = $entitlement->plan !== null;
         if ((config('visibility.stable_sampling', true) || $limited) && AiSamplingSet::query()->exists()
             && (! $limited || app(SamplingSets::class)->questionsNeeded($context->project) === 0)) {
             return StepResult::skip('The monitored question set is pinned. Changes require a new reviewed version.');
@@ -180,7 +180,7 @@ class GeneratePrompts extends AbstractStep
     {
         $mix = PromptIntent::mix($wanted);
         $existing = null;
-        if ((app(Entitlements::class)->for($context->project)->plan->version ?? 0) >= 4) {
+        if (app(Entitlements::class)->for($context->project)->plan !== null) {
             $set = AiSamplingSet::query()->latest('version')->first();
             $questions = array_unique([...array_column($set?->configuration['prompts'] ?? [], 'text'), ...LlmPrompt::query()->where('is_active', true)->pluck('text')->all()]);
             $existing = 'Do not repeat these existing questions: '.json_encode($questions, JSON_THROW_ON_ERROR);

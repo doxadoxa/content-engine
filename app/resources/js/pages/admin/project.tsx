@@ -41,7 +41,6 @@ type Props = {
     entitlement: Billing;
     subscription: {
         plan: string;
-        plan_version: number;
         status: string;
         limit_overrides: Record<string, number | null>;
         period_started_at: string | null;
@@ -354,10 +353,7 @@ export default function AdminProject({
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
-                            <Detail
-                                label="Plan"
-                                value={`${subscription.plan} (list v${subscription.plan_version})`}
-                            />
+                            <Detail label="Plan" value={subscription.plan} />
                             <Detail
                                 label="Payer"
                                 value={subscription.payer ?? 'nobody yet'}

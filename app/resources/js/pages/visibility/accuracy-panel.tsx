@@ -515,7 +515,7 @@ function ActionCard({
     const update = useForm({ status: 'owner_submitted', note: '' });
     const recheck = useForm({ request_key: crypto.randomUUID() });
     const { billing } = usePage().props;
-    const limited = (billing?.plan?.version ?? 0) >= 4;
+    const limited = Boolean(billing?.plan);
 
     return (
         <div className="mt-4 rounded-lg border bg-background p-4">

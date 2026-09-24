@@ -165,7 +165,7 @@ export default function BillingPage({
 
                 <UsagePanel
                     usage={entitlement.usage}
-                    version={entitlement.plan?.version ?? 0}
+                    billed={entitlement.plan !== null}
                 />
 
                 <PlanComparison
@@ -201,13 +201,6 @@ export default function BillingPage({
                             and website connections are limits on your project
                             setup.
                         </p>
-                        {entitlement.plan?.version === 2 && (
-                            <p>
-                                Your earlier page-improvement package does not
-                                include article creation. Starter and Growth
-                                include it.
-                            </p>
-                        )}
                     </div>
                 </details>
                 {can_pay && (
@@ -232,17 +225,17 @@ export default function BillingPage({
  */
 function UsagePanel({
     usage,
-    version,
+    billed,
 }: {
     usage: Partial<Record<BillingMetric, BillingUsage>>;
-    version: number;
+    billed: boolean;
 }) {
     const rows = Object.entries(usage).filter(
         ([key, row]) =>
             key !== 'social_posts' &&
             key !== 'articles' &&
-            (key !== 'page_improvements' || version >= 2 || row.used > 0) &&
-            (key !== 'ai_answers' || version >= 4) &&
+            (key !== 'page_improvements' || billed || row.used > 0) &&
+            (key !== 'ai_answers' || billed) &&
             (row.limit !== 0 || row.used > 0),
     ) as [BillingMetric, BillingUsage][];
 

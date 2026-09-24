@@ -49,7 +49,9 @@ final class SocialApprovalTest extends TestCase
     {
         parent::setUp();
 
-        $this->project = Project::factory()->create();
+        // Social posts are in no plan on sale any more; the allowance is
+        // granted as an override so the approval path still runs.
+        $this->project = Project::factory()->withSocialAllowance()->create();
         $this->member = User::factory()->create();
         // An operator and not the owner: §7 makes approving the daily routine,
         // and `content.approve` carries no `project.owner` middleware for

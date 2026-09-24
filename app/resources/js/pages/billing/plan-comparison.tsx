@@ -16,7 +16,6 @@ import type { SubscriptionDetails } from './current-plan';
 
 export type PlanCard = {
     key: string;
-    version: number;
     currency: string;
     name: string;
     price_cents: number;
@@ -265,11 +264,6 @@ function PlanAction({
             {({ processing }) => (
                 <>
                     <input type="hidden" name="plan" value={plan.key} />
-                    <input
-                        type="hidden"
-                        name="plan_version"
-                        value={plan.version}
-                    />
                     <p className="text-sm leading-6 text-muted-foreground">
                         {hasProvider
                             ? plan.change.at_renewal

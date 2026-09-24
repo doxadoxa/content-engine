@@ -47,7 +47,6 @@ final class AdminPanelTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['billing.version' => 1, 'billing.default_plan' => 'medium']);
 
         $this->admin = User::factory()->create(['is_admin' => true]);
         $this->project = Project::factory()->create(['name' => 'Cleaning Point']);
@@ -94,10 +93,10 @@ final class AdminPanelTest extends TestCase
         $operator->projects()->attach($this->project, ['role' => 'owner']);
 
         $this->actingAs($operator)
-            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'enterprise'])
+            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'starter'])
             ->assertNotFound();
 
-        $this->assertNotSame('enterprise', ProjectSubscription::query()->sole()->plan);
+        $this->assertNotSame('starter', ProjectSubscription::query()->sole()->plan);
     }
 
     #[Test]
@@ -129,10 +128,11 @@ final class AdminPanelTest extends TestCase
             ->get('/admin')
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
-                // Medium, from the project factory's subscription.
-                ->where('revenue_by_currency.0.currency', 'eur')
-                ->where('revenue_by_currency.0.cents', 9_900)
-                ->where('contribution_micros', null)
+                // Growth, from the project factory's subscription: $89 in,
+                // $3 spent.
+                ->where('revenue_by_currency.0.currency', 'usd')
+                ->where('revenue_by_currency.0.cents', 8_900)
+                ->where('contribution_micros', 86_000_000)
                 ->where('cost_currency', 'usd')
                 ->where('cost_micros', 3_000_000)
                 ->where('margins.0.name', 'Cleaning Point')
@@ -140,17 +140,20 @@ final class AdminPanelTest extends TestCase
     }
 
     #[Test]
-    public function mixed_plan_versions_keep_revenue_currencies_and_never_invent_an_exchange_rate(): void
+    public function mixed_currencies_keep_revenue_apart_and_never_invent_an_exchange_rate(): void
     {
-        config(['billing.version' => 2, 'billing.default_plan' => 'local-search']);
+        // Every plan is priced in dollars today, but a plan names its own
+        // currency, and the panel must not add euros to dollars or subtract
+        // dollar spend from a euro fee the day one is not.
+        config(['billing.plans.starter.currency' => 'eur']);
+        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'starter']);
         $dollar = Project::factory()->create(['name' => 'Dollar project']);
-        ProjectSubscription::query()->where('project_id', $dollar->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
         foreach ([[$this->project, 3_000_000], [$dollar, 1_000_000]] as [$project, $cost]) {
             $run = PipelineRun::factory()->for($project)->create();
             PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => $cost]);
         }
         $this->actingAs($this->admin)->get('/admin')->assertOk()->assertInertia(fn (AssertableInertia $page) => $page
-            ->where('revenue_by_currency', [['currency' => 'eur', 'cents' => 9_900], ['currency' => 'usd', 'cents' => 8_900]])
+            ->where('revenue_by_currency', [['currency' => 'eur', 'cents' => 2_900], ['currency' => 'usd', 'cents' => 8_900]])
             ->where('cost_currency', 'usd')->where('cost_micros', 4_000_000)->where('contribution_micros', null)
             ->where('margins.0.currency', 'eur')->where('margins.0.contribution_micros', null)
             ->where('margins.1.currency', 'usd')->where('margins.1.contribution_micros', 88_000_000));
@@ -164,19 +167,15 @@ final class AdminPanelTest extends TestCase
                 return $byProject->get($this->project->id)['currency'] === 'eur' && $byProject->get($dollar->id)['currency'] === 'usd';
             }));
         $this->get('/admin/projects/'.$this->project->id)->assertInertia(fn (AssertableInertia $page) => $page
-            ->where('entitlement.plan.currency', 'eur')->where('monthly_plan_fee_cents', 9_900)->where('cost_currency', 'usd')->where('contribution_micros', null)
-            ->where('plans.1.currency', 'usd'));
+            ->where('entitlement.plan.currency', 'eur')->where('monthly_plan_fee_cents', 2_900)->where('cost_currency', 'usd')->where('contribution_micros', null)
+            ->where('plans.3.key', 'growth')->where('plans.3.currency', 'usd'));
         $this->get('/admin/projects/'.$dollar->id)->assertInertia(fn (AssertableInertia $page) => $page
             ->where('entitlement.plan.currency', 'usd')->where('monthly_plan_fee_cents', 8_900)->where('contribution_micros', 88_000_000));
-        $legacy = ProjectSubscription::query()->where('project_id', $this->project->id)->firstOrFail();
-        $this->assertSame(1, $legacy->plan_version);
-        $this->assertSame(9_900, $legacy->plan()->priceCents);
     }
 
     #[Test]
     public function dollar_only_monthly_fees_have_a_known_usage_contribution_without_treating_trial_price_as_receipts(): void
     {
-        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
         $run = PipelineRun::factory()->for($this->project)->create();
         PipelineStep::factory()->for($run, 'pipelineRun')->create(['cost_micros' => 3_000_000]);
         $this->actingAs($this->admin)->get('/admin')->assertInertia(fn (AssertableInertia $page) => $page
@@ -191,7 +190,6 @@ final class AdminPanelTest extends TestCase
     #[Test]
     public function unknown_provider_charges_make_dollar_contributions_unavailable_everywhere(): void
     {
-        ProjectSubscription::query()->where('project_id', $this->project->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
         app(CurrentProject::class)->run($this->project, function (): void {
             $run = PipelineRun::factory()->create(['pipeline' => 'ai_accuracy', 'input' => ['assessment_id' => (string) Str::ulid()]]);
             PipelineStep::factory()->for($run, 'pipelineRun')->create(['step_key' => CheckAccuracy::key(), 'cost_micros' => 1_000_000]);
@@ -254,19 +252,19 @@ final class AdminPanelTest extends TestCase
     public function assigning_a_plan_writes_down_who_did_it_and_what_changed(): void
     {
         $this->actingAs($this->admin)
-            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'small'])
+            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'starter'])
             ->assertRedirect();
 
-        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame('starter', ProjectSubscription::query()->sole()->plan);
 
-        // Six months from now, "why is this account on Enterprise" has to have
+        // Six months from now, "why is this account on Starter" has to have
         // an answer that is not a guess.
         $action = AdminAction::query()->sole();
 
         $this->assertSame('plan.assigned', $action->action);
         $this->assertSame($this->admin->getKey(), $action->user_id);
-        $this->assertSame('medium', $action->before['plan']);
-        $this->assertSame('small', $action->after['plan']);
+        $this->assertSame('growth', $action->before['plan']);
+        $this->assertSame('starter', $action->after['plan']);
     }
 
     #[Test]
@@ -283,7 +281,7 @@ final class AdminPanelTest extends TestCase
     public function a_bespoke_arrangement_carries_its_own_numbers(): void
     {
         $this->actingAs($this->admin)->post("/admin/projects/{$this->project->getKey()}/plan", [
-            'plan' => 'enterprise',
+            'plan' => 'starter',
             'overrides' => ['articles' => 400],
         ])->assertRedirect();
 
@@ -348,14 +346,14 @@ final class AdminPanelTest extends TestCase
         ]);
 
         $this->actingAs($this->admin)
-            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'small'])
+            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'starter'])
             ->assertRedirect();
 
         // Changing only the local row would leave the customer paying one tier
         // and receiving another — and the next `customer.subscription.updated`
         // would read the unchanged metadata and put the entitlement back.
-        $this->assertSame('small', $provider->planChanges[0]['plan']);
-        $this->assertSame('small', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame('starter', $provider->planChanges[0]['plan']);
+        $this->assertSame('starter', ProjectSubscription::query()->sole()->plan);
     }
 
     #[Test]
@@ -372,12 +370,12 @@ final class AdminPanelTest extends TestCase
         ]);
 
         $this->actingAs($this->admin)
-            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'small'])
+            ->post("/admin/projects/{$this->project->getKey()}/plan", ['plan' => 'starter'])
             ->assertSessionHasErrors('plan');
 
         // A local row that disagrees with what is being charged is worse than
         // a button that says it could not do the thing.
-        $this->assertSame('medium', ProjectSubscription::query()->sole()->plan);
+        $this->assertSame('growth', ProjectSubscription::query()->sole()->plan);
     }
 
     #[Test]

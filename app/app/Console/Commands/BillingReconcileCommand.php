@@ -30,7 +30,7 @@ use Throwable;
  * somebody remembers to invoke.
  *
  * Only rows that have a Stripe subscription behind them are compared. A trial,
- * a comped plan and an Enterprise deal assigned from the terminal have nothing
+ * a comped plan assigned from the terminal have nothing
  * at the provider to disagree with.
  */
 class BillingReconcileCommand extends Command
@@ -109,8 +109,8 @@ class BillingReconcileCommand extends Command
             // projection healthy while the customer was being charged for one
             // tier and served another — until some later subscription webhook
             // happened along.
-            $theirPlan = $theirs->priceId === null ? null : $catalog->forStripePrice($theirs->priceId, $catalog->has($subscription->plan, $subscription->plan_version) ? $catalog->get($subscription->plan, $subscription->plan_version) : null);
-            $planMoved = $theirPlan !== null && ($theirPlan->key !== $subscription->plan || $theirPlan->version !== $subscription->plan_version);
+            $theirPlan = $theirs->priceId === null ? null : $catalog->forStripePrice($theirs->priceId);
+            $planMoved = $theirPlan !== null && $theirPlan->key !== $subscription->plan;
 
             if ($theirs->status === $subscription->status && ! $movedOn && ! $planMoved) {
                 continue;
@@ -121,7 +121,7 @@ class BillingReconcileCommand extends Command
             $was = $subscription->status->value;
             $now = $theirs->status->value;
             $what = match (true) {
-                $planMoved => "{$subscription->plan} v{$subscription->plan_version} → {$theirPlan->key} v{$theirPlan->version}",
+                $planMoved => "{$subscription->plan} → {$theirPlan->key}",
                 $movedOn && $was === $now => 'period',
                 default => "{$was} → {$now}",
             };
@@ -161,7 +161,7 @@ class BillingReconcileCommand extends Command
                 // The plan follows the price Stripe is actually charging. The
                 // overrides go with the old arrangement, exactly as they do
                 // when a plan changes through any other door.
-                ...($planMoved ? ['plan' => $theirPlan->key, 'plan_version' => $theirPlan->version, 'limit_overrides' => [], 'pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null] : []),
+                ...($planMoved ? ['plan' => $theirPlan->key, 'limit_overrides' => [], 'pending_plan' => null, 'pending_plan_at' => null] : []),
             ])->save();
 
             // And the status through the transitions rather than as a column,

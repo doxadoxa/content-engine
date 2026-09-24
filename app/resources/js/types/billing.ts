@@ -56,7 +56,6 @@ export type Billing = {
         name: string;
         price_cents: number;
         currency: string;
-        version: number;
     } | null;
     status: BillingStatus | null;
     may_generate: boolean;
