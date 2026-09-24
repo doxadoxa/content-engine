@@ -379,6 +379,13 @@ final class StripeCheckoutTest extends TestCase
             ->from(route('billing.index'))
             ->post(route('billing.checkout'), ['plan' => 'medium'])
             ->assertRedirect(route('billing.index'));
+
+        // And the page they land back on says it. Asserting the redirect alone
+        // passed while the sentence sat in a session key nothing rendered, so
+        // the button looked dead.
+        $this->actingAs($this->owner)
+            ->get(route('billing.index'))
+            ->assertSee('We could not open the checkout just now', escape: false);
     }
 
     // ------------------------------------------------------------ reconciling

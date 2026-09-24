@@ -100,7 +100,7 @@ class BillingCheckoutController extends Controller
             }
             $lock = Cache::lock('billing-plan-change:'.$project->getKey(), 60);
             if (! $lock->get()) {
-                return back()->with('billing', ['code' => 'plan_change_busy', 'message' => 'A plan change is already being confirmed. Refresh in a moment.', 'metric' => null]);
+                return $this->failed('A plan change is already being confirmed. Refresh in a moment.');
             }
             $renewal = false;
             try {
@@ -131,11 +131,7 @@ class BillingCheckoutController extends Controller
             } catch (Throwable $e) {
                 report($e);
 
-                return back()->with('billing', [
-                    'code' => 'plan_change_failed',
-                    'message' => 'We could not confirm the plan change. Refresh billing to check its status before trying again.',
-                    'metric' => null,
-                ]);
+                return $this->failed('We could not confirm the plan change. Refresh billing to check its status before trying again.');
             } finally {
                 $lock->release();
             }
@@ -164,11 +160,7 @@ class BillingCheckoutController extends Controller
             // the failure is ours — a missing price id, a provider outage.
             report($e);
 
-            return back()->with('billing', [
-                'code' => 'checkout_failed',
-                'message' => 'We could not open the checkout just now. Nothing has been charged.',
-                'metric' => null,
-            ]);
+            return $this->failed('We could not open the checkout just now. Nothing has been charged.');
         }
 
         // `Inertia::location()`, not `redirect()->away()`.
@@ -221,14 +213,25 @@ class BillingCheckoutController extends Controller
         } catch (Throwable $e) {
             report($e);
 
-            return back()->with('billing', [
-                'code' => 'portal_failed',
-                'message' => 'We could not open the billing portal just now.',
-                'metric' => null,
-            ]);
+            return $this->failed('We could not open the billing portal just now.');
         }
 
         return Inertia::location($url);
+    }
+
+    /**
+     * Back to the plan screen, saying why.
+     *
+     * A toast, because that is the one flash this application renders. The
+     * `billing` session key these used to write was read by nothing, so a
+     * failed checkout reloaded the page unchanged and looked like a dead
+     * button — the same bug `RequireEntitlement` already found once.
+     */
+    private function failed(string $message): Response
+    {
+        Inertia::flash('toast', ['type' => 'error', 'message' => $message]);
+
+        return back();
     }
 
     private function projectOrFail(): Project
