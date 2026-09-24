@@ -1,6 +1,6 @@
 # Avyo — Starter and Growth
 
-Updated 16 September 2026. Version 4 implements the owner's US$29 Starter and US$89 Growth monthly plans in the local application. Public cards, signup, setup, trial checkout and billing use this catalog. Versions 1–3 remain available only for their existing arrangements. Real checkout activation still requires Stripe credentials and the two matching price IDs; none are configured locally.
+Updated 16 September 2026. Version 4 implements the owner's US$29 Starter and US$89 Growth monthly plans in the local application. Public cards, signup, setup, trial checkout and billing use this catalog. Update 24 September 2026: versions 1–3 were never sold and have been removed; the catalog is one unversioned list (preview, trial, Starter, Growth), and rows on an old plan were moved to Starter or Growth. Real checkout activation still requires Stripe credentials and the two matching price IDs; none are configured locally.
 
 ## Recommendation
 
@@ -85,7 +85,7 @@ After launch, record plan selection, activation, first successful publication, s
 
 ## Checkout activation
 
-Set `STRIPE_KEY`, `STRIPE_SECRET` and webhook configuration for the intended environment. Create two separate active recurring **monthly USD** prices: Starter **2900 cents**, Growth **8900 cents**. Set `STRIPE_PRICE_STARTER_V4` and `STRIPE_PRICE_GROWTH_V4`; preserve historical price IDs. Do not reuse version 1–3 prices. Test-mode checkout, trial conversion and webhook reconciliation should be exercised with these configured IDs before enabling real customer charges. This implementation used fake payment transport, made no real charge and created no Stripe product or price.
+Set `STRIPE_KEY`, `STRIPE_SECRET` and webhook configuration for the intended environment. Create two separate active recurring **monthly USD** prices: Starter **2900 cents**, Growth **8900 cents**. Set `STRIPE_PRICE_SMALL` (Starter) and `STRIPE_PRICE_MEDIUM` (Growth) to them — the names the deployments already had. Checkout verifies each price's amount, currency and monthly interval, so an old price at a different amount or currency is refused rather than charged. Test-mode checkout, trial conversion and webhook reconciliation should be exercised with these configured IDs before enabling real customer charges. This implementation used fake payment transport, made no real charge and created no Stripe product or price.
 
 Apply the additive migrations and deploy the matching frontend/backend together. Keep the supported four AI services configured. The existing scheduler includes the hourly `visibility:scheduled` sweep; article pacing remains part of `engine:tick`. Local workers stay stopped, so this work does not publish customer content or authorize ongoing paid generation.
 

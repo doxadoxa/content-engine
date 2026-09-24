@@ -84,13 +84,16 @@ final class AiAccuracyWorkflowTest extends TestCase
         $provider = app(LlmVisibilityGateway::class);
         $this->provider = $provider;
         $provider->willAnswer('chat_gpt', 'Where does Cleaning Point work?', self::QUOTE);
-        config()->set('visibility.platforms', ['chat_gpt' => ['model' => 'pinned-model', 'accepts_country' => true]]);
+        // A billed question set must cover all four supported services; only ChatGPT is scripted with the inaccurate claim.
+        config()->set('visibility.platforms', ['chat_gpt' => ['model' => 'pinned-model', 'accepts_country' => true], 'gemini' => ['model' => 'gemini-model', 'accepts_country' => false],
+            'claude' => ['model' => 'claude-model'], 'perplexity' => ['model' => 'perplexity-model']]);
         config()->set('queue.default', 'sync');
         Cache::flush();
         $set = app(SamplingSets::class)->save($this->project, $this->owner, ['reason' => 'Test accuracy instrument', 'prompts' => [['text' => 'Where does Cleaning Point work?', 'locale' => 'en', 'intent' => 'learning', 'purpose' => 'accuracy']]]);
         $run = app(SamplingRuns::class)->start($this->project, $set, (string) Str::uuid(), $this->owner);
         app(SamplingRuns::class)->dispatch($this->project, $run);
-        $this->answer = AiSamplingAnswer::query()->sole();
+        $this->assertSame(4, AiSamplingAnswer::query()->count());
+        $this->answer = AiSamplingAnswer::query()->where('full_text', self::QUOTE)->sole();
     }
 
     #[Test]
@@ -198,11 +201,13 @@ final class AiAccuracyWorkflowTest extends TestCase
         $again = app(CorrectionActions::class)->recheck($this->owner, $action, $key);
         $this->assertSame($run->id, $again->id);
         $this->assertSame(1, AiCorrectionRecheck::query()->count());
-        $this->assertSame(2, AiSamplingAnswer::query()->count());
-        $this->assertCount(2, $this->provider->asked());
-        $this->assertSame($this->provider->asked()[0], $this->provider->asked()[1]);
+        $this->assertSame(5, AiSamplingAnswer::query()->count());
+        $asked = array_values(array_filter($this->provider->asked(), fn (array $call): bool => $call['platform'] === 'chat_gpt'));
+        $this->assertCount(5, $this->provider->asked());
+        $this->assertCount(2, $asked);
+        $this->assertSame($asked[0], $asked[1]);
         $this->assertSame('complete', $run->refresh()->status);
-        $newAnswer = AiSamplingAnswer::query()->whereKeyNot($this->answer->id)->sole();
+        $newAnswer = AiSamplingAnswer::query()->where('full_text', self::QUOTE)->whereKeyNot($this->answer->id)->sole();
         $this->assertSame('complete', AiAccuracyAssessment::query()->where('answer_id', $newAnswer->id)->sole()->status);
         $this->assertCount(2, $this->checker->sent());
     }

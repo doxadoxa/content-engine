@@ -96,8 +96,8 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function the_tick_does_not_write_an_article_a_project_has_no_allowance_for(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 12);
 
         // The project-level check asks only whether this project may spend at
         // all, and a used-up quota is deliberately not a global refusal — so
@@ -117,8 +117,8 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function the_tick_still_does_the_work_a_different_allowance_covers(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 12);
 
         // Out of articles is not out of everything. A counter filling must not
         // read as a pause.
@@ -152,8 +152,8 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function a_route_is_refused_by_the_quota_it_names(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 12);
 
         $this->actingAs($this->owner)
             ->from(route('content.index'))
@@ -169,11 +169,11 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function a_used_up_quota_is_visible_before_anybody_presses_anything(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 12);
 
         // Running out of articles is not a global refusal — the engine keeps
-        // cutting social posts — so `may_generate` stays true. Which is exactly
+        // auditing and checking AI answers — so `may_generate` stays true. Which is exactly
         // why it needs its own prop: without one, the only surface saying
         // anything was a progress bar on a page nobody had a reason to open.
         $this->actingAs($this->owner)
@@ -189,8 +189,8 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function a_route_gated_on_one_quota_is_not_stopped_by_another(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 12);
 
         // Out of articles, not out of audits. A counter filling must not read
         // as a pause.
@@ -203,8 +203,8 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function an_allowance_that_is_used_up_cannot_be_approved_past(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 10);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 12);
 
         // Approval is the consumption point, so it is the only place the
         // allowance can be enforced — and it used to increment blindly. A
@@ -222,8 +222,8 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function an_allowance_with_room_left_still_approves(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 9);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 11);
 
         $draft = $this->publishableDraft();
 
@@ -232,14 +232,14 @@ final class BillingGateTest extends TestCase
             ->assertRedirect();
 
         $this->assertSame(ContentItemState::Approved, $draft->fresh()?->state);
-        $this->assertSame(10, app(Entitlements::class)->for($this->project)->used(Metric::Articles));
+        $this->assertSame(12, app(Entitlements::class)->for($this->project)->used(Metric::Articles));
     }
 
     #[Test]
     public function two_approvals_racing_for_one_unit_do_not_both_win(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
-        app(Entitlements::class)->record($this->project, Metric::Articles, 9);
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
+        app(Entitlements::class)->record($this->project, Metric::Articles, 11);
 
         // The row lock on a draft serialises that draft against itself and
         // nothing else — the counter two different drafts contend for is a
@@ -251,13 +251,15 @@ final class BillingGateTest extends TestCase
 
         $this->assertTrue($first);
         $this->assertFalse($second);
-        $this->assertSame(10, $entitlements->for($this->project)->used(Metric::Articles));
+        $this->assertSame(12, $entitlements->for($this->project)->used(Metric::Articles));
     }
 
     #[Test]
     public function an_unlimited_allowance_reserves_without_a_ceiling(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create([
+            'limit_overrides' => ['articles' => null],
+        ]);
 
         $entitlements = app(Entitlements::class);
 
@@ -271,7 +273,7 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function accepting_a_month_is_refused_once_the_plans_are_used_up(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
         app(Entitlements::class)->record($this->project, Metric::ContentPlans, 1);
 
         $plan = ContentPlan::factory()->create();
@@ -287,10 +289,10 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function a_plans_channel_limit_is_enforced_where_a_channel_is_made(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
         Channel::factory()->create();
 
-        // Advertised on the pricing table and read by nothing, so a Small
+        // Advertised on the pricing table and read by nothing, so a Starter
         // subscriber could connect as many as they liked — including after
         // downgrading from a plan that allowed them. A shape limit needs a
         // guard at the mutation that changes the shape.
@@ -309,7 +311,10 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function a_plan_with_unlimited_channels_connects_a_second_one(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create();
+        // No plan on the list sells unlimited channels; an arrangement can.
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create([
+            'limit_overrides' => ['channels' => null],
+        ]);
         Channel::factory()->create();
 
         $this->actingAs($this->owner)
@@ -327,7 +332,7 @@ final class BillingGateTest extends TestCase
     #[Test]
     public function a_plans_language_limit_is_enforced_where_languages_are_chosen(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
 
         $this->actingAs($this->owner)
             ->patch(route('projects.update', $this->project), [

@@ -53,9 +53,7 @@ class StripeBillingProvider implements BillingProvider
             // checkout for nothing.
             throw new RuntimeException("Plan `{$plan->key}` has no Stripe price configured.");
         }
-        if ($plan->version >= 2) {
-            PlanPrice::verify($plan, Price::retrieve($price, ['api_key' => config('cashier.secret')])->toArray());
-        }
+        PlanPrice::verify($plan, Price::retrieve($price, ['api_key' => config('cashier.secret')])->toArray());
 
         $builder = $payer->newSubscription($project->getKey(), $price);
 
@@ -85,7 +83,6 @@ class StripeBillingProvider implements BillingProvider
                     'metadata' => [
                         'project_id' => $project->getKey(),
                         'plan' => $plan->key,
-                        'plan_version' => (string) $plan->version,
                     ],
                 ],
                 'client_reference_id' => $project->getKey(),
@@ -108,9 +105,7 @@ class StripeBillingProvider implements BillingProvider
         if ($price === null || $subscription === null || ! $subscription->valid()) {
             return false;
         }
-        if ($plan->version >= 2) {
-            PlanPrice::verify($plan, Price::retrieve($price, ['api_key' => config('cashier.secret')])->toArray());
-        }
+        PlanPrice::verify($plan, Price::retrieve($price, ['api_key' => config('cashier.secret')])->toArray());
 
         $local = ProjectSubscription::query()->where('project_id', $project->getKey())->first();
         if ($local?->stripe_schedule_id !== null && ! $this->cancelPlanChange($payer, $project)) {
@@ -133,7 +128,6 @@ class StripeBillingProvider implements BillingProvider
             'metadata' => [
                 'project_id' => $project->getKey(),
                 'plan' => $plan->key,
-                'plan_version' => (string) $plan->version,
             ],
         ]);
 
@@ -216,13 +210,13 @@ class StripeBillingProvider implements BillingProvider
         $next['start_date'] = $end;
         $next['duration'] = ['interval' => 'month', 'interval_count' => 1];
         $next['items'] = [[...$preserved['items'][0], 'price' => $plan->stripePrice, 'quantity' => 1]];
-        $next['metadata'] = ['project_id' => $project->getKey(), 'plan' => $plan->key, 'plan_version' => (string) $plan->version];
+        $next['metadata'] = ['project_id' => $project->getKey(), 'plan' => $plan->key];
         $next['proration_behavior'] = 'none';
         SubscriptionSchedule::update($schedule->id, [
             'end_behavior' => 'release', 'proration_behavior' => 'none',
             'metadata' => ['avyo_project_id' => $project->getKey()],
             'phases' => [$preserved, $next],
-        ], [...$options, 'idempotency_key' => 'avyo-phase-'.$schedule->id.'-'.$plan->version.'-'.$plan->key]);
+        ], [...$options, 'idempotency_key' => 'avyo-phase-'.$schedule->id.'-'.$plan->key]);
 
         return $schedule->id;
     }
@@ -241,7 +235,7 @@ class StripeBillingProvider implements BillingProvider
         if ($schedule->status === 'active' || $schedule->status === 'not_started') {
             $schedule->release([], [...$options, 'idempotency_key' => 'avyo-release-'.$schedule->id]);
         }
-        $local->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null, 'stripe_schedule_id' => null, 'stripe_schedule_generation' => null])->save();
+        $local->fill(['pending_plan' => null, 'pending_plan_at' => null, 'stripe_schedule_id' => null, 'stripe_schedule_generation' => null])->save();
 
         return true;
     }

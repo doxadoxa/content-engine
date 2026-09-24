@@ -77,14 +77,14 @@ final readonly class PlanningWindow
         return new self(month: $next->copy(), start: $next->copy(), end: $next->copy()->endOfMonth());
     }
 
-    /** V4 uses confirmed billing instants; calendar months are only display buckets. */
+    /** Billed projects plan in confirmed billing instants; calendar months are only display buckets. */
     public static function forProject(Project $project, ?string $requested = null, ?string $expectedPeriod = null): self
     {
         $entitlements = app(Entitlements::class);
         $entitlements->forget($project);
         $entitlement = $entitlements->for($project);
         $subscription = $entitlement->subscription;
-        if (($subscription->plan_version ?? 0) < 4) {
+        if ($subscription === null) {
             return self::resolve($requested);
         }
         $period = $subscription->period_started_at === null ? null : ArticlePlanningPeriod::acrossProjects()->where('project_id', $project->id)

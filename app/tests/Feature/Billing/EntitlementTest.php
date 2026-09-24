@@ -38,8 +38,6 @@ final class EntitlementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // These cases exercise the version 1 offer; FocusedOfferTest covers version 2.
-        config(['billing.version' => 1]);
 
         // Unbilled by default here, because every test below says out loud
         // which subscription it is about — including the one that says there
@@ -52,7 +50,7 @@ final class EntitlementTest extends TestCase
     public function excluded_social_does_not_show_as_used_up_but_real_article_exhaustion_does(): void
     {
         config(['social.enabled' => false]);
-        ProjectSubscription::factory()->forProject($this->project)->create(['plan' => 'local-search', 'plan_version' => 3]);
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create();
         $entitlements = app(Entitlements::class);
         $entitlements->forget($this->project);
         $this->assertNotContains(Metric::SocialPosts->value, $entitlements->for($this->project)->exhausted());
@@ -121,20 +119,20 @@ final class EntitlementTest extends TestCase
     #[Test]
     public function a_used_up_quota_refuses_only_the_thing_that_ran_out(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
 
         $entitlements = app(Entitlements::class);
-        $entitlements->record($this->project, Metric::Articles, 10);
+        $entitlements->record($this->project, Metric::Articles, 12);
 
         $entitlement = $this->entitlement();
 
         $this->assertSame(0, $entitlement->remaining(Metric::Articles));
         $this->assertSame('quota', $entitlement->refusal(Metric::Articles)?->code);
 
-        // And nothing else. A project out of articles can still cut a social
-        // post, and refusing everything because one counter filled would be a
-        // pause dressed up as a limit.
-        $this->assertNull($entitlement->refusal(Metric::SocialPosts));
+        // And nothing else. A project out of articles can still ask the
+        // assistant, and refusing everything because one counter filled would
+        // be a pause dressed up as a limit.
+        $this->assertNull($entitlement->refusal(Metric::AssistantTurns));
         $this->assertNull($entitlement->refusal());
     }
 
@@ -144,7 +142,9 @@ final class EntitlementTest extends TestCase
         // `null` means unlimited everywhere and must never read as zero — the
         // failure that would silently forbid whatever a new plan forgot to
         // name.
-        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create([
+            'limit_overrides' => ['articles' => null],
+        ]);
 
         $entitlements = app(Entitlements::class);
         $entitlements->record($this->project, Metric::Articles, 5_000);
@@ -156,9 +156,9 @@ final class EntitlementTest extends TestCase
     #[Test]
     public function the_cost_ceiling_trips_before_the_quota_does(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
 
-        // Small's ceiling is $20. A project that has burnt three times its
+        // Starter's ceiling is $25. A project that has burnt three times its
         // plan's cost while still inside its article count has a problem the
         // article count cannot describe, and "you have used your articles"
         // would send somebody to buy more of what is going wrong.
@@ -170,13 +170,13 @@ final class EntitlementTest extends TestCase
         $this->assertFalse($entitlement->mayGenerate());
         $this->assertSame('cost_ceiling', $entitlement->refusal(Metric::Articles)?->code);
         // Still has articles left. The two layers answer different questions.
-        $this->assertSame(10, $entitlement->remaining(Metric::Articles));
+        $this->assertSame(12, $entitlement->remaining(Metric::Articles));
     }
 
     #[Test]
     public function the_cost_ceiling_is_never_shown_to_the_customer(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
 
         $props = $this->entitlement()->toArray();
 
@@ -189,10 +189,10 @@ final class EntitlementTest extends TestCase
     public function the_cadence_is_clamped_on_read_and_never_written_back(): void
     {
         $this->project->forceFill(['weekly_target' => 14])->save();
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
 
-        // Small clamps to 2.
-        $this->assertSame(2, $this->project->weeklyTarget());
+        // Starter clamps to 3.
+        $this->assertSame(3, $this->project->weeklyTarget());
         // And the stored column is untouched, so upgrading gives 14 back
         // rather than the number a plan quietly overwrote it with.
         $this->assertSame(14, $this->project->fresh()?->weekly_target);
@@ -202,16 +202,16 @@ final class EntitlementTest extends TestCase
     public function a_plan_never_raises_a_cadence_the_operator_set_lower(): void
     {
         $this->project->forceFill(['weekly_target' => 1])->save();
-        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create();
 
-        // Medium's ceiling is 7. It is a ceiling, not a target.
+        // Growth's ceiling is 7. It is a ceiling, not a target.
         $this->assertSame(1, $this->project->weeklyTarget());
     }
 
     #[Test]
     public function usage_is_counted_atomically(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create();
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create();
 
         $entitlements = app(Entitlements::class);
 
@@ -234,7 +234,7 @@ final class EntitlementTest extends TestCase
 
         // Somebody who used their trial's articles and then paid has bought a
         // month, not the remainder of one.
-        $subscriptions->assign($this->project, 'medium');
+        $subscriptions->assign($this->project, 'growth');
 
         $this->assertSame(0, $this->entitlement()->used(Metric::Articles));
     }
@@ -256,7 +256,7 @@ final class EntitlementTest extends TestCase
     {
         $subscriptions = app(Subscriptions::class);
         $subscriptions->startTrial($this->project);
-        $subscription = $subscriptions->assign($this->project, 'medium');
+        $subscription = $subscriptions->assign($this->project, 'growth');
 
         // Left standing, `trialHasExpired()` would become true for ever three
         // days after a customer started paying.
@@ -283,21 +283,6 @@ final class EntitlementTest extends TestCase
     }
 
     #[Test]
-    public function a_project_keeps_the_plan_version_it_was_sold(): void
-    {
-        ProjectSubscription::factory()->forProject($this->project)->create([
-            'plan' => 'small',
-            'plan_version' => 1,
-        ]);
-
-        // Whatever the current version becomes, the row names the one it was
-        // opened under — re-pricing must not change what somebody already
-        // paying is allowed to do.
-        $this->assertSame(1, $this->entitlement()->plan?->version);
-        $this->assertSame(10, $this->entitlement()->limit('articles'));
-    }
-
-    #[Test]
     public function an_unknown_plan_is_refused_rather_than_guessed(): void
     {
         // Defaulting up gives the product away and defaulting down locks a
@@ -310,15 +295,15 @@ final class EntitlementTest extends TestCase
     #[Test]
     public function overrides_widen_one_customer_without_touching_the_plan(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('small')->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create([
             'limit_overrides' => ['articles' => 250],
         ]);
 
         $this->assertSame(250, $this->entitlement()->limit('articles'));
         // Merged rather than replacing the set, so a bespoke article count does
         // not make every unnamed limit unlimited.
-        $this->assertSame(10, $this->entitlement()->limit('social_posts'));
-        $this->assertSame(10, app(PlanCatalog::class)->get('small')->limit('articles'));
+        $this->assertSame(100, $this->entitlement()->limit('assistant_turns'));
+        $this->assertSame(12, app(PlanCatalog::class)->get('starter')->limit('articles'));
     }
 
     #[Test]
@@ -428,16 +413,16 @@ final class EntitlementTest extends TestCase
     #[Test]
     public function moving_to_another_plan_does_not_keep_the_last_ones_bespoke_limits(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create([
             'limit_overrides' => ['articles' => 5_000],
         ]);
 
-        app(Subscriptions::class)->assign($this->project, 'small');
+        app(Subscriptions::class)->assign($this->project, 'starter');
 
         // Overrides belong to an arrangement, not to a project, and a plan
         // change ends the arrangement. Kept, they silently overrode the plan
         // the customer had just been moved on to.
-        $this->assertSame(10, $this->entitlement()->limit('articles'));
+        $this->assertSame(12, $this->entitlement()->limit('articles'));
         $this->assertSame([], ProjectSubscription::query()->sole()->limit_overrides);
     }
 
@@ -446,7 +431,7 @@ final class EntitlementTest extends TestCase
     {
         app(Subscriptions::class)->assign(
             $this->project,
-            'enterprise',
+            'growth',
             overrides: ['articles' => 5_000],
         );
 
@@ -457,12 +442,12 @@ final class EntitlementTest extends TestCase
     public function a_stripe_trial_is_bounded_by_the_trials_caps_and_not_the_plans(): void
     {
         // A public trial is a *paid plan with free days on the front*: the
-        // checkout stamps `medium` and the subscription arrives as
-        // `plan = medium, status = trialing`. Reading limits from the purchased
-        // plan gave every trial Medium's thirty articles, five hundred
-        // assistant turns and — the one that costs us — a sixty-dollar ceiling
-        // in place of five.
-        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create([
+        // checkout stamps `growth` and the subscription arrives as
+        // `plan = growth, status = trialing`. Reading limits from the purchased
+        // plan gave every trial Growth's thirty articles, a hundred assistant
+        // turns and — the one that costs us — a seventy-five-dollar ceiling in
+        // place of five.
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create([
             'status' => BillingStatus::Trialing,
             'trial_ends_at' => now()->addDays(2),
         ]);
@@ -474,14 +459,14 @@ final class EntitlementTest extends TestCase
         $this->assertSame(5_000_000, $entitlement->limit('cost_micros'));
 
         // And the plan they bought is still what they are told they are on.
-        $this->assertSame('Medium', $entitlement->plan->name);
-        $this->assertSame(9_900, $entitlement->plan->priceCents);
+        $this->assertSame('Growth', $entitlement->plan->name);
+        $this->assertSame(8_900, $entitlement->plan->priceCents);
     }
 
     #[Test]
     public function the_purchased_plans_limits_apply_the_moment_the_trial_converts(): void
     {
-        ProjectSubscription::factory()->forProject($this->project)->plan('medium')->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create([
             'status' => BillingStatus::Active,
             'trial_ends_at' => now()->subDay(),
         ]);
@@ -494,7 +479,7 @@ final class EntitlementTest extends TestCase
     {
         // An arrangement somebody negotiated does not stop applying because
         // the first three days are free.
-        ProjectSubscription::factory()->forProject($this->project)->plan('enterprise')->create([
+        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create([
             'status' => BillingStatus::Trialing,
             'trial_ends_at' => now()->addDays(2),
             'limit_overrides' => ['articles' => 400],
@@ -502,22 +487,19 @@ final class EntitlementTest extends TestCase
 
         $this->assertSame(400, $this->entitlement()->limit('articles'));
         // Everything it did not name still comes from the trial.
-        $this->assertSame(5, $this->entitlement()->limit('social_posts'));
+        $this->assertSame(20, $this->entitlement()->limit('assistant_turns'));
     }
 
     #[Test]
-    public function a_trial_keeps_the_limits_it_was_opened_under(): void
+    public function a_trial_is_opened_on_the_trials_own_limits(): void
     {
-        // The trial used to be read out of an unversioned corner of the config,
-        // which made it the one entitlement a re-pricing could still change
-        // under somebody mid-trial — and the hardest to catch, because a trial
-        // lasts three days and the drift would show in one of them.
+        // The trial is a plan like any other, so a started trial names it and
+        // reads its caps rather than those of whatever it may turn into.
         app(Subscriptions::class)->startTrial($this->project);
 
         $subscription = ProjectSubscription::query()->sole();
 
         $this->assertSame('trial', $subscription->plan);
-        $this->assertSame(config('billing.version'), $subscription->plan_version);
         $this->assertSame(3, $this->entitlement()->limit('articles'));
     }
 
@@ -529,7 +511,7 @@ final class EntitlementTest extends TestCase
             app(PlanCatalog::class)->selfServe(),
         );
 
-        $this->assertSame(['small', 'medium'], $keys);
+        $this->assertSame(['starter', 'growth'], $keys);
     }
 
     /**

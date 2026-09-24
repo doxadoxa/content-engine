@@ -31,7 +31,6 @@ final class LandingPageTest extends TestCase
                 ->has('pricing.plans', 2)
                 ->where('pricing.plans.0.key', 'starter')
                 ->where('pricing.plans.1.key', 'growth')
-                ->where('pricing.plans.0.version', 4)
                 ->where('pricing.plans.0.currency', 'usd')
                 ->where('pricing.plans.0.price_cents', 2_900)
                 ->where('pricing.plans.1.price_cents', 8_900)

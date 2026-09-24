@@ -61,7 +61,6 @@ class Subscriptions
             'project_id' => $project->getKey(),
             'billing_user_id' => $payer?->getKey(),
             'plan' => 'trial',
-            'plan_version' => $this->plans->currentVersion(),
             'status' => BillingStatus::Trialing,
             'limit_overrides' => [],
             'period_started_at' => $at,
@@ -129,7 +128,6 @@ class Subscriptions
             'project_id' => $project->getKey(),
             'billing_user_id' => $payer?->getKey(),
             'plan' => $preview->key,
-            'plan_version' => $preview->version,
             'status' => BillingStatus::Active,
             // The calendar is the selected plan's, so what the sample shows is
             // the month that would actually be bought rather than a token one.
@@ -166,7 +164,6 @@ class Subscriptions
      */
     /**
      * @param  array<string, int|null>  $overrides  limits that differ from the plan's, for this customer
-     * @param  int|null  $version  the price list this was sold under; today's when omitted
      */
     public function assign(
         Project $project,
@@ -175,17 +172,10 @@ class Subscriptions
         ?Carbon $at = null,
         ?Carbon $until = null,
         array $overrides = [],
-        ?int $version = null,
     ): ProjectSubscription {
         // Resolved before anything is written, so an unknown plan is a refusal
         // rather than a half-made subscription.
-        //
-        // The version is passed by the webhook, which reads it back out of the
-        // metadata the checkout was stamped with: a session opened under
-        // version 1 and completed after version 2 was published bought
-        // version 1, and it would be quite a trick to charge somebody for a
-        // list that did not exist when they clicked.
-        $plan = $this->plans->get($planKey, $version);
+        $plan = $this->plans->get($planKey);
 
         $at ??= Carbon::now();
         $until ??= $at->copy()->addMonth();
@@ -197,7 +187,6 @@ class Subscriptions
 
             $attributes = [
                 'plan' => $plan->key,
-                'plan_version' => $plan->version,
                 'status' => BillingStatus::Active,
                 'period_started_at' => $at,
                 'period_ends_at' => $until,
@@ -210,13 +199,12 @@ class Subscriptions
                 // Cleared unless this assignment names its own.
                 //
                 // Overrides belong to an *arrangement*, not to a project: they
-                // are how one Enterprise customer's bespoke numbers are held,
-                // and a plan change is the end of that arrangement. Leaving
-                // them was the create path and the update path disagreeing —
-                // create wrote `[]`, update left them standing — so moving an
-                // Enterprise customer down to Small kept every Enterprise
-                // limit and silently ignored the plan they had just been put
-                // on.
+                // are how one customer's comped numbers are held, and a plan
+                // change is the end of that arrangement. Leaving them was the
+                // create path and the update path disagreeing — create wrote
+                // `[]`, update left them standing — so a comped customer moved
+                // to another plan kept the comped limits and silently ignored
+                // the plan they had just been put on.
                 'limit_overrides' => $overrides,
             ];
 
@@ -250,7 +238,7 @@ class Subscriptions
             Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
             $subscription = ProjectSubscription::query()->where('project_id', $project->getKey())->lockForUpdate()->firstOrFail();
             $this->syncPacing($project, $subscription, $plan);
-            $subscription->fill(['plan' => $plan->key, 'plan_version' => $plan->version, 'limit_overrides' => []])->save();
+            $subscription->fill(['plan' => $plan->key, 'limit_overrides' => []])->save();
             $this->entitlements->forget($project);
 
             return $subscription;
@@ -393,7 +381,7 @@ class Subscriptions
 
     private function syncPacing(Project $project, ?ProjectSubscription $previous, Plan $target): void
     {
-        if ($target->version < 4 || $previous === null) {
+        if ($previous === null) {
             return;
         }
         $oldCeiling = $previous->plan()->weeklyTarget();

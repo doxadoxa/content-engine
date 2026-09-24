@@ -31,7 +31,7 @@ final class ImprovementAllowance
             if (! $entitlement->mayPublish()) {
                 throw ValidationException::withMessages(['approval' => 'An active plan or available publication grace is required for a first acceptance. The draft remains saved.']);
             }
-            $counted = ($entitlement->plan->version ?? 1) >= 2;
+            $counted = $entitlement->plan !== null;
             if ($counted) {
                 if (! $this->entitlements->reserve($project, Metric::PageImprovements)) {
                     throw ValidationException::withMessages(['approval' => 'This plan has no remaining page-improvement allowance. The draft is saved; no approval or additional charge was recorded.']);
@@ -39,7 +39,7 @@ final class ImprovementAllowance
             }
             DB::table('page_improvement_allowances')->insert([
                 'id' => (string) Str::ulid(), 'project_id' => $project->id, 'proposal_id' => $proposal->id,
-                'plan_version' => $entitlement->plan?->version, 'period_started_at' => $entitlement->subscription?->periodStart(),
+                'period_started_at' => $entitlement->subscription?->periodStart(),
                 'units' => $counted ? 1 : 0, 'accepted_at' => now(), 'policy' => 'first_owner_acceptance_per_proposal_v1',
                 'created_at' => now(), 'updated_at' => now(),
             ]);

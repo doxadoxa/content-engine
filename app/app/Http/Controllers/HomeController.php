@@ -184,7 +184,6 @@ class HomeController extends Controller
             ],
             'plan' => [
                 'key' => $plan->key,
-                'version' => $plan->version,
                 'name' => $plan->name,
                 'price_cents' => $plan->priceCents,
                 'currency' => $plan->currency,

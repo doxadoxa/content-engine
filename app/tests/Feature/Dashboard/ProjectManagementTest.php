@@ -6,6 +6,7 @@ namespace Tests\Feature\Dashboard;
 
 use App\Enums\ProjectStatus;
 use App\Models\Project;
+use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Tenancy\ProjectManager;
 use Carbon\CarbonImmutable;
@@ -22,6 +23,10 @@ final class ProjectManagementTest extends TestCase
     public function the_default_locale_is_always_published(): void
     {
         [$operator, $project] = $this->operatorWithOwnProject();
+        // Every plan on the list publishes in one language; two need an
+        // arrangement that allows them.
+        ProjectSubscription::query()->where('project_id', $project->getKey())->sole()
+            ->update(['limit_overrides' => ['locales' => 2]]);
 
         $this->actingAs($operator)->patch("/projects/{$project->getKey()}", [
             'name' => $project->name,
@@ -31,7 +36,7 @@ final class ProjectManagementTest extends TestCase
             // Deliberately omits `en`.
             'locales' => ['de'],
             'status' => 'active',
-        ])->assertRedirect();
+        ])->assertRedirect()->assertSessionHasNoErrors();
 
         $this->assertSame(['en', 'de'], $project->refresh()->locales);
     }

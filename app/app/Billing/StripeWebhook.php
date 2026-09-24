@@ -171,9 +171,8 @@ class StripeWebhook
      *   arrangement go with it.
      * - **A renewal.** `renew()`, which moves the window and resets the
      *   counters and touches nothing else. This used to call `assign()`, which
-     *   quietly cleared an Enterprise customer's overrides at their first
-     *   renewal and moved every paying customer onto the newest price list —
-     *   which is precisely what `plan_version` exists to prevent.
+     *   quietly cleared a comped customer's overrides at their first
+     *   renewal.
      * - **Everything else** — a card swapped, a quantity changed, Stripe
      *   touching metadata. Status and ids are updated; the period is not.
      *
@@ -186,7 +185,7 @@ class StripeWebhook
         }
 
         $existing = $this->existing($project);
-        $plan = $this->soldPlan($object, $existing);
+        $plan = $this->soldPlan($object);
 
         if ($plan === null) {
             // Refusing rather than guessing, for the reason PlanCatalog throws:
@@ -220,12 +219,11 @@ class StripeWebhook
         $periodEnd = $this->at($object, 'current_period_end');
 
         $samePeriodChange = $existing !== null
-            && ($existing->plan !== $plan->key || $existing->plan_version !== $plan->version)
-            && ($plan->version >= 4 || $existing->plan_version >= 4)
+            && $existing->plan !== $plan->key
             && ($periodStart === null || $existing->periodStart()->equalTo($periodStart));
         $outcome = match (true) {
             $samePeriodChange => $this->changeWithinPeriod($project, $plan),
-            $existing === null, $existing->plan !== $plan->key, $existing->plan_version !== $plan->version => $this->arrange(
+            $existing === null, $existing->plan !== $plan->key => $this->arrange(
                 $project,
                 $plan,
                 $object,
@@ -263,8 +261,8 @@ class StripeWebhook
             'canceled_at' => $this->at($object, 'canceled_at'),
         ])->save();
 
-        if ($subscription->pending_plan === $plan->key && $subscription->pending_plan_version === $plan->version) {
-            $subscription->fill(['pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null])->save();
+        if ($subscription->pending_plan === $plan->key) {
+            $subscription->fill(['pending_plan' => null, 'pending_plan_at' => null])->save();
             // The scheduled change has landed, so the schedule has no work
             // left — but `release` only fires at the end of its final phase, a
             // month away, and until then Stripe treats the subscription as
@@ -275,7 +273,7 @@ class StripeWebhook
 
         if (array_key_exists('schedule', $object)) {
             $scheduleId = is_string($object['schedule']) ? $object['schedule'] : ($object['schedule']['id'] ?? null);
-            $subscription->fill(['stripe_schedule_id' => $scheduleId, ...($scheduleId === null ? ['stripe_schedule_generation' => null, 'pending_plan' => null, 'pending_plan_version' => null, 'pending_plan_at' => null] : [])])->save();
+            $subscription->fill(['stripe_schedule_id' => $scheduleId, ...($scheduleId === null ? ['stripe_schedule_generation' => null, 'pending_plan' => null, 'pending_plan_at' => null] : [])])->save();
         }
 
         $this->stamp($subscription, $happenedAt);
@@ -313,7 +311,6 @@ class StripeWebhook
         $subscription = $this->existing($project) ?? ProjectSubscription::query()->create([
             'project_id' => $project->getKey(),
             'plan' => $plan->key,
-            'plan_version' => $plan->version,
             'status' => BillingStatus::Canceled,
             'limit_overrides' => [],
             'canceled_at' => Carbon::now(),
@@ -405,10 +402,6 @@ class StripeWebhook
             $this->payer($object, $project),
             $periodStart,
             $periodEnd,
-            // The version the checkout was stamped with, so a session opened
-            // under one price list and completed after the next was published
-            // buys the one it was opened under.
-            version: $plan->version,
         );
 
         if ($isNew) {
@@ -681,48 +674,32 @@ class StripeWebhook
         return is_string($name) ? Project::query()->whereKey($name)->first() : null;
     }
 
-    /** @param array<string, mixed> $object */
-    private function soldPlan(array $object, ?ProjectSubscription $existing): ?Plan
+    /**
+     * What the subscription is paying for.
+     *
+     * The price decides when it names one of ours: portal and dashboard
+     * changes can leave the checkout's metadata behind, and the price is what
+     * is actually being charged. The metadata key is the fallback, and only
+     * when the price does not contradict it.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    private function soldPlan(array $object): ?Plan
     {
         $catalog = app(PlanCatalog::class);
-        $key = $object['metadata']['plan'] ?? null;
-        $version = $object['metadata']['plan_version'] ?? null;
-        if ($version !== null) {
-            // Explicit checkout metadata is authoritative, including refusal of
-            // an invalid version. Never reinterpret it as today's price list.
-            if ((! is_int($version) && ! is_string($version)) || ! preg_match('/^[1-9][0-9]*$/D', (string) $version)) {
-                return null;
-            }
-
-            if (! is_string($key) || ! $catalog->has($key, (int) $version)) {
-                return null;
-            }
-            $named = $catalog->get($key, (int) $version);
-            $price = $this->priceId($object);
-            // Portal/dashboard changes can retain old metadata. The actual
-            // configured price decides which v4 allowance is being paid for.
-            if ($named->version >= 4 && $price !== null && $named->stripePrice !== $price) {
-                return $catalog->forStripePrice($price);
-            }
-
-            return $named;
-        }
-        $pinned = $existing !== null && $existing->stripe_id === ($object['id'] ?? null)
-            && $catalog->has($existing->plan, $existing->plan_version)
-            ? $catalog->get($existing->plan, $existing->plan_version) : null;
         $price = $this->priceId($object);
-        if ($price !== null) {
-            $byPrice = $catalog->forStripePrice($price, $pinned);
-            if ($byPrice !== null && ($key === null || $key === $byPrice->key)) {
-                return $byPrice;
-            }
+        $byPrice = $price === null ? null : $catalog->forStripePrice($price);
+        if ($byPrice !== null) {
+            return $byPrice;
         }
-        if ($pinned !== null && $key === $pinned->key) {
-            return $pinned;
-        }
-        $matches = array_values(array_filter($catalog->allVersions(), static fn (Plan $plan): bool => $plan->key === $key));
 
-        return count($matches) === 1 ? $matches[0] : null;
+        $key = $object['metadata']['plan'] ?? null;
+        if (! is_string($key) || ! $catalog->has($key)) {
+            return null;
+        }
+        $named = $catalog->get($key);
+
+        return $price !== null && $named->stripePrice !== null && $named->stripePrice !== $price ? null : $named;
     }
 
     /** @param array<string, mixed> $object */

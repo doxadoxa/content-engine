@@ -51,30 +51,27 @@ class BillingController extends Controller
             'trial_days' => $this->plans->trialDays(),
             'subscription_details' => $entitlement->subscription === null ? null : [
                 'period_started_at' => $entitlement->subscription->periodStart()->toIso8601String(),
-                'is_legacy' => $entitlement->plan !== null && $entitlement->plan->version < $this->plans->currentVersion(),
-                'is_custom' => $entitlement->plan !== null && ! $entitlement->plan->selfServe && $entitlement->plan->key !== 'trial',
                 'limits' => $entitlement->plan === null ? [] : $this->readableLimits($entitlement->plan),
             ],
             'pending_change' => $entitlement->subscription?->pending_plan === null ? null : [
-                'name' => $this->plans->get($entitlement->subscription->pending_plan, $entitlement->subscription->pending_plan_version)->name,
+                'name' => $this->plans->get($entitlement->subscription->pending_plan)->name,
                 'effective_at' => $entitlement->subscription->pending_plan_at?->toIso8601String(),
             ],
 
             // Whether to draw the buttons at all. The routes behind them are
-            // owner-only, so an operator shown a "Choose Medium" button would
+            // owner-only, so an operator shown a "Choose Growth" button would
             // be shown a 403 for pressing it — a control that is not allowed to
             // work should not be drawn rather than drawn and refused.
             'can_pay' => $this->isOwner($project),
 
             // Nothing to manage until there is something at the provider. A
-            // trial, a comped plan and a hand-assigned Enterprise deal have no
+            // trial and a comped plan have no
             // portal behind them, and sending somebody to one would land them
             // on a Stripe error.
             'has_provider' => $entitlement->subscription?->stripe_id !== null,
 
-            // Only what somebody can buy without talking to us. Enterprise is a
-            // conversation and a custom price; putting a "Choose" button under
-            // it would promise a checkout that does not exist.
+            // Only what somebody can buy: a "Choose" button under the preview or
+            // the trial would promise a checkout that does not exist.
             'plans' => array_map(
                 fn (Plan $plan): array => [
                     ...$plan->toArray(),
@@ -82,7 +79,7 @@ class BillingController extends Controller
                     'change' => $this->changes->preview($entitlement->subscription, $plan),
                     'ai_frequency_days' => $plan->limit('ai_frequency_days'),
                     'ai_questions' => $plan->limit('ai_questions'),
-                    'current' => $plan->key === $entitlement->plan?->key && $plan->version === $entitlement->plan->version,
+                    'current' => $plan->key === $entitlement->plan?->key,
                 ],
                 $this->plans->selfServe(),
             ),
@@ -120,9 +117,6 @@ class BillingController extends Controller
             if (! array_key_exists($metric->value, $plan->limits())) {
                 continue;
             }
-            if ($plan->version === 2 && in_array($metric, [Metric::Articles, Metric::ContentPlans], true)) {
-                continue;
-            }
             $rows[] = [
                 'key' => $metric->value,
                 'label' => ucfirst($metric->label()),
@@ -130,9 +124,7 @@ class BillingController extends Controller
             ];
         }
 
-        if ($plan->version >= 4) {
-            $rows[] = ['key' => 'ai_answers', 'label' => 'AI answer attempts', 'value' => $plan->limit('ai_answers')];
-        }
+        $rows[] = ['key' => 'ai_answers', 'label' => 'AI answer attempts', 'value' => $plan->limit('ai_answers')];
 
         foreach (['tracked_pages' => 'Monitored pages', 'locales' => 'Languages', 'seats' => 'Team members', 'channels' => 'Website connections'] as $key => $label) {
             if (! array_key_exists($key, $plan->limits())) {

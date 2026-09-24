@@ -22,7 +22,7 @@ final readonly class AnswerAllowance
     {
         $this->entitlements->forget($project);
 
-        return ($this->entitlements->for($project)->plan->version ?? 0) >= 4;
+        return $this->entitlements->for($project)->plan !== null;
     }
 
     /** Caller holds the project lock; subscription lock serializes billing changes. */
@@ -44,11 +44,10 @@ final readonly class AnswerAllowance
     public function attempt(Project $project, AiSamplingCell $cell): bool
     {
         $reservation = AiAnswerReservation::query()->where('sampling_cell_id', $cell->id)->lockForUpdate()->first();
-        $subscription = ProjectSubscription::query()->where('project_id', $project->id)->lockForUpdate()->first();
         if ($reservation === null) {
-            // A pre-v4 queued cell is not a free path after an upgrade.
-            return $subscription !== null && $subscription->plan_version < 4;
+            return false;
         }
+        $subscription = ProjectSubscription::query()->where('project_id', $project->id)->lockForUpdate()->first();
         if ($reservation->status !== 'reserved' || $subscription === null || ! $reservation->period_started_at->equalTo($subscription->periodStart())
             || $reservation->period_ends_at->isPast() || $subscription->period_ends_at?->isFuture() !== true || $project->status !== ProjectStatus::Active) {
             $this->release($project, $cell);

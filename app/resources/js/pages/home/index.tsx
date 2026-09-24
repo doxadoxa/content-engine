@@ -65,7 +65,6 @@ type Preview = {
     draft: { id: string; title: string; words: number } | null;
     plan: {
         key: string;
-        version: number;
         name: string;
         price_cents: number;
         currency: string;

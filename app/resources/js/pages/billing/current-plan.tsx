@@ -8,8 +8,6 @@ import type { PlanLimit } from './allowances';
 
 export type SubscriptionDetails = {
     period_started_at: string;
-    is_legacy: boolean;
-    is_custom: boolean;
     limits: PlanLimit[];
 } | null;
 
@@ -97,9 +95,6 @@ export function CurrentPlan({
                         {plan && (
                             <Badge variant="secondary">{statusLabel}</Badge>
                         )}
-                        {details?.is_legacy && (
-                            <Badge variant="outline">Earlier plan</Badge>
-                        )}
                     </div>
                 </div>
                 {plan && (
@@ -110,12 +105,10 @@ export function CurrentPlan({
                                 : 'Listed plan price'}
                         </p>
                         <p className="text-2xl font-semibold tracking-tight tabular-nums sm:text-3xl">
-                            {details?.is_custom
-                                ? 'Custom pricing'
-                                : plan.key === 'trial'
-                                  ? 'Free'
-                                  : money(plan.price_cents, plan.currency)}
-                            {!details?.is_custom && plan.key !== 'trial' && (
+                            {plan.price_cents === 0
+                                ? 'Free'
+                                : money(plan.price_cents, plan.currency)}
+                            {plan.price_cents !== 0 && (
                                 <span className="block text-sm font-normal text-muted-foreground sm:ml-1 sm:inline">
                                     /month
                                 </span>

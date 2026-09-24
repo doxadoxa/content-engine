@@ -30,15 +30,15 @@ final class StripePlanScheduleTest extends TestCase
 
     public function test_stripe_schedule_preserves_current_phase_and_can_be_recreated_after_cancellation(): void
     {
-        config(['cashier.secret' => 'sk_test_no_network', 'billing.plans.4.starter.stripe_price' => 'price_starter']);
+        config(['cashier.secret' => 'sk_test_no_network', 'billing.plans.starter.stripe_price' => 'price_starter']);
         $project = Project::factory()->unbilled()->create();
         $owner = User::factory()->create(['stripe_id' => 'cus_test']);
         $local = ProjectSubscription::factory()->forProject($project)->create([
-            'billing_user_id' => $owner->id, 'stripe_id' => 'sub_test', 'plan' => 'growth', 'plan_version' => 4,
+            'billing_user_id' => $owner->id, 'stripe_id' => 'sub_test', 'plan' => 'growth',
         ]);
         $phase = ['start_date' => $local->periodStart()->timestamp, 'end_date' => $local->period_ends_at->timestamp,
             'items' => [['price' => 'price_growth', 'quantity' => 1, 'tax_rates' => ['txr_one']]],
-            'discounts' => [['discount' => 'di_saved']], 'metadata' => ['project_id' => $project->id, 'plan' => 'growth', 'plan_version' => '4']];
+            'discounts' => [['discount' => 'di_saved']], 'metadata' => ['project_id' => $project->id, 'plan' => 'growth']];
         $requests = [];
         $generation = 0;
         $scheduleId = null;
@@ -82,7 +82,7 @@ final class StripePlanScheduleTest extends TestCase
         });
         ApiRequestor::setHttpClient($client);
         $provider = app(StripeBillingProvider::class);
-        $plan = app(PlanCatalog::class)->get('starter', 4);
+        $plan = app(PlanCatalog::class)->get('starter');
         try {
             $provider->schedulePlanChange($owner, $project, $plan);
             $this->fail('Expected the simulated transport failure.');

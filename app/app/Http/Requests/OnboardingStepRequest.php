@@ -53,7 +53,7 @@ final class OnboardingStepRequest extends FormRequest
     private function keysFor(string $step): array
     {
         return match ($step) {
-            'offer' => ['key', 'version'],
+            'offer' => ['key'],
             'market' => ['market', 'language', 'extra_languages', 'timezone', 'duty_hours'],
             'business' => ['name', 'description', 'audiences'],
             'voice' => [
@@ -75,7 +75,7 @@ final class OnboardingStepRequest extends FormRequest
     private function answerRules(string $step): array
     {
         return match ($step) {
-            'offer' => ['answers.key' => ['required', 'string'], 'answers.version' => ['required', 'integer']],
+            'offer' => ['answers.key' => ['required', 'string']],
             'market' => [
                 'answers.market' => ['nullable', 'string', 'max:100'],
                 'answers.language' => ['required', 'string', 'max:12', 'regex:/^[a-z]{2,3}(?:-[A-Z]{2})?$/'],

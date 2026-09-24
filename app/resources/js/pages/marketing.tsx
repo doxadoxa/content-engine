@@ -19,7 +19,6 @@ import { cookies, privacy, terms } from '@/routes/legal';
 type PricingPlan = {
     key: string;
     name: string;
-    version: number;
     price_cents: number;
     currency: string;
     limits: {
@@ -507,7 +506,7 @@ function Pricing({ pricing }: Props) {
                                 </p>
                             </details>
                             <Link
-                                href={`/start?plan=${plan.key}&plan_version=${plan.version}`}
+                                href={`/start?plan=${plan.key}`}
                                 className={`${buttonClass} mt-7 w-full`}
                             >
                                 Choose {plan.name}{' '}

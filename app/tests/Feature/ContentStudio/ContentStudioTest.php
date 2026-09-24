@@ -79,7 +79,9 @@ final class ContentStudioTest extends TestCase
         $this->app->instance(ImageGenerationProvider::class, $this->images);
 
         $this->operator = User::factory()->create();
-        $this->project = Project::factory()->create([
+        // The studio writes social posts, which no plan on sale includes any
+        // more; the allowance is granted as an override so the screen still runs.
+        $this->project = Project::factory()->withSocialAllowance()->create([
             'name' => 'Persistence',
             'website_url' => 'https://persistance.io',
             'site_analysis' => [

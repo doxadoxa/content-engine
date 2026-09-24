@@ -43,7 +43,7 @@ $ensure = static function (bool $passed, string $message): void {
     }
 };
 try {
-    ProjectSubscription::query()->where('project_id', $project->id)->update(['plan' => 'local-search', 'plan_version' => 3]);
+    ProjectSubscription::query()->where('project_id', $project->id)->update(['plan' => 'growth']);
     $channel = Channel::query()->create(['name' => 'Local WordPress article fixture', 'type' => ChannelType::WordPress, 'config' => ['page_receiver_base' => 'http://localhost:8093/wp-json/avyo/v1', 'username' => $credentials['username']], 'secret' => $credentials['password'], 'autopublish' => true, 'is_enabled' => true]);
     $publisher = app(WordPressPublisher::class);
     $ping = $publisher->attempt($publisher->ping($channel, $project));

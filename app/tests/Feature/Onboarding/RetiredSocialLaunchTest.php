@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Onboarding;
 
-use App\Billing\Entitlements;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\OnboardingStatus;
@@ -13,7 +12,6 @@ use App\Http\Middleware\HandleInertiaRequests;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
-use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\ProjectLaunch;
 use App\Onboarding\WebsiteChecklist;
@@ -25,7 +23,7 @@ use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
 
-final class FocusedWebsiteLaunchTest extends TestCase
+final class RetiredSocialLaunchTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -50,47 +48,6 @@ final class FocusedWebsiteLaunchTest extends TestCase
         $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
         $this->assertFalse(PipelineRun::acrossProjects()->whereIn('pipeline', ['planning', 'generation', 'repurpose'])->exists());
         $this->assertSame(0, ContentItem::acrossProjects()->count());
-    }
-
-    public function test_version_two_launch_only_audits_and_guides_existing_page_work(): void
-    {
-        Queue::fake();
-        [, $project] = $this->owner(OnboardingStatus::Draft);
-        $this->focusedOffer($project);
-        $run = app(ProjectLaunch::class)->begin($project);
-        $this->assertNotNull($run);
-        $this->assertSame('site_audit', $run->pipeline);
-        $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
-        $this->assertFalse(PipelineRun::acrossProjects()->whereIn('pipeline', ['research', 'planning', 'generation', 'content_studio'])->exists());
-        $this->assertDatabaseCount('content_items', 0);
-        $steps = app(CurrentProject::class)->run($project, fn (): array => WebsiteChecklist::for($project));
-        $this->assertSame('/pages', collect($steps)->firstWhere('key', 'tracked_page')['action']);
-        $this->assertSame('/plan', collect($steps)->firstWhere('key', 'proposal')['action']);
-        $this->assertTrue(collect($steps)->firstWhere('key', 'proposal')['locked']);
-        $this->assertNull(collect($steps)->firstWhere('key', 'approve'));
-    }
-
-    public function test_version_two_without_an_audit_target_still_reaches_usable_setup(): void
-    {
-        Queue::fake();
-        [, $project] = $this->owner(OnboardingStatus::Draft);
-        $project->update(['website_url' => null]);
-        $this->focusedOffer($project);
-        $this->assertNull(app(ProjectLaunch::class)->begin($project));
-        $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
-        $this->assertDatabaseCount('pipeline_runs', 0);
-    }
-
-    public function test_stale_legacy_completion_cannot_start_article_work_on_version_two(): void
-    {
-        Queue::fake();
-        [, $project] = $this->owner(OnboardingStatus::Launching);
-        $this->focusedOffer($project);
-        $run = app(CurrentProject::class)->run($project, fn (): PipelineRun => PipelineRun::factory()->create(['pipeline' => 'research', 'status' => PipelineRunStatus::Completed, 'finished_at' => now()]));
-        app(ProjectLaunch::class)->advance($run);
-        $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
-        $this->assertDatabaseCount('pipeline_runs', 1);
-        $this->assertDatabaseCount('content_items', 0);
     }
 
     public function test_overview_does_not_count_retired_social_as_work_for_the_owner(): void
@@ -139,19 +96,12 @@ final class FocusedWebsiteLaunchTest extends TestCase
             ->where('kinds', [])->where('refusals', null)->etc());
     }
 
-    public function test_onboarding_rejects_social_and_keeps_publication_manual_without_an_article_quota(): void
+    public function test_onboarding_rejects_social_channels(): void
     {
         [$user, $project] = $this->owner(OnboardingStatus::Draft);
-        $this->focusedOffer($project);
         $this->actingAs($user)->postJson('/onboarding/'.$project->id.'/save', [
             'step' => 'channels', 'answers' => ['social' => ['threads']],
         ])->assertUnprocessable()->assertJsonValidationErrors('answers.social');
-
-        $this->actingAs($user)->postJson('/onboarding/'.$project->id.'/save', [
-            'step' => 'settings', 'answers' => ['target_words' => 1200, 'autopublish' => true],
-        ])->assertOk();
-
-        $this->assertFalse($project->refresh()->autopublish);
     }
 
     public function test_retired_runs_do_not_keep_the_overview_in_setup_or_show_a_social_failure(): void
@@ -182,12 +132,6 @@ final class FocusedWebsiteLaunchTest extends TestCase
             $this->assertSame($website->id, $work['failed'][0]['id']);
             $this->assertSame(5, PipelineRun::query()->count(), 'Retirement preserves historical run records.');
         });
-    }
-
-    private function focusedOffer(Project $project): void
-    {
-        ProjectSubscription::query()->where('project_id', $project->id)->update(['plan' => 'local-search', 'plan_version' => 2]);
-        app(Entitlements::class)->forget($project);
     }
 
     /** @return array{User, Project} */

@@ -29,7 +29,7 @@ final class SamplingSets
             }
             $prompts = LlmPrompt::query()->where('is_active', true)->orderBy('locale')->orderBy('id')->get()->map(static fn (LlmPrompt $prompt): array => ['text' => $prompt->text, 'locale' => $prompt->locale, 'intent' => $prompt->intent->value, 'purpose' => 'discovery'])->values()->all();
             $entitlement = app(Entitlements::class)->for($project);
-            if (($entitlement->plan->version ?? 0) >= 4) {
+            if ($entitlement->plan !== null) {
                 $prompts = array_slice(array_values(array_filter($prompts, fn (array $prompt): bool => $prompt['locale'] === $project->default_locale)), 0, $entitlement->limit('ai_questions') ?? 0);
             }
             if ($prompts === []) {

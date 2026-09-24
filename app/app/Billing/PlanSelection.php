@@ -14,31 +14,30 @@ final class PlanSelection
 
     public function __construct(private readonly PlanCatalog $plans) {}
 
-    public function validate(string $key, int $version): Plan
+    public function validate(string $key): Plan
     {
-        if ($version !== $this->plans->currentVersion() || ! $this->plans->has($key, $version)
-            || ! $this->plans->get($key, $version)->selfServe) {
+        if (! $this->plans->has($key) || ! $this->plans->get($key)->selfServe) {
             throw ValidationException::withMessages(['plan' => 'Choose one of the current plans before continuing.']);
         }
 
-        return $this->plans->get($key, $version);
+        return $this->plans->get($key);
     }
 
     public function selected(Request $request, ?Project $project = null): Plan
     {
         $choice = $project?->onboarding['offer'] ?? $request->session()->get(self::SESSION_KEY);
-        if (is_array($choice) && is_string($choice['key'] ?? null) && is_numeric($choice['version'] ?? null)) {
-            if ($this->plans->has($choice['key'], (int) $choice['version']) && $this->plans->get($choice['key'], (int) $choice['version'])->selfServe) {
-                return $this->plans->get($choice['key'], (int) $choice['version']);
-            }
+        $key = is_array($choice) ? ($choice['key'] ?? null) : null;
+
+        if (is_string($key) && $this->plans->has($key) && $this->plans->get($key)->selfServe) {
+            return $this->plans->get($key);
         }
 
         return $this->plans->defaultPlan();
     }
 
-    /** @return array{key: string, version: int} */
+    /** @return array{key: string} */
     public function identity(Plan $plan): array
     {
-        return ['key' => $plan->key, 'version' => $plan->version];
+        return ['key' => $plan->key];
     }
 }

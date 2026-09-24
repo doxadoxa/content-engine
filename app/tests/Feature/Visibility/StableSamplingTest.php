@@ -21,6 +21,7 @@ use App\Support\Tenancy\CurrentProject;
 use App\Visibility\Contracts\LlmVisibilityGateway;
 use App\Visibility\FakeLlmVisibility;
 use App\Visibility\LlmAnswer;
+use App\Visibility\Sampling\AnswerAllowance;
 use App\Visibility\Sampling\SamplingReport;
 use App\Visibility\Sampling\SamplingRuns;
 use App\Visibility\Sampling\SamplingSets;
@@ -53,7 +54,9 @@ final class StableSamplingTest extends TestCase
         /** @var FakeLlmVisibility $provider */
         $provider = app(LlmVisibilityGateway::class);
         $this->provider = $provider;
-        config()->set('visibility.platforms', ['chat_gpt' => ['model' => 'pinned-model', 'accepts_country' => true]]);
+        // A billed question set must cover all four supported services.
+        config()->set('visibility.platforms', ['chat_gpt' => ['model' => 'pinned-model', 'accepts_country' => true], 'gemini' => ['model' => 'gemini-model', 'accepts_country' => false],
+            'claude' => ['model' => 'claude-model'], 'perplexity' => ['model' => 'perplexity-model']]);
         config()->set('queue.default', 'sync');
         Cache::flush();
     }
@@ -96,11 +99,12 @@ final class StableSamplingTest extends TestCase
         $run = $this->runSet($set);
         $report = app(SamplingReport::class)->run($run->refresh());
         $this->assertSame('complete', $report['status']);
-        $this->assertSame(1, $report['discovery']['answered']);
+        // One discovery question across four services; only ChatGPT's answer cites the site, and only it reports a total cost.
+        $this->assertSame(4, $report['discovery']['answered']);
         $this->assertSame(0, $report['discovery']['mentions']);
         $this->assertSame(1, $report['discovery']['citations']);
         $this->assertSame(8000, $report['known_cost_micros']);
-        $this->assertSame(1, $report['unknown_cost_cells']);
+        $this->assertSame(7, $report['unknown_cost_cells']);
         $answer = AiSamplingAnswer::query()->where('full_text', $long)->firstOrFail();
         $this->actingAs($this->owner)->get(route('ai-sampling.answer', $answer))->assertOk()
             ->assertInertia(fn ($page) => $page->where('answer.full_text', $long)->where('answer.resolved_model', 'resolved-v1'));
@@ -115,11 +119,11 @@ final class StableSamplingTest extends TestCase
         $run = $this->runSet($set, $key);
         $duplicate = $this->runSet($set, $key);
         $this->assertSame($run->id, $duplicate->id);
-        $this->assertCount(2, $this->provider->asked());
+        $this->assertCount(8, $this->provider->asked());
         $cell = AiSamplingCell::query()->where('sampling_run_id', $run->id)->firstOrFail();
         $again = app(SamplingRuns::class)->start($this->project, $set, (string) Str::uuid(), $this->owner, $run, [$cell->cell_key]);
         app(SamplingRuns::class)->dispatch($this->project, $again);
-        $this->assertCount(3, $this->provider->asked());
+        $this->assertCount(9, $this->provider->asked());
         $this->assertSame(1, AiSamplingCell::query()->where('sampling_run_id', $again->id)->count());
         $this->assertSame($run->id, $again->recheck_of_run_id);
     }
@@ -128,10 +132,12 @@ final class StableSamplingTest extends TestCase
     public function model_retirement_prevents_purchase_and_preserves_the_planned_cells(): void
     {
         $set = $this->set();
-        $this->provider->withModels('chat_gpt', [['model_name' => 'other-model', 'web_search_supported' => true]]);
+        foreach (['chat_gpt', 'gemini', 'claude', 'perplexity'] as $platform) {
+            $this->provider->withModels($platform, [['model_name' => 'other-model', 'web_search_supported' => true]]);
+        }
         $run = $this->runSet($set);
         $this->assertCount(0, $this->provider->asked());
-        $this->assertSame(2, AiSamplingCell::query()->where('status', 'unavailable')->count());
+        $this->assertSame(8, AiSamplingCell::query()->where('status', 'unavailable')->count());
         $this->assertSame('partial', $run->refresh()->status);
         $this->assertNull(app(SamplingReport::class)->run($run)['discovery']['mention_rate']);
     }
@@ -144,9 +150,9 @@ final class StableSamplingTest extends TestCase
         $cell = AiSamplingCell::query()->where('sampling_run_id', $run->id)->firstOrFail();
         $this->assertSame('indeterminate', $cell->status);
         app(PipelineRunner::class)->start('ai_sample', $this->project, ['cell_id' => $cell->id]);
-        $this->assertCount(2, $this->provider->asked());
+        $this->assertCount(8, $this->provider->asked());
         $this->assertSame(0, AiSamplingAnswer::query()->count());
-        $this->assertSame(2, app(SamplingReport::class)->run($run->refresh())['unknown_cost_cells']);
+        $this->assertSame(8, app(SamplingReport::class)->run($run->refresh())['unknown_cost_cells']);
     }
 
     #[Test]
@@ -157,7 +163,7 @@ final class StableSamplingTest extends TestCase
         $run = $this->runSet($this->set());
         $report = app(SamplingReport::class)->run($run->refresh());
         $this->assertSame('partial', $report['status']);
-        $this->assertSame(['empty' => 1, 'budget_skipped' => 1], $report['status_counts']);
+        $this->assertSame(['empty' => 1, 'budget_skipped' => 7], $report['status_counts']);
         $this->assertNull($report['discovery']['mention_rate']);
         $this->assertSame(6000, $report['known_cost_micros']);
     }
@@ -167,8 +173,10 @@ final class StableSamplingTest extends TestCase
     {
         $set = $this->set([['text' => 'Who cleans homes in Lisbon?', 'locale' => 'en', 'intent' => 'buying', 'purpose' => 'discovery']]);
         foreach (['v1', 'v1', 'v2'] as $model) {
-            $this->provider->willReturn('chat_gpt', 'Who cleans homes in Lisbon?', new LlmAnswer('chat_gpt', $model, 'An answer.', [], .001, [],
-                ['resolved_model' => $model, 'sent_country' => 'PT', 'web_search_reported' => true], .006));
+            foreach (['chat_gpt', 'gemini', 'claude', 'perplexity'] as $platform) {
+                $this->provider->willReturn($platform, 'Who cleans homes in Lisbon?', new LlmAnswer($platform, $model, 'An answer.', [], .001, [],
+                    ['resolved_model' => $model, 'sent_country' => 'PT', 'web_search_reported' => true], .006));
+            }
             $run = $this->runSet($set);
             $available[] = app(SamplingReport::class)->run($run->refresh())['comparison']['available'];
         }
@@ -199,9 +207,9 @@ final class StableSamplingTest extends TestCase
         $run = AiSamplingRun::query()->sole();
         app(SamplingRuns::class)->dispatch($this->project, $run);
         $this->assertSame(1, AiSamplingSet::query()->count());
-        $this->assertSame(1, AiSamplingAnswer::query()->count());
+        $this->assertSame(4, AiSamplingAnswer::query()->count());
         $this->assertSame(0, LlmVisibilityAnswer::query()->count());
-        $this->assertCount(1, $this->provider->asked());
+        $this->assertCount(4, $this->provider->asked());
     }
 
     #[Test]
@@ -212,6 +220,8 @@ final class StableSamplingTest extends TestCase
         $spec = ['prompt' => $set->configuration['prompts'][0], 'platform' => $set->configuration['panel'][0], 'market' => 'pt', 'brand' => 'Cleaning Point', 'website' => 'https://cleaningpoint.net'];
         $stale = AiSamplingCell::query()->create(['sampling_run_id' => $run->id, 'cell_key' => hash('sha256', 'stale'), 'specification' => $spec, 'status' => 'running', 'attempted_at' => SamplingTiming::staleBefore()->subSecond()]);
         $queued = AiSamplingCell::query()->create(['sampling_run_id' => $run->id, 'cell_key' => hash('sha256', 'queued'), 'specification' => $spec, 'status' => 'queued']);
+        // Queued work only runs on a reserved answer unit, exactly as SamplingRuns would have left it.
+        app(AnswerAllowance::class)->reserve($this->project, $queued);
         /** @var PendingCommand $command */
         $command = $this->artisan('visibility:reconcile');
         $command->assertSuccessful()->run();
@@ -226,21 +236,22 @@ final class StableSamplingTest extends TestCase
     {
         $set = $this->set([['text' => 'Who cleans homes in Lisbon?', 'locale' => 'en', 'intent' => 'buying', 'purpose' => 'discovery']]);
         $entered = false;
-        $this->provider->whenReadingModels(function () use (&$entered): void {
+        $this->provider->whenReadingModels(function (string $platform) use (&$entered): void {
             if ($entered) {
                 return;
             }
             $entered = true;
-            $cell = AiSamplingCell::query()->sole();
+            $cell = AiSamplingCell::query()->get()->firstOrFail(fn (AiSamplingCell $cell): bool => $cell->specification['platform']['platform'] === $platform);
             app(PipelineRunner::class)->start('ai_sample', $this->project, ['cell_id' => $cell->id]);
             throw new \RuntimeException('The original worker inventory request failed after the competing worker completed.');
         });
         $run = $this->runSet($set);
-        $this->assertSame('answered', AiSamplingCell::query()->sole()->status);
-        $this->assertSame(1, AiSamplingAnswer::query()->count());
+        // Every cell, including the one whose original worker lost its preflight, is answered exactly once.
+        $this->assertSame(4, AiSamplingCell::query()->where('status', 'answered')->count());
+        $this->assertSame(4, AiSamplingAnswer::query()->count());
         $this->assertSame('complete', $run->refresh()->status);
-        $this->assertCount(1, $this->provider->asked());
-        $this->assertSame(1, app(SamplingReport::class)->run($run)['discovery']['answered']);
+        $this->assertCount(4, $this->provider->asked());
+        $this->assertSame(4, app(SamplingReport::class)->run($run)['discovery']['answered']);
     }
 
     #[Test]

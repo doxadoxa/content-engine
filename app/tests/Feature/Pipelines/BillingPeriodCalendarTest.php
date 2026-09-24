@@ -322,7 +322,7 @@ final class BillingPeriodCalendarTest extends TestCase
         $project = Project::factory()->create(['timezone' => $timezone, 'autopublish' => true, 'weekly_target' => 7,
             'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
         ProjectSubscription::query()->where('project_id', $project->id)->update([
-            'plan' => $plan, 'plan_version' => 4, 'status' => BillingStatus::Active,
+            'plan' => $plan, 'status' => BillingStatus::Active,
             'period_started_at' => Carbon::parse($start), 'period_ends_at' => Carbon::parse($end),
         ]);
         app(Entitlements::class)->forget($project);

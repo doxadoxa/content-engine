@@ -515,16 +515,14 @@ export default function ProposalShow({
                                     )}
                                 </div>
                             )}
-                            {owner &&
-                                current &&
-                                (billing?.plan?.version ?? 0) >= 2 && (
-                                    <p className="mt-5 text-sm text-muted-foreground">
-                                        The first acceptance of this proposal
-                                        uses one page improvement. Revisions and
-                                        delivery retries are included.
-                                        Acceptance does not publish the change.
-                                    </p>
-                                )}
+                            {owner && current && billing?.plan && (
+                                <p className="mt-5 text-sm text-muted-foreground">
+                                    The first acceptance of this proposal uses
+                                    one page improvement. Revisions and delivery
+                                    retries are included. Acceptance does not
+                                    publish the change.
+                                </p>
+                            )}
                             {owner &&
                                 current &&
                                 !['drafting', 'dismissed'].includes(

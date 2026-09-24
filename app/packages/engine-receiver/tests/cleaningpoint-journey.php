@@ -53,7 +53,7 @@ $ensure = static function (bool $passed, string $message): void {
 };
 try {
     $project->forceFill(['status' => ProjectStatus::Active, 'autopublish' => true, 'onboarding' => [...$project->onboarding, 'article_automation_started_at' => now()->subSecond()->toIso8601String()]])->save();
-    ProjectSubscription::query()->where('project_id', $project->id)->update(['plan' => 'local-search', 'plan_version' => 3]);
+    ProjectSubscription::query()->where('project_id', $project->id)->update(['plan' => 'growth']);
     $channel = Channel::query()->create(['name' => 'Local CleaningPoint article fixture '.Str::lower(Str::random(8)), 'type' => ChannelType::Webhook, 'config' => ['endpoint' => $credentials['endpoint']], 'secret' => $credentials['secret'], 'autopublish' => true, 'is_enabled' => true]);
     $publisher = app(WebhookPublisher::class);
     $ping = $publisher->attempt($publisher->ping($channel, $project));

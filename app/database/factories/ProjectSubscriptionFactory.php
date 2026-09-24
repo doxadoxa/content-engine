@@ -33,8 +33,7 @@ class ProjectSubscriptionFactory extends Factory
         return [
             'project_id' => fn (): mixed => $this->resolveProject(),
             'billing_user_id' => null,
-            'plan' => 'medium',
-            'plan_version' => 1,
+            'plan' => 'growth',
             'status' => BillingStatus::Active,
             'limit_overrides' => [],
             'period_started_at' => $started,

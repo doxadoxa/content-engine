@@ -460,8 +460,8 @@ final class ArchiveProjectTest extends TestCase
                 'current_period_end' => $start->copy()->addMonth()->getTimestamp(),
                 'trial_end' => null,
                 'canceled_at' => null,
-                'metadata' => ['project_id' => $project->getKey(), 'plan' => 'medium', 'plan_version' => '1'],
-                'items' => ['data' => [['price' => ['id' => 'price_medium']]]],
+                'metadata' => ['project_id' => $project->getKey(), 'plan' => 'growth'],
+                'items' => ['data' => [['price' => ['id' => 'price_growth']]]],
             ]],
         ];
     }
@@ -486,7 +486,7 @@ final class ArchiveProjectTest extends TestCase
             id: 'sub_test',
             status: BillingStatus::Active,
             rawStatus: 'active',
-            priceId: 'price_medium',
+            priceId: 'price_growth',
             periodStart: Carbon::now()->startOfDay(),
             periodEnd: Carbon::now()->startOfDay()->addMonth(),
             trialEnd: null,

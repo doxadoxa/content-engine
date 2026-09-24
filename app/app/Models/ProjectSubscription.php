@@ -36,7 +36,6 @@ use Illuminate\Support\Carbon;
  * @property string $project_id
  * @property int|null $billing_user_id
  * @property string $plan
- * @property int $plan_version
  * @property BillingStatus $status
  * @property array<string, int|null> $limit_overrides
  * @property Carbon|null $period_started_at
@@ -49,7 +48,6 @@ use Illuminate\Support\Carbon;
  * @property string|null $stripe_price
  * @property Carbon|null $last_event_at
  * @property string|null $pending_plan
- * @property int|null $pending_plan_version
  * @property Carbon|null $pending_plan_at
  * @property string|null $stripe_schedule_generation
  * @property string|null $stripe_schedule_id
@@ -66,7 +64,6 @@ class ProjectSubscription extends Model
         'project_id',
         'billing_user_id',
         'plan',
-        'plan_version',
         'status',
         'limit_overrides',
         'period_started_at',
@@ -80,7 +77,6 @@ class ProjectSubscription extends Model
         'last_event_at',
         'paused_by_billing',
         'pending_plan',
-        'pending_plan_version',
         'pending_plan_at',
         'stripe_schedule_id',
         'stripe_schedule_generation',
@@ -95,7 +91,6 @@ class ProjectSubscription extends Model
      */
     protected $attributes = [
         'limit_overrides' => '{}',
-        'plan_version' => 1,
         'paused_by_billing' => false,
     ];
 
@@ -111,19 +106,12 @@ class ProjectSubscription extends Model
         return $this->belongsTo(User::class, 'billing_user_id');
     }
 
-    /**
-     * The plan as sold, with this customer's overrides on top.
-     *
-     * Read under `plan_version` rather than under today's, which is the whole
-     * reason that column exists: re-pricing publishes a new list and must not
-     * move the one somebody is already paying against.
-     */
+    /** The plan as sold, with this customer's overrides on top. */
     public function plan(): Plan
     {
         $catalog = app(PlanCatalog::class);
 
-        // The trial goes through the same versioned lookup as everything else.
-        $plan = $catalog->get($this->plan, $this->plan_version);
+        $plan = $catalog->get($this->plan);
 
         $overrides = $this->limit_overrides;
 
@@ -136,10 +124,10 @@ class ProjectSubscription extends Model
      * Usually the plan they bought. During a free window it is the trial's,
      * and the difference matters more than it looks: a public trial is a paid
      * plan at Stripe with free days on the front, so the checkout stamps
-     * `medium` and the subscription arrives as `plan = medium, status =
+     * `growth` and the subscription arrives as `plan = growth, status =
      * trialing`. Reading limits from the purchased plan therefore gave every
-     * trial Medium's thirty articles, five hundred assistant turns and — the
-     * one that costs us — a sixty-dollar ceiling in place of five.
+     * trial Growth's thirty articles, two hundred AI answers and — the one
+     * that costs us — a seventy-five-dollar ceiling in place of five.
      *
      * The trial's caps were measured against what three free days actually
      * produce, so this is not a restriction on top of the trial: it *is* the
@@ -156,7 +144,7 @@ class ProjectSubscription extends Model
             return $bought;
         }
 
-        $trial = app(PlanCatalog::class)->trial($this->plan_version);
+        $trial = app(PlanCatalog::class)->trial();
         $overrides = $this->limit_overrides;
 
         return $overrides === [] ? $trial : $trial->with($overrides);
@@ -203,7 +191,6 @@ class ProjectSubscription extends Model
         return [
             'status' => BillingStatus::class,
             'limit_overrides' => 'array',
-            'plan_version' => 'integer',
             'period_started_at' => 'datetime',
             'period_ends_at' => 'datetime',
             'trial_ends_at' => 'datetime',
@@ -211,7 +198,6 @@ class ProjectSubscription extends Model
             'canceled_at' => 'datetime',
             'last_event_at' => 'datetime',
             'paused_by_billing' => 'boolean',
-            'pending_plan_version' => 'integer',
             'pending_plan_at' => 'datetime',
         ];
     }

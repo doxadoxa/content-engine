@@ -22,9 +22,8 @@ use InvalidArgumentException;
  * exercised first, with plans assigned from a terminal, and Stripe arrives
  * afterwards to call exactly the transitions this command calls.
  *
- * It stays after that, for the two things a payment provider is bad at:
- * comping a plan for somebody we owe a favour, and provisioning Enterprise,
- * which is a conversation rather than a checkout.
+ * It stays after that for the thing a payment provider is bad at: comping a
+ * plan for somebody we owe a favour.
  */
 class BillingAssignCommand extends Command
 {

@@ -46,7 +46,7 @@ final class ArticleWorkflow
 
     public static function usesBillingPeriod(Project $project): bool
     {
-        return (app(Entitlements::class)->for($project)->subscription->plan_version ?? 0) >= 4;
+        return app(Entitlements::class)->for($project)->subscription !== null;
     }
 
     public static function period(Project $project, PlanningWindow $window): ?ArticlePlanningPeriod
