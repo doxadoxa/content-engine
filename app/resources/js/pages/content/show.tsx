@@ -375,13 +375,16 @@ export default function ContentShow({
                         </CardContent>
                     </Card>
 
-                    <details
+                    <aside
                         className="min-w-0 space-y-4 rounded-2xl border p-4"
-                        aria-label="Article review details"
+                        aria-labelledby="article-review-details"
                     >
-                        <summary className="cursor-pointer text-sm font-medium">
+                        <h2
+                            id="article-review-details"
+                            className="text-sm font-medium"
+                        >
                             Quality checks and writing sources
-                        </summary>
+                        </h2>
                         <ScorePanel
                             score={item.score}
                             checks={item.checks}
@@ -457,7 +460,7 @@ export default function ContentShow({
                                 </section>
                             </CardContent>
                         </Card>
-                    </details>
+                    </aside>
                 </div>
 
                 {item.quotable_blocks.length > 0 && (
