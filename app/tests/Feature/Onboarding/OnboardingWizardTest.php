@@ -670,6 +670,36 @@ final class OnboardingWizardTest extends TestCase
     }
 
     #[Test]
+    public function the_wizard_connects_no_more_channels_than_the_plan_allows(): void
+    {
+        config(['billing.default_plan' => 'growth']);
+        Queue::fake();
+        Http::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+            'onboarding' => ['channels' => [
+                'destination' => 'custom',
+                'webhook_endpoint' => 'https://cleaningpoint.pt/api/content',
+            ]],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        // Growth connects one channel, and this project already has it.
+        app(CurrentProject::class)->run($project, fn () => Channel::factory()->create(['name' => 'Blog']));
+
+        $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch");
+
+        // The launch still goes ahead, without a second channel.
+        $this->assertSame(OnboardingStatus::Launching, $project->fresh()?->onboarding_status);
+        $this->assertSame(['Blog'], Channel::acrossProjects()->pluck('name')->all());
+        Http::assertNothingSent();
+    }
+
+    #[Test]
     public function a_redelivered_subscription_event_does_not_start_a_second_month(): void
     {
         Queue::fake();
