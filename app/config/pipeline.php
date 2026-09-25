@@ -4,21 +4,15 @@ declare(strict_types=1);
 
 use App\Pipelines\Definitions\AiAccuracyPipeline;
 use App\Pipelines\Definitions\AiSamplePipeline;
-use App\Pipelines\Definitions\ContentStudioPipeline;
 use App\Pipelines\Definitions\DemoPipeline;
 use App\Pipelines\Definitions\FactMaintenancePipeline;
 use App\Pipelines\Definitions\FeedbackPipeline;
 use App\Pipelines\Definitions\GenerationPipeline;
 use App\Pipelines\Definitions\PageImprovementPipeline;
 use App\Pipelines\Definitions\PlanningPipeline;
-use App\Pipelines\Definitions\RepurposePipeline;
 use App\Pipelines\Definitions\ResearchPipeline;
 use App\Pipelines\Definitions\SiteAuditFixPlanPipeline;
 use App\Pipelines\Definitions\SiteAuditPipeline;
-use App\Pipelines\Definitions\SocialDraftPipeline;
-use App\Pipelines\Definitions\SocialEngagePipeline;
-use App\Pipelines\Definitions\SocialListenPipeline;
-use App\Pipelines\Definitions\SocialPlanPipeline;
 use App\Pipelines\Definitions\VisibilityPipeline;
 
 return [
@@ -36,34 +30,18 @@ return [
 
     'pipelines' => [
         DemoPipeline::class,
-        ContentStudioPipeline::class,
         ResearchPipeline::class,
         PlanningPipeline::class,
         GenerationPipeline::class,
         PageImprovementPipeline::class,
-        RepurposePipeline::class,
         FeedbackPipeline::class,
         VisibilityPipeline::class,
         AiSamplePipeline::class,
         AiAccuracyPipeline::class,
         FactMaintenancePipeline::class,
-        SocialListenPipeline::class,
-        // Weekly, and deliberately not started by `engine:tick`: each contour
-        // blocks only itself, and the week's slots feed none of the six the
-        // tick runs. §4.3.
-        SocialPlanPipeline::class,
-        // One run per slot the week's plan placed, started when that slot is
-        // due rather than by the tick. It is the one pipeline that spends the
-        // expensive model deliberately — five to ten candidates so that one can
-        // be published — which is also why §8 wants it as its own line. §4.3.
-        SocialDraftPipeline::class,
-        // §8 wants replies costed as their own line, and a line in that report
-        // is a pipeline key. This one is started by the webhook rather than by
-        // the scheduler — see the definition.
-        SocialEngagePipeline::class,
         // The site the engine writes *for*, rather than the content it writes.
         // Started by the launch, by `audit:sweep` and by a button, and never by
-        // `engine:tick` — it feeds none of the six pipelines the tick runs, so
+        // `engine:tick` — it feeds none of the five pipelines the tick runs, so
         // it is not in that contour and neither waits for it nor blocks it.
         SiteAuditPipeline::class,
         // The model's reading of one sweep, on request. Its own key so §8's

@@ -21,7 +21,7 @@ final class RegisterPublishedArticle
 {
     public function register(ContentItem $item): ?SitePage
     {
-        if ($item->isSocial() || $item->state !== ContentItemState::Published || ! $item->public_url) {
+        if ($item->state !== ContentItemState::Published || ! $item->public_url) {
             return null;
         }
         try {

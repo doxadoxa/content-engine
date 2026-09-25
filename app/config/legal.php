@@ -58,7 +58,7 @@ return [
      */
     'updated' => [
         'terms' => env('LEGAL_TERMS_UPDATED', '2026-08-27'),
-        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-08-28'),
+        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-09-24'),
         'cookies' => env('LEGAL_COOKIES_UPDATED', '2026-08-28'),
     ],
 
@@ -149,19 +149,18 @@ return [
      * is entitled to the list.
      *
      * `optional` marks a provider that only receives anything if a project
-     * connects it or the deployment enables it — the Threads presence is off
-     * by default (config/social.php), and Google is granted per project.
+     * connects it — Google is granted per project.
      */
     'subprocessors' => [
         [
             'name' => 'OpenAI',
-            'purpose' => 'Generates and edits plans, drafts, replies, and embeddings from the material in your projects.',
+            'purpose' => 'Generates and edits plans, drafts, and embeddings from the material in your projects.',
             'region' => 'United States',
             'optional' => false,
         ],
         [
             'name' => 'AtlasCloud (Seedream)',
-            'purpose' => 'Generates and edits the images attached to posts and articles.',
+            'purpose' => 'Generates and edits the images attached to articles.',
             'region' => 'United States',
             'optional' => false,
         ],
@@ -180,12 +179,6 @@ return [
         [
             'name' => 'Google (Search Console, Analytics 4, PageSpeed Insights)',
             'purpose' => 'Returns the performance of the site a project is connected to, once you grant access to it.',
-            'region' => 'United States',
-            'optional' => true,
-        ],
-        [
-            'name' => 'Meta Platforms (Threads)',
-            'purpose' => 'Publishes approved posts and delivers the replies and mentions your account receives.',
             'region' => 'United States',
             'optional' => true,
         ],

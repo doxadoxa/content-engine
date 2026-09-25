@@ -1,6 +1,5 @@
 import { Form, usePage } from '@inertiajs/react';
 import { useState } from 'react';
-import type { DutyHoursValue } from '@/components/duty-hours-field';
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,8 +27,6 @@ export type ProjectFormValues = {
     name: string;
     slug: string;
     timezone: string;
-    duty_hours: DutyHoursValue;
-    feed_urls: string[];
     default_locale: string;
     locales: string[];
     status: ProjectStatus;

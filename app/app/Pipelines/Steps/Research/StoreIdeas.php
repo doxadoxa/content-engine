@@ -42,13 +42,7 @@ class StoreIdeas extends AbstractStep
 
         // One query rather than one per keyword: a weekly pool is hundreds of
         // rows and the corpus is thousands.
-        //
-        // Articles only. A social post carries a `target_query` too, and a post
-        // asking about a keyword is the §1.3 reason to write the article about
-        // it — counting it as "already known" would let the post delete the
-        // idea before a planner ever saw it.
         $known = ContentItem::query()
-            ->roots()
             ->whereNotNull('target_query')
             ->pluck('target_query')
             ->map(static fn (mixed $query): string => self::normalise((string) $query))
@@ -99,7 +93,6 @@ class StoreIdeas extends AbstractStep
                 'monthly_volumes' => $idea->volumeByMonth,
                 'intent' => $intent->value,
                 'cluster' => $pool->clusters[$idea->keyword] ?? $idea->keyword,
-                'planned_derivatives' => [],
             ]);
 
             // Added to the seen set as well as the database, so two spellings

@@ -29,7 +29,7 @@ use Illuminate\Support\Carbon;
  *   - `queue()`'s `firstOrCreate` on `dispatch_key` finds the existing row and
  *     dispatches nothing, so pressing publish again does not re-queue it.
  *
- * So the row sits at `pending` forever, the post never goes out, and §7's
+ * So the row sits at `pending` forever, the article never goes out, and §7's
  * screen says nothing is wrong. This class is the definition of "forever" — one
  * threshold, read by the sweeper that recovers such a row and by the delivery
  * log that flags it, so the screen and the command cannot disagree about which
@@ -42,24 +42,17 @@ final class StrandedDeliveries
      * seconds.
      *
      * Long enough that nothing healthy is ever swept, which means it has to
-     * clear the two waits that legitimately keep a row at `pending`:
+     * clear the queue's own `retry_after`, 1 200 s on the Redis connection this
+     * engine runs. Until it elapses the job may still be reserved by a worker
+     * that is merely slow, and a sweep before then would dispatch a second copy
+     * of a delivery that is still running — which is how an article gets
+     * published twice. A worker that picks the job up at the last moment then
+     * still needs time to make its request, so 1 800 s is `retry_after` plus a
+     * generous margin, rounded to half an hour.
      *
-     *   - the queue's own `retry_after`, 1 200 s on the Redis connection this
-     *     engine runs. Until it elapses the job may still be reserved by a
-     *     worker that is merely slow, and a sweep before then would dispatch a
-     *     second copy of a delivery that is still running — which for Threads
-     *     is how a root post gets published twice;
-     *   - the publisher's lease, 480 s for the three-segment maximum
-     *     ({@see ThreadsPublisher::leaseSeconds()}: eight calls at a 30-second
-     *     client timeout, doubled for margin). A worker inside its lease is
-     *     working.
-     *
-     * The two do not overlap in the worst case — a job reserved at the last
-     * moment before `retry_after` can then hold a lease — so the floor is their
-     * sum, 1 680 s, and 1 800 s is that rounded up to half an hour. Half an
-     * hour is also short enough to matter: §4.3 places a post inside a duty
-     * window the operator is present for, and a recovery that took two hours
-     * would deliver into an empty room.
+     * Half an hour is also short enough to matter: an article scheduled for a
+     * morning that is recovered in the afternoon has missed the slot somebody
+     * chose for it.
      */
     public const int AFTER_SECONDS = 1_800;
 
@@ -114,9 +107,9 @@ final class StrandedDeliveries
      *
      * Configurable because the arithmetic above depends on the queue connection
      * an installation runs: a deployment on the database connection has a
-     * `retry_after` of 90 seconds and could sweep far sooner. Floored at the
-     * publisher's lease so no configuration can make the sweeper dispatch over
-     * a worker that is still inside one.
+     * `retry_after` of 90 seconds and could sweep far sooner. Floored at ten
+     * minutes so no configuration can make the sweeper dispatch over a worker
+     * that is still making its request.
      */
     private static function seconds(): int
     {

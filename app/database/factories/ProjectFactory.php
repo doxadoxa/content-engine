@@ -111,24 +111,6 @@ class ProjectFactory extends Factory
     }
 
     /**
-     * A project with the allowances the retired social screens were built for.
-     *
-     * No plan on sale includes social posts, and Growth caps content plans,
-     * languages and connections below what those screens exercise. Their
-     * regression suite still runs, so it gets the old Medium numbers as
-     * overrides — said out loud here rather than left to a default plan.
-     */
-    public function withSocialAllowance(): static
-    {
-        return $this->afterCreating(function (Project $project): void {
-            ProjectSubscription::query()->where('project_id', $project->getKey())->update(['limit_overrides' => json_encode([
-                'social_posts' => 30, 'content_plans' => 2, 'site_audits' => 4, 'assistant_turns' => 500,
-                'locales' => 3, 'seats' => 5, 'channels' => null,
-            ], JSON_THROW_ON_ERROR)]);
-        });
-    }
-
-    /**
      * A project nobody ever put on a plan.
      *
      * Written as a deletion after the fact rather than a flag consulted before

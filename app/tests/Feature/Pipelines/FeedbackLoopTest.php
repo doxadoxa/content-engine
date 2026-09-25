@@ -166,20 +166,24 @@ final class FeedbackLoopTest extends TestCase
     // ------------------------------------------------- exit criterion 2: refresh
 
     #[Test]
-    public function an_article_that_decayed_goes_through_a_refresh(): void
+    public function an_article_that_decayed_is_flagged_but_not_rewritten(): void
     {
         $unit = $this->live('decaying-article', 'https://site.test/decaying');
 
         // Fine in July, dying by August.
         $this->console->willDecay('https://site.test/decaying', '2026-07-10', 20, 300, 20);
 
-        $this->feedback();
+        $run = $this->feedback();
 
         $unit->refresh();
 
-        $this->assertSame(ContentItemState::Refreshing, $unit->state);
+        // Flagged for the operator, and left live: a change to a page that is
+        // already earning goes through a reviewed proposal, not an automatic
+        // rewrite.
+        $this->assertSame(ContentItemState::Published, $unit->state);
         $this->assertNotNull($unit->refresh_due_at);
         $this->assertStringContainsString('impressions fell', (string) $unit->refresh_reason);
+        $this->assertSame('skipped', $run->steps()->where('step_key', 'queue_refresh')->firstOrFail()->status->value);
     }
 
     #[Test]
@@ -245,10 +249,7 @@ final class FeedbackLoopTest extends TestCase
             'needs_original_data' => false,
         ]);
 
-        $this->console->willDecay('https://site.test/decaying', '2026-07-10', 20, 300, 20);
-        $this->feedback();
-
-        $this->assertSame(ContentItemState::Refreshing, $unit->refresh()->state);
+        $unit->startRefresh();
 
         // The rewrite is the generation pipeline — the same one that wrote it.
         $this->models
@@ -795,7 +796,7 @@ final class FeedbackLoopTest extends TestCase
                 ->has('trend')
             );
 
-        $this->assertSame(ContentItemState::Refreshing, $decayed->refresh()->state);
+        $this->assertSame(ContentItemState::Published, $decayed->refresh()->state);
     }
 
     // ------------------------------------------- exit criterion 3: onboarding

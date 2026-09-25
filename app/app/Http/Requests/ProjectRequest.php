@@ -6,8 +6,6 @@ namespace App\Http\Requests;
 
 use App\Billing\Entitlements;
 use App\Enums\ProjectStatus;
-use App\Http\Requests\Concerns\ValidatesDutyHours;
-use App\Http\Requests\Concerns\ValidatesFeedUrls;
 use App\Models\Project;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Http\FormRequest;
@@ -16,9 +14,6 @@ use Illuminate\Validation\Rules\Enum;
 
 class ProjectRequest extends FormRequest
 {
-    use ValidatesDutyHours;
-    use ValidatesFeedUrls;
-
     /**
      * @return array<string, mixed>
      */
@@ -40,15 +35,6 @@ class ProjectRequest extends FormRequest
             ],
             'timezone' => ['required', 'string', 'timezone'],
             'autopublish' => ['sometimes', 'boolean'],
-
-            // Read in the project's own `timezone`, which is why it sits next
-            // to it. Empty means never on duty, so the engine schedules
-            // nothing — see App\Support\Duty\DutyHours.
-            ...self::dutyHoursRules('duty_hours'),
-
-            // The RSS whitelist of §4.1 — the third intake into the listening
-            // contour, next to keyword search and webhooks.
-            ...self::feedUrlRules('feed_urls'),
 
             'default_locale' => ['required', 'string', 'max:12', 'regex:/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/'],
             // Bounded by the plan, which is where the pricing table's
@@ -88,37 +74,7 @@ class ProjectRequest extends FormRequest
                 : 'This plan publishes in :max languages. A larger plan publishes in more.',
             'locales.*.regex' => 'Use BCP 47 tags, for example en or pt-PT.',
             'research_seeds.*.max' => 'A seed is a search term, not a sentence — keep it short.',
-            'feed_urls.max' => 'Twenty feeds is the ceiling — this is a whitelist of sources worth reacting to, not a crawler.',
         ];
-    }
-
-    protected function prepareForValidation(): void
-    {
-        $locales = $this->input('locales');
-        $default = $this->string('default_locale')->toString();
-
-        $this->merge([
-            'locales' => array_values(array_unique([
-                $default,
-                ...(is_array($locales) ? $locales : []),
-            ])),
-        ]);
-
-        // The feed field is a textarea, so trailing newlines and a stray space
-        // after a pasted URL are the normal case rather than a client that has
-        // gone wrong. Tidied here, before the rules run, so the operator gets
-        // "that address is not reachable" and never "the 4th feed is required".
-        if ($this->has('feed_urls') && is_array($this->input('feed_urls'))) {
-            $this->merge([
-                'feed_urls' => array_values(array_unique(array_filter(
-                    array_map(
-                        static fn (mixed $url): string => is_string($url) ? trim($url) : '',
-                        (array) $this->input('feed_urls'),
-                    ),
-                    static fn (string $url): bool => $url !== '',
-                ))),
-            ]);
-        }
     }
 
     /**
@@ -130,6 +86,19 @@ class ProjectRequest extends FormRequest
      * so a merge there never reaches the controller. Doing it here also means
      * the locale we add is validated like every other one.
      */
+    protected function prepareForValidation(): void
+    {
+        $locales = $this->input('locales');
+        $default = $this->string('default_locale')->toString();
+
+        $this->merge([
+            'locales' => array_values(array_unique([
+                $default,
+                ...(is_array($locales) ? $locales : []),
+            ])),
+        ]);
+    }
+
     /**
      * How many languages this project's plan allows, or null for no bound.
      *

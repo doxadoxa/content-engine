@@ -91,7 +91,7 @@ final class MonthPlanner
 
     private function hasIdeas(): bool
     {
-        return ContentItem::query()->roots()->inState(ContentItemState::Idea)->whereNull('content_plan_id')->exists();
+        return ContentItem::query()->inState(ContentItemState::Idea)->whereNull('content_plan_id')->exists();
     }
 
     private function assertMayPlan(Project $project, PlanningWindow $window): void

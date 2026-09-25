@@ -57,43 +57,6 @@ return [
         'auth_redirect' => env('GOOGLE_AUTH_REDIRECT_URI'),
     ],
 
-    /*
-     * Threads, for publishing and listening (§9).
-     *
-     * The credentials of a Meta app with Threads API access. An installation
-     * without them cannot connect a Threads channel at all, which is a state
-     * the settings screen reports rather than a crash: every other integration
-     * here degrades the same way.
-     *
-     * `webhook_secret` is the app secret Meta signs inbound events with
-     * (`X-Hub-Signature-256`), and `webhook_verify_token` is the string echoed
-     * back during the subscription handshake. They are separate from the OAuth
-     * pair because Meta lets them be, and because a project that only listens
-     * needs one and not the other.
-     */
-    'threads' => [
-        'client_id' => env('THREADS_APP_ID'),
-        'client_secret' => env('THREADS_APP_SECRET'),
-        // Must match a redirect URI registered on the app exactly, including
-        // scheme and port — Meta compares it as a string, as Google does.
-        'redirect' => env('THREADS_REDIRECT_URI', env('APP_URL').'/integrations/threads/callback'),
-        'webhook_secret' => env('THREADS_WEBHOOK_SECRET'),
-        'webhook_verify_token' => env('THREADS_WEBHOOK_VERIFY_TOKEN'),
-        /*
-         * The scopes of §2. `threads_keyword_search` is listed but is the one
-         * §11.2 flags as needing separate approval: without it, listening
-         * degrades to the project's own posts, and the adapter has to be able
-         * to tell that apart from an empty answer.
-         */
-        'scopes' => [
-            'threads_basic',
-            'threads_content_publish',
-            'threads_manage_insights',
-            'threads_manage_replies',
-            'threads_keyword_search',
-        ],
-    ],
-
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

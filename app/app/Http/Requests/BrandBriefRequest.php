@@ -55,7 +55,6 @@ class BrandBriefRequest extends FormRequest
             // not carry draws in whatever Chromium falls back to, and it would
             // look right in review on a machine that has the font installed.
             'brand_typeface' => ['nullable', 'string', Rule::in(array_keys(VisualStyle::TYPEFACES))],
-            'carousel_cover' => ['nullable', 'string', Rule::in(VisualStyle::COVERS)],
             'overlay_position' => ['nullable', 'string', 'in:top,centre,bottom'],
             'overlay_case' => ['nullable', 'string', 'in:sentence,upper'],
 
@@ -86,7 +85,6 @@ class BrandBriefRequest extends FormRequest
             'brand_accent' => 'accent colour',
             'brand_palette' => 'brand palette',
             'brand_typeface' => 'typeface',
-            'carousel_cover' => 'carousel cover',
             'brand_palette.*' => 'palette colour',
             'overlay_position' => 'overlay position',
             'overlay_case' => 'overlay case',

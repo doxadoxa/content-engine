@@ -104,27 +104,21 @@ class FakeAnalytics implements AnalyticsGateway
      * A day's channel split, as GA4 would have added it up.
      *
      * `total` is asked for separately rather than summed from the parts,
-     * because that is what the real report answers and because a test of §6's
-     * social *share* needs a denominator larger than the three named channels
-     * — otherwise the share is 100% and the assertion proves nothing.
+     * because that is what the real report answers and because a test of a
+     * channel's *share* needs a denominator larger than the named channels —
+     * otherwise the share is 100% and the assertion proves nothing.
      */
     public function willSee(
         string $day,
         int $total,
         int $direct = 0,
         int $referral = 0,
-        int $social = 0,
-        ?int $socialEngaged = null,
-        int $socialSeconds = 0,
         int $conversions = 0,
     ): self {
         $this->audience[Carbon::parse($day)->toDateString()] = new ProjectAudience(
             totalSessions: $total,
             directSessions: $direct,
             referralSessions: $referral,
-            socialSessions: $social,
-            socialEngagedSessions: $socialEngaged ?? $social,
-            socialEngagementSeconds: $socialSeconds,
             conversions: $conversions,
         );
 
@@ -155,9 +149,6 @@ class FakeAnalytics implements AnalyticsGateway
             totalSessions: $sum(static fn (ProjectAudience $a): int => $a->totalSessions),
             directSessions: $sum(static fn (ProjectAudience $a): int => $a->directSessions),
             referralSessions: $sum(static fn (ProjectAudience $a): int => $a->referralSessions),
-            socialSessions: $sum(static fn (ProjectAudience $a): int => $a->socialSessions),
-            socialEngagedSessions: $sum(static fn (ProjectAudience $a): int => $a->socialEngagedSessions),
-            socialEngagementSeconds: $sum(static fn (ProjectAudience $a): int => $a->socialEngagementSeconds),
             conversions: $sum(static fn (ProjectAudience $a): int => $a->conversions),
         );
     }

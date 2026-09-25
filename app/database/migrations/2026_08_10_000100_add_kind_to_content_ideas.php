@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Enums\PostKind;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -28,10 +27,10 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('content_ideas', function (Blueprint $table): void {
-            $table->string('kind', 32)->default(PostKind::HowTo->value)->after('pillar');
+            $table->string('kind', 32)->default('how_to')->after('pillar');
         });
 
-        DB::table('content_ideas')->update(['kind' => PostKind::HowTo->value]);
+        DB::table('content_ideas')->update(['kind' => 'how_to']);
     }
 
     public function down(): void

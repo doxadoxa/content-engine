@@ -42,9 +42,9 @@ return [
     |
     | How long a delivery may sit at `pending` before `publish:sweep-stranded`
     | presumes the worker that had it will never come back. The default clears
-    | the Redis connection's `retry_after` plus the Threads publisher's longest
-    | lease — see App\Publishing\StrandedDeliveries, which explains the
-    | arithmetic and refuses to go below the lease whatever is configured here.
+    | the Redis connection's `retry_after` with room to spare — see
+    | App\Publishing\StrandedDeliveries, which explains the arithmetic and
+    | refuses to go below ten minutes whatever is configured here.
     |
     */
 
@@ -53,27 +53,5 @@ return [
     // Deterministic lookup key for pull tokens. Keep this separate from the
     // encrypted token and stable across APP_KEY rotations.
     'pull_token_hash_key' => env('PULL_TOKEN_HASH_KEY') ?: env('APP_KEY'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Social formats (§8.1–8.2)
-    |--------------------------------------------------------------------------
-    |
-    | The shape of a post per channel. Here rather than in the repurpose step,
-    | because §8.1 asks for format prompts to come from configuration and the
-    | brief — which is what lets a third channel be an enum case and a line
-    | here rather than a change to the pipeline.
-    |
-    | The voice comes from the brand brief; these say only how long and in what
-    | shape.
-    |
-    */
-
-    'formats' => [
-        'linkedin' => 'Write 3 to 5 short paragraphs. Open with the single most useful fact. '
-            .'No hashtags, no emoji, no "thoughts?" at the end.',
-        'x' => 'Write at most 260 characters. One idea. No hashtags.',
-        'telegram' => 'Write 2 short paragraphs with a plain link at the end. No markdown headings.',
-    ],
 
 ];

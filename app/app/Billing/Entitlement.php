@@ -253,10 +253,9 @@ final readonly class Entitlement
         $out = [];
 
         foreach (Metric::cases() as $metric) {
-            // An excluded or retired feature is not an allowance the manager
+            // A feature the plan excludes is not an allowance the manager
             // used up. Keep its underlying entitlement unchanged.
-            if (($metric === Metric::SocialPosts && ! config('social.enabled'))
-                || $this->allowance?->limit($metric->value) === 0) {
+            if ($this->allowance?->limit($metric->value) === 0) {
                 continue;
             }
             if ($this->remaining($metric) === 0) {
@@ -322,7 +321,7 @@ final readonly class Entitlement
             // `refusal`.
             //
             // A quota is not a global refusal and must not be reported as one:
-            // a project out of articles can still cut a social post, so
+            // a project out of articles can still audit its site, so
             // `may_generate` stays true and the engine keeps working. But the
             // page had no way to say so either — `refusal()` skips the quota
             // branch when it is asked without a metric, which is how it is

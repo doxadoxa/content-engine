@@ -1,4 +1,4 @@
-# The renderer: a browser, a React bundle and nothing else.
+# The renderer: a browser that photographs websites, and nothing else.
 #
 # Its own image rather than another mode of the app image, because the two share
 # no runtime: this one is Node and Chromium, that one is PHP and FrankenPHP, and
@@ -14,18 +14,13 @@
 # with "libunwind: unsupported .eh_frame_hdr version". Do not spend the hour
 # again: the base has to be glibc.
 #
-# **This file has not been built on the machine it was written on.** Docker Hub
-# is unreachable from that daemon — see product/social-media-studio-debt.md,
-# item 1 — so the image running there was built from a different base and tagged
-# by hand. Everything below the FROM line has been exercised live; the FROM line
-# and the library list under it have not. Expect the first real build to need a
-# small correction here, and treat a missing shared object at first render as
-# this list being one package short rather than as a Remotion problem.
+# A missing shared object at first screenshot means the library list below is
+# one package short, not that Remotion is broken.
 FROM node:22-bookworm-slim
 
 # What Chromium needs to start at all. Remotion downloads the browser itself;
 # these are the system libraries it links against, and without them the failure
-# is a shared-object error at first render rather than at build.
+# is a shared-object error at first screenshot rather than at build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
         libc6 libcairo2 libcups2 libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0 \
@@ -38,7 +33,7 @@ WORKDIR /renderer
 COPY docker/renderer/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-# Fetched at build so the first render is fast and so a machine with no network
+# Fetched at build so the first screenshot is fast and so a machine with no network
 # can still start the service.
 #
 # Through the library rather than the CLI. `npx remotion browser ensure` is what
@@ -50,14 +45,8 @@ RUN npm install --omit=dev --no-audit --no-fund
 #
 # Awaited explicitly. It resolves after a ~150MB download, and a bare call would
 # let the build step exit successfully the moment the promise was created —
-# leaving an image that looks built and fetches its browser at first render.
+# leaving an image that looks built and fetches its browser at first screenshot.
 RUN node -e "require('@remotion/renderer').ensureBrowser().then(() => console.log('browser ready'))"
-
-# The brand's own typeface, taken from the app rather than duplicated into this
-# directory: a browser loads WOFF2 natively, so the files the site already ships
-# are the files the panels are drawn with. Two copies would drift the first time
-# somebody changed one. `public/` is what the bundler serves at the site root.
-COPY resources/fonts ./public/fonts
 
 COPY docker/renderer/src ./src
 

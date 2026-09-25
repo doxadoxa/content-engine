@@ -21,10 +21,9 @@ use Tests\TestCase;
  *
  *   - `AskAssistants` asked for 1800 while the worker killed at 900, so the
  *     paid sweep its docblock exists to protect was being cut in half anyway;
- *   - `ApplyContentStudioAction` asked for exactly the worker's 900, a tie, so
- *     which one fired was a race;
- *   - `ApplyContentStudioAction` was then sized down to 300 against a
- *     `models.timeout` of 300, and a step with no room to start a single call
+ *   - another step asked for exactly the worker's 900, a tie, so which one
+ *     fired was a race;
+ *   - that step was then sized down to 300 against a `models.timeout` of 300, and a step with no room to start a single call
  *     is a step that fails every time it is asked to make one. It did, for
  *     five runs over six days, reported to the operator as a provider outage.
  *
@@ -42,8 +41,8 @@ use Tests\TestCase;
  *
  *   worker < retry_after — or Redis re-delivers a job that is still legitimately
  *   running, and two workers do the same work. `config/queue.php` spends a
- *   paragraph on what that means for a two-phase publish: a duplicated Threads
- *   job is a duplicated post.
+ *   paragraph on what that means for a publish: a duplicated delivery job is a
+ *   duplicated post.
  *
  * This reads the real config and the real step classes rather than restating
  * the numbers, so raising one and forgetting the others fails here.

@@ -8,7 +8,6 @@ use App\Models\AssistantMessage;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
-use App\Support\Metering\PostCostReport;
 use App\Support\Metering\ProjectSpend;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -19,13 +18,6 @@ use Illuminate\Support\Facades\DB;
  * §6 wants the cost of a unit, the breakdown by step and the trend for a
  * project. Phase 7 gives that a screen; until then this is where the numbers
  * that decide model choices (§9) are read from.
- *
- * The social spec's §8 adds a second unit rather than a second column, and it
- * is printed as its own block at the bottom: "единица — опубликованный пост, а
- * не сгенерированный". The per-unit line above divides by the content rows a
- * run touched, which is right for an article and wrong for a post by the
- * selection ratio — the drafting pipeline writes eight and keeps one. See
- * {@see PostCostReport}.
  */
 class PipelineCostCommand extends Command
 {
@@ -82,7 +74,6 @@ class PipelineCostCommand extends Command
         $this->perRun($runs->clone()->count(), (int) $runs->clone()->sum('cost_micros'));
         $this->perUnit($project->getKey(), $since, $pipeline);
         $this->assistant($project, $since, $pipeline);
-        $this->publishedPost($project, $since, $pipeline);
 
         return self::SUCCESS;
     }
@@ -90,10 +81,9 @@ class PipelineCostCommand extends Command
     /**
      * The second door's bill, and then the sum of both.
      *
-     * Skipped when `--pipeline` narrows the report, for the reason
-     * {@see publishedPost()} is: a conversation belongs to no pipeline, and
-     * printing it under a filter that excludes it by construction would make
-     * the total below wrong on purpose.
+     * Skipped when `--pipeline` narrows the report: a conversation belongs to
+     * no pipeline, and printing it under a filter that excludes it by
+     * construction would make the total below wrong on purpose.
      */
     private function assistant(Project $project, \DateTimeInterface $since, ?string $pipeline): void
     {
@@ -189,76 +179,6 @@ class PipelineCostCommand extends Command
         $this->components->twoColumnDetail(
             'Per content unit',
             $units === 0 ? '— (no run was about a unit yet)' : $this->money(intdiv($spent, $units))." over {$units} units",
-        );
-    }
-
-    /**
-     * §8's block: the published post, and the four lines under it.
-     *
-     * A second unit rather than a second slice of the first. `perUnit()` above
-     * divides by content rows a run touched, which is the right answer for an
-     * article and off by the selection ratio for a post — §4.3 writes eight and
-     * keeps one, and §8 says a report counting calls "соврёт в разы".
-     *
-     * Skipped when `--pipeline` narrows the report, because this unit spans
-     * pipelines by construction: the planning, the drafting and the picture are
-     * three pipelines' worth of steps in one post's price, and filtering to one
-     * of them would print a confident third of the truth.
-     */
-    private function publishedPost(Project $project, \DateTimeInterface $since, ?string $pipeline): void
-    {
-        if ($pipeline !== null) {
-            return;
-        }
-
-        $report = PostCostReport::for($project, $since);
-
-        $this->newLine();
-        $this->components->info('§8 — the unit is the published post');
-
-        $post = $report->post;
-        $article = $report->article;
-
-        $this->components->twoColumnDetail(
-            'Per published post',
-            $post['average_micros'] === null
-                ? '— (nothing published in this window)'
-                : $this->money((int) $post['average_micros'])." over {$post['published']} published",
-        );
-
-        // Beside it, never instead of it. §12's sixth exit criterion is that
-        // the two are known and separate.
-        $this->components->twoColumnDetail(
-            'Per published article',
-            $article['average_micros'] === null
-                ? '— (nothing published in this window)'
-                : $this->money((int) $article['average_micros'])." over {$article['published']} published",
-        );
-
-        if ($post['per_generation_micros'] !== null) {
-            $this->components->twoColumnDetail(
-                'One generation',
-                $this->money((int) $post['per_generation_micros'])
-                    ." × {$post['candidates']} written",
-            );
-        }
-
-        $this->table(
-            ['Line', 'Units', 'Per unit', 'Per post', 'Cost'],
-            array_map(function (array $line): array {
-                /** @var array{label: string, units: int, unit_label: string, per_unit_micros: int|null, per_day_micros: int|null, per_post_micros: int|null, standing: bool, cost_micros: int} $line */
-                $perPost = $line['standing']
-                    ? ($line['per_day_micros'] === null ? '—' : $this->money($line['per_day_micros']).'/day')
-                    : ($line['per_post_micros'] === null ? '—' : $this->money($line['per_post_micros']));
-
-                return [
-                    $line['label'],
-                    $line['units'].' '.$line['unit_label'],
-                    $line['per_unit_micros'] === null ? '—' : $this->money($line['per_unit_micros']),
-                    $perPost,
-                    $this->money($line['cost_micros']),
-                ];
-            }, $report->lines),
         );
     }
 

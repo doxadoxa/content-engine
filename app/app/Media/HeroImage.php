@@ -13,10 +13,9 @@ use Illuminate\Support\Str;
 /**
  * Making one hero image for one unit.
  *
- * Shared, because two pipelines want it: generation, so an article arrives with
- * its picture, and repurpose, so a social card has something to show. It lived
- * inside the repurpose step and nowhere else, which is why a finished article
- * had no image at all until somebody ran a second pipeline over it.
+ * Its own class rather than a private method of the generation step, so an
+ * article arrives with its picture and nothing else has to be run over it
+ * first.
  *
  * Nothing here draws a picture the project already owns. Two lookups come
  * before every generate call: the unit's own assets, and then the other locales

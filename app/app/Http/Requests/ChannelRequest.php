@@ -18,9 +18,6 @@ class ChannelRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        $channel = $this->route('channel');
-        abort_if($channel instanceof Channel && $channel->type->isSocial() && ! config('social.enabled'), 404);
-
         return true;
     }
 
@@ -41,7 +38,7 @@ class ChannelRequest extends FormRequest
                     ->where('project_id', app(CurrentProject::class)->id())
                     ->ignore($channel),
             ],
-            'type' => ['required', $this->typeRule($channel instanceof Channel ? $channel : null)],
+            'type' => ['required', new Enum(ChannelType::class)],
             'config' => ['array'],
             'config.endpoint' => [
                 Rule::requiredIf($type === ChannelType::Webhook && ! $this->filled('config.page_receiver_base')),
@@ -75,7 +72,7 @@ class ChannelRequest extends FormRequest
             $channel = $this->route('channel');
 
             if ($this->boolean('autopublish')
-                && (! $channel instanceof Channel || ($channel->type->isSocial() ? $channel->verified_at === null : ! app(ArticleSchedules::class)->compatible($channel)))) {
+                && (! $channel instanceof Channel || ! app(ArticleSchedules::class)->compatible($channel))) {
                 $validator->errors()->add(
                     'autopublish',
                     'Send a successful test before enabling automatic publishing.',
@@ -110,32 +107,5 @@ class ChannelRequest extends FormRequest
         return [
             'config.endpoint.url' => 'The endpoint must be a full URL, including https://.',
         ];
-    }
-
-    /**
-     * A valid type is one this deployment offers — plus, on an update, whatever
-     * the row already is.
-     *
-     * The second half is the part worth spelling out. `ChannelType::offered()`
-     * drops Threads when the social presence is switched off, and a rule built
-     * from it alone would make an existing Threads channel uneditable: the form
-     * posts the type back unchanged, and the operator would be told that the
-     * thing in front of them is not a valid kind of thing. Turning the feature
-     * off is a decision to stop reaching Threads, not a decision to strand the
-     * rows that already say so — they stay renameable and disableable, which is
-     * most of what anyone would want to do with one at that point.
-     */
-    private function typeRule(?Channel $channel): Enum
-    {
-        $rule = new Enum(ChannelType::class);
-        $offered = ChannelType::offered();
-
-        $withdrawn = array_values(array_filter(
-            ChannelType::cases(),
-            static fn (ChannelType $type): bool => ! in_array($type, $offered, true)
-                && $type !== $channel?->type,
-        ));
-
-        return $withdrawn === [] ? $rule : $rule->except($withdrawn);
     }
 }

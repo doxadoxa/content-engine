@@ -6,8 +6,6 @@ namespace Tests\Feature\Publishing;
 
 use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
-use App\Enums\ContentItemType;
-use App\Enums\SocialBand;
 use App\Enums\WebhookEvent;
 use App\Models\ArticleSchedule;
 use App\Models\Channel;
@@ -23,7 +21,6 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -94,8 +91,8 @@ final class ChannelPublisherRegistryTest extends TestCase
         // The registry indexes on the type it is handed and used never to
         // consult `supports()`, so a line of wiring with the wrong constant
         // would route every delivery of that type through the wrong transport
-        // — here, a Threads post signed with a shared secret and POSTed at an
-        // endpoint the channel does not have. The failure surfaced as a
+        // — here, a WordPress article signed with a shared secret and POSTed at
+        // an endpoint the channel does not have. The failure surfaced as a
         // delivery error three layers from the wrong word.
         $registry = $this->registry()->register(ChannelType::WordPress, WebhookPublisher::class);
 
@@ -126,15 +123,14 @@ final class ChannelPublisherRegistryTest extends TestCase
     {
         $registry = $this->registry();
 
-        // Two transports since 12.2b registered Threads (§9). The claim is not
-        // "webhook is the only one" — that was a count of the transports that
-        // happened to exist — it is that a type nobody claims is not
-        // publishable, which is what the three selection rules below stand on.
-        $this->assertSame([ChannelType::Webhook, ChannelType::WordPress, ChannelType::Threads], $registry->publishableTypes());
+        // The claim is not "webhook is the only one" — that was a count of the
+        // transports that happened to exist — it is that a type nobody claims
+        // is not publishable, which is what the three selection rules below
+        // stand on.
+        $this->assertSame([ChannelType::Webhook, ChannelType::WordPress], $registry->publishableTypes());
         $this->assertTrue($registry->publishes(ChannelType::Webhook));
-        $this->assertTrue($registry->publishes(ChannelType::Threads));
         $this->assertTrue($registry->publishes(ChannelType::WordPress));
-        $this->assertFalse($registry->publishes(ChannelType::LinkedIn));
+        $this->assertFalse($registry->publishes(ChannelType::PullApi));
     }
 
     #[Test]
@@ -146,7 +142,7 @@ final class ChannelPublisherRegistryTest extends TestCase
         $this->assertTrue($registry->canPing(ChannelType::Webhook));
         $this->assertTrue($registry->canAutopublish(ChannelType::Webhook));
 
-        $this->assertFalse($registry->canPing(ChannelType::LinkedIn));
+        $this->assertFalse($registry->canPing(ChannelType::PullApi));
         $this->assertFalse($registry->canAutopublish(ChannelType::PullApi));
     }
 
@@ -201,16 +197,14 @@ final class ChannelPublisherRegistryTest extends TestCase
     {
         $this->aChannelOfEveryKind();
 
-        // Threads and the pull API are enabled, verified and opted in, and an
-        // article reaches neither: the pull API because no transport claims the
-        // type, Threads because a transport claims it and the post guard says
-        // an article is not a post. Neither is a delivery that failed — nothing
-        // was addressed to them and nothing threw.
+        // The pull API is enabled, verified and opted in, and an article does
+        // not reach it because no transport claims the type. That is not a
+        // delivery that failed — nothing was addressed to it and nothing threw.
         $this->assertSame(
             0,
             WebhookDelivery::query()
                 ->whereIn('channel_id', Channel::query()
-                    ->whereIn('type', [ChannelType::Threads->value, ChannelType::PullApi->value])
+                    ->where('type', ChannelType::PullApi->value)
                     ->pluck('id'))
                 ->count(),
         );
@@ -221,90 +215,19 @@ final class ChannelPublisherRegistryTest extends TestCase
             0,
             WebhookDelivery::query()
                 ->whereIn('channel_id', Channel::query()
-                    ->whereIn('type', [ChannelType::Threads->value, ChannelType::PullApi->value])
+                    ->where('type', ChannelType::PullApi->value)
                     ->pluck('id'))
                 ->count(),
         );
     }
 
-    // ------------------------------------------------------- the band that never
-
-    #[Test]
-    public function a_band_that_may_never_autopublish_is_refused_the_unattended_path(): void
-    {
-        Queue::fake();
-
-        $channel = $this->threadsChannel();
-        $conversation = $this->socialPost(SocialBand::Conversation);
-
-        // §5 marks Conversation and Reaction «автопаблиш: никогда» — a reply
-        // to a living person sent as the brand with nobody watching, and a
-        // comment on the news, which is the one place where being wrong is
-        // both fast and public. Never means never, so the refusal lives on the
-        // path rather than in whichever caller happens to reach it.
-        $this->assertSame([], $this->publishing()->publishAutomatically($conversation));
-        $this->assertSame([], $this->publishing()->publishAutomatically($this->socialPost(SocialBand::Reaction)));
-        $this->assertSame(0, WebhookDelivery::query()->count());
-
-        // The other half, so the guard cannot be satisfied by refusing
-        // everything: the four bands that may earn autopublish still do.
-        $question = $this->socialPost(SocialBand::Question);
-
-        $this->assertSame(
-            $this->idsOf($channel),
-            $this->channelsReached($this->publishing()->publishAutomatically($question)),
-        );
-    }
-
-    #[Test]
-    public function a_band_that_may_never_autopublish_can_still_be_published_by_a_person(): void
-    {
-        Queue::fake();
-
-        $channel = $this->threadsChannel();
-        $conversation = $this->socialPost(SocialBand::Conversation);
-
-        // §4.2 refuses unattended sending, not sending. A human pressing
-        // publish is exactly the loop the band requires, and reading the
-        // refusal as "this can never go out" would leave the approved reply
-        // with nowhere to go.
-        $this->assertSame(
-            $this->idsOf($channel),
-            $this->channelsReached($this->publishing()->publishManually($conversation)),
-        );
-    }
-
-    // ---------------------------------------------------------- the post guard
-
-    #[Test]
-    public function a_social_post_is_never_queued_to_a_webhook_receiver(): void
-    {
-        $this->webhook('Website');
-
-        $post = ContentItem::factory()->create([
-            'type' => ContentItemType::SocialPost,
-            'state' => ContentItemState::Approved,
-            'slug' => 'a-question-nobody-wrote-an-article-about',
-            'title' => 'Why does salt eat glass?',
-        ]);
-
-        // A 300-character post handed to a static site generator becomes a page
-        // with a slug and an article's schema.org type. §9 gives posts their own
-        // transport; until one is registered they go nowhere, loudly enough that
-        // the caller sees an empty list.
-        $this->assertSame([], $this->publishing()->publish($post));
-        $this->assertSame([], $this->publishing()->publishManually($post));
-        $this->assertSame(0, WebhookDelivery::query()->count());
-        Http::assertNothingSent();
-    }
+    // ---------------------------------------------------------- the receiver
 
     #[Test]
     public function an_article_still_reaches_the_receiver_it_always_did(): void
     {
         $channel = $this->webhook('Website');
 
-        // The other half of the guard, so it cannot be satisfied by refusing
-        // everything.
         $deliveries = $this->publishing()->publish($this->unit);
 
         $this->assertSame($this->idsOf($channel), $this->channelsReached($deliveries));
@@ -330,11 +253,6 @@ final class ChannelPublisherRegistryTest extends TestCase
                 'autopublish' => true,
                 'is_enabled' => false,
             ]),
-            'threads' => Channel::factory()->social(ChannelType::Threads)->create([
-                'name' => 'Threads',
-                'verified_at' => now(),
-                'autopublish' => true,
-            ]),
             'pull' => Channel::factory()->create([
                 'name' => 'Pull API',
                 'type' => ChannelType::PullApi,
@@ -343,27 +261,6 @@ final class ChannelPublisherRegistryTest extends TestCase
                 'autopublish' => true,
             ]),
         ];
-    }
-
-    /** One verified, opted-in Threads channel — the unattended path's target. */
-    private function threadsChannel(): Channel
-    {
-        return Channel::factory()->social(ChannelType::Threads)->create([
-            'name' => 'Threads',
-            'verified_at' => now(),
-            'autopublish' => true,
-        ]);
-    }
-
-    private function socialPost(SocialBand $band): ContentItem
-    {
-        return ContentItem::factory()->create([
-            'type' => ContentItemType::SocialPost,
-            'state' => ContentItemState::Approved,
-            'social_band' => $band,
-            'slug' => 'post-'.$band->value,
-            'title' => 'A post of the '.$band->value.' band',
-        ]);
     }
 
     /**

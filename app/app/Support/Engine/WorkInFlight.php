@@ -56,7 +56,6 @@ final class WorkInFlight
         // should not be the thing that depends on them: a live badge is a claim
         // about now, and it has to expire.
         $active = PipelineRun::query()
-            ->forActiveProduct()
             ->inFlight()
             ->with(['steps', 'contentItem:id,title'])
             ->latest()
@@ -68,14 +67,12 @@ final class WorkInFlight
         // sees the old error every time they open the page, and stops reading
         // the panel — which is the failure mode this exists to avoid.
         $recovered = PipelineRun::query()
-            ->forActiveProduct()
             ->where('status', PipelineRunStatus::Completed)
             ->selectRaw('pipeline, max(finished_at) as recovered_at')
             ->groupBy('pipeline')
             ->pluck('recovered_at', 'pipeline');
 
         $recentlyFailed = PipelineRun::query()
-            ->forActiveProduct()
             ->where('status', PipelineRunStatus::Failed)
             ->where('finished_at', '>=', now()->subDay())
             ->with('contentItem:id,title')
@@ -97,11 +94,9 @@ final class WorkInFlight
             'active' => $active->map(static fn (PipelineRun $run): array => [
                 'id' => $run->getKey(),
                 'pipeline' => $run->pipeline,
-                // What the run is actually doing, for the pipelines that carry
-                // more than one job. `content_studio` carries six, and this
-                // labelled all of them "Proposing the social content system" —
-                // so eighteen posts being drafted read as eighteen proposals of
-                // the same thing.
+                // What the run is actually doing, for a pipeline whose input
+                // names one job among several. Without it every run of such a
+                // pipeline reads as the same thing.
                 'action' => self::actionOf($run),
                 'status' => $run->status->value,
                 'subject' => $run->contentItem?->title,

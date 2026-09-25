@@ -58,7 +58,7 @@ final class ArticleVerbsTest extends TestCase
         ])->assertRedirect();
 
         app(CurrentProject::class)->run($this->project, function (): void {
-            $item = ContentItem::query()->roots()->firstOrFail();
+            $item = ContentItem::query()->firstOrFail();
 
             // The sentence becomes the target query, which is the field
             // `CompileBrief` builds the whole brief from — so a hand-typed
@@ -82,7 +82,7 @@ final class ArticleVerbsTest extends TestCase
             ->assertSessionHasErrors('prompt');
 
         app(CurrentProject::class)->run($this->project, function (): void {
-            $this->assertSame(0, ContentItem::query()->roots()->count());
+            $this->assertSame(0, ContentItem::query()->count());
         });
     }
 

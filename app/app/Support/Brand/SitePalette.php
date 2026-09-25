@@ -21,9 +21,9 @@ use GdImage;
  * be looked at first.
  *
  * **Every one of them is a suggestion.** Nothing here writes to a Brand Brief.
- * A wrong fill is not a visible error — it silently becomes every carousel for a
- * month — so the operator confirms it in the form, the same way they now confirm
- * the assistant's goal rather than typing one into a blank field.
+ * A wrong fill is not a visible error — it silently becomes every branded
+ * picture for a month — so the operator confirms it in the form rather than
+ * finding it already applied.
  */
 final readonly class SitePalette
 {
@@ -123,7 +123,7 @@ final readonly class SitePalette
      * Null for an unreadable image and — deliberately — for a site that is
      * simply white with black text. That is most of the web, and proposing
      * `#ffffff` as a brand's fill is worse than proposing nothing: it looks like
-     * an answer, and the operator who accepts it gets carousels the colour of a
+     * an answer, and the operator who accepts it gets pictures the colour of a
      * blank page.
      */
     public static function fromPng(string $bytes): ?self

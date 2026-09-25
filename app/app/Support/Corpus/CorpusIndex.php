@@ -6,7 +6,6 @@ namespace App\Support\Corpus;
 
 use App\Ai\Contracts\EmbeddingGateway;
 use App\Enums\ContentItemState;
-use App\Enums\ContentItemType;
 use App\Models\ContentItem;
 use Illuminate\Support\Facades\DB;
 
@@ -51,15 +50,6 @@ class CorpusIndex
     /**
      * The most related live articles, nearest first.
      *
-     * Articles, not units: an internal link is an anchor in a page pointing at
-     * another page of the same site, and a social post is neither. It was
-     * already excluded, but only by accident — the loop below drops any row
-     * without a `public_url`, and a post's permalink lives in
-     * `channel_payload`. That is a coincidence of where two columns are stored,
-     * so the SQL says it outright. §3 made the parent optional for a social
-     * unit, which is what turned `parent_id is null` from "an article" into
-     * "an article or a native post" here as everywhere else.
-     *
      * @param  list<float>|null  $vector  a vector already computed for this unit
      * @return list<array{url: string, anchor: string, distance: float}>
      */
@@ -77,8 +67,6 @@ class CorpusIndex
              where project_id = ?
                and id <> ?
                and locale = ?
-               and parent_id is null
-               and type <> ?
                and embedding is not null
                and state in (?, ?)
              order by distance
@@ -91,7 +79,6 @@ class CorpusIndex
                 // Portuguese site is a dead end for the reader and a signal
                 // nobody wants for hreflang.
                 $unit->locale,
-                ContentItemType::SocialPost->value,
                 ContentItemState::Published->value,
                 ContentItemState::Refreshing->value,
                 $limit,

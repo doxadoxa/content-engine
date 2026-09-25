@@ -8,7 +8,6 @@ use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
 use App\Ai\ModelRequest;
 use App\Ai\UnmeteredSession;
-use App\ContentStudio\ContentStudioAssistant;
 use App\Enums\SitePageKind;
 use App\Models\ContentItem;
 use App\Models\Project;
@@ -156,66 +155,6 @@ final class SiteLibraryHarvestTest extends TestCase
 
         $this->assertNull($ours->fresh()->page_kind);
         $this->assertSame(SitePageKind::Commercial, $theirs->fresh()->page_kind);
-    }
-
-    /**
-     * A month planned before research has ever run still has facts.
-     *
-     * `ProjectLaunch::begin()` dispatches research and the first Studio
-     * proposal at the same time, so on a new project the proposal races the
-     * harvest and generally wins — and a month planned without facts is not
-     * re-planned when they arrive. Every project migrated into this feature
-     * starts with the same empty corpus for the same reason.
-     */
-    #[Test]
-    public function a_proposal_that_finds_no_corpus_reads_the_site_itself(): void
-    {
-        $this->page('https://example.test/en/services', null);
-
-        $fake = (new FakeModelGateway)->willAnswerUsing(
-            static function (ModelRequest $request): ?string {
-                if ($request->role !== 'utility') {
-                    return null;
-                }
-
-                return (string) json_encode(['pages' => [['page' => 1, 'kind' => 'commercial']]]);
-            },
-        );
-
-        $this->app->instance(ModelGateway::class, $fake);
-
-        app(CurrentProject::class)->run($this->project, function (): void {
-            $assistant = app(ContentStudioAssistant::class);
-            $ensure = new \ReflectionMethod($assistant, 'ensureFacts');
-            $ensure->setAccessible(true);
-            $ensure->invoke($assistant, $this->project, app(UnmeteredSession::class));
-
-            $this->assertSame(1, SitePage::query()->commercial()->count());
-        });
-    }
-
-    /** And it does not re-read a site research has already been through. */
-    #[Test]
-    public function a_proposal_that_finds_a_corpus_leaves_it_alone(): void
-    {
-        $page = $this->page('https://example.test/en/services', SitePageKind::Commercial, [
-            'read_at' => now()->subDay(),
-            'published_at' => now()->subYear(),
-        ]);
-
-        $fake = (new FakeModelGateway)->willAnswerUsing(static fn (): string => '{"pages":[]}');
-        $this->app->instance(ModelGateway::class, $fake);
-
-        app(CurrentProject::class)->run($this->project, function () use ($fake): void {
-            $assistant = app(ContentStudioAssistant::class);
-            $ensure = new \ReflectionMethod($assistant, 'ensureFacts');
-            $ensure->setAccessible(true);
-            $ensure->invoke($assistant, $this->project, app(UnmeteredSession::class));
-
-            $this->assertSame(0, $fake->callCount(), 'A filled corpus is research\'s to grow, not the proposal\'s.');
-        });
-
-        $this->assertFalse($page->fresh()->read_at->isToday());
     }
 
     /** @param  array<string, mixed>  $attributes */

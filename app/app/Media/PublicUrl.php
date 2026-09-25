@@ -16,9 +16,9 @@ use App\Pipelines\Steps\Generation\IllustrateDraft;
  * callers pass references only when this says yes, and lose the visual
  * consistency there rather than losing the images.
  *
- * Lifted out of {@see IllustrateDraft}, where it was private, when
- * {@see SocialImage} needed the same answer. Two copies of a network-safety
- * predicate is one copy that gets fixed.
+ * Lifted out of {@see IllustrateDraft}, where it was private, so that anything
+ * else handing a URL to a provider asks the same question. Two copies of a
+ * network-safety predicate is one copy that gets fixed.
  */
 final class PublicUrl
 {

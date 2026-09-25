@@ -76,7 +76,7 @@ class ChannelPublisherRegistry
     {
         $publisher = $this->publishers[$type->value] ?? null;
 
-        if ($publisher === null || ($type->isSocial() && ! config('social.enabled'))) {
+        if ($publisher === null) {
             throw UnknownChannelPublisher::for($type);
         }
 
@@ -101,8 +101,7 @@ class ChannelPublisherRegistry
 
     public function publishes(ChannelType $type): bool
     {
-        return (! $type->isSocial() || (bool) config('social.enabled'))
-            && isset($this->publishers[$type->value]);
+        return isset($this->publishers[$type->value]);
     }
 
     /**

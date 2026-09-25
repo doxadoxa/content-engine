@@ -25,8 +25,6 @@ enum Metric: string
 
     case Articles = 'articles';
 
-    case SocialPosts = 'social_posts';
-
     case SiteAudits = 'site_audits';
 
     case ContentPlans = 'content_plans';
@@ -39,7 +37,6 @@ enum Metric: string
             self::AiAnswers => 'AI answer checks',
             self::PageImprovements => 'reviewed page improvements',
             self::Articles => 'articles',
-            self::SocialPosts => 'social posts',
             self::SiteAudits => 'site audits',
             self::ContentPlans => 'content plans',
             self::AssistantTurns => 'assistant turns',

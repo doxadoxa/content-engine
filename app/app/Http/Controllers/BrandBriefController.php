@@ -55,7 +55,7 @@ class BrandBriefController extends Controller
         return Inertia::render('brief/edit', [
             'brief' => $active === null ? null : $this->toFormProps($active),
             // Offered, never applied. A wrong fill is not a visible error — it
-            // silently becomes every carousel for a month — so the colours
+            // silently becomes every picture for a month — so the colours
             // counted off the site sit beside the fields as something to click,
             // and a person decides. Null where the site was analysed before
             // there was a browser to photograph it with.
@@ -141,7 +141,7 @@ class BrandBriefController extends Controller
      * Still only a suggestion when it lands. It refreshes what the swatches
      * offer; applying them stays a click, for the reason
      * {@see SitePalette} gives — a wrong fill is not a visible error, it
-     * quietly becomes every carousel for a month.
+     * quietly becomes every picture for a month.
      *
      * **Dispatched, not done here.** The work is a browser opening somebody
      * else's website, which {@see SiteScreenshot} allows two minutes for — see
@@ -254,7 +254,6 @@ class BrandBriefController extends Controller
             'brand_accent' => $brief->brand_accent,
             'brand_palette' => $brief->brand_palette,
             'brand_typeface' => $brief->brand_typeface,
-            'carousel_cover' => $brief->carousel_cover,
             'overlay_position' => $brief->overlay_position,
             'overlay_case' => $brief->overlay_case,
             'forbidden_topics' => $brief->forbidden_topics,

@@ -16,15 +16,14 @@ use Tests\TestCase;
 /**
  * The two halves of what a failed run leaves behind.
  *
- * `describe()` is read by the customer — the dashboard's failure card and the
- * studio operation payload are built from it — so it stops at the step's own
- * sentence. `causes()` is read by whoever has to fix it, goes to the log, and
+ * `describe()` is read by the customer — the dashboard's failure card is built
+ * from it — so it stops at the step's own sentence. `causes()` is read by whoever has to fix it, goes to the log, and
  * carries the vendor's words.
  *
  * Both existed as one method that did the first job only, which is how five
- * Studio runs came to record "the Content Studio provider is temporarily
- * unavailable" — three attempts inside 639ms — over a provider that answered
- * every probe put to it afterwards.
+ * runs came to record "the drafting provider is temporarily unavailable" —
+ * three attempts inside 639ms — over a provider that answered every probe put
+ * to it afterwards.
  */
 final class ErrorClassifierDescribeTest extends TestCase
 {
@@ -33,7 +32,7 @@ final class ErrorClassifierDescribeTest extends TestCase
     {
         $described = (new ErrorClassifier)->describe($this->wrapped());
 
-        $this->assertSame('The Content Studio provider is temporarily unavailable.', $described['message']);
+        $this->assertSame('The drafting provider is temporarily unavailable.', $described['message']);
         $this->assertTrue($described['retryable']);
         $this->assertStringNotContainsString(
             'Incorrect API key',
@@ -124,11 +123,11 @@ final class ErrorClassifierDescribeTest extends TestCase
         $this->assertTrue($described['retryable']);
     }
 
-    /** What `ApplyContentStudioAction` throws, in the shape it throws it. */
+    /** What a drafting step throws, in the shape it throws it. */
     private function wrapped(): RetryableStepFailure
     {
         return new RetryableStepFailure(
-            'The Content Studio provider is temporarily unavailable.',
+            'The drafting provider is temporarily unavailable.',
             previous: new RetryableStepFailure(
                 'The openai call failed: 401 Incorrect API key provided.',
                 previous: new RuntimeException('Incorrect API key provided.'),

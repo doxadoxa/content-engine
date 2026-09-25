@@ -56,7 +56,7 @@ final class ManagerResults
         $purchases = $this->purchases->summarize($source, $purchaseEnd->subDays(28), $purchaseEnd);
 
         return [
-            'published_articles' => ContentItem::query()->roots()->whereIn('state', ['published', 'refreshing'])->count(),
+            'published_articles' => ContentItem::query()->whereIn('state', ['published', 'refreshing'])->count(),
             'search' => [
                 'clicks' => $observed->isEmpty() ? null : (int) $observed->sum('clicks'),
                 'impressions' => $observed->isEmpty() ? null : (int) $observed->sum('impressions'),

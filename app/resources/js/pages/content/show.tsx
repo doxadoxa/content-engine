@@ -94,12 +94,6 @@ type Props = {
         tone: string;
     } | null;
     locales: LocaleVersion[];
-    derivatives: {
-        id: string;
-        title: string;
-        type_label: string;
-        state: string;
-    }[];
     deliveries: Delivery[];
     manual_channels: number;
     reasons: Reason[];

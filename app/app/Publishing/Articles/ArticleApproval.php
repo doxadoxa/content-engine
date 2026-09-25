@@ -7,7 +7,7 @@ namespace App\Publishing\Articles;
 use App\Billing\Entitlements;
 use App\Billing\Metric;
 use App\Content\ArticleBusinessFacts;
-use App\Content\UnitScore;
+use App\Content\ArticleScore;
 use App\Enums\ContentItemState;
 use App\Enums\ProjectStatus;
 use App\Models\ArticleSchedule;
@@ -22,14 +22,13 @@ use Illuminate\Validation\ValidationException;
 
 final class ArticleApproval
 {
-    public function __construct(private readonly Entitlements $entitlements, private readonly UnitScore $score) {}
+    public function __construct(private readonly Entitlements $entitlements, private readonly ArticleScore $score) {}
 
     public function approve(ContentItem $item, bool $automatic = false): bool
     {
         return DB::transaction(function () use ($item, $automatic): bool {
             $project = Project::query()->whereKey($item->project_id)->lockForUpdate()->firstOrFail();
             $draft = ContentItem::query()->whereKey($item->id)->lockForUpdate()->firstOrFail();
-            $this->require(! $draft->isSocial(), 'Only articles use article approval.');
             if ($automatic) {
                 $this->require($project->status === ProjectStatus::Active, 'Automatic publication is paused for this project.');
                 $schedule = ArticleSchedule::query()->where('content_item_id', $draft->id)->first();

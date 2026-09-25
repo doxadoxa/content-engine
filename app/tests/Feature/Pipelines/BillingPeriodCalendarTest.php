@@ -7,7 +7,7 @@ namespace Tests\Feature\Pipelines;
 use App\Ai\FakeModelGateway;
 use App\Billing\Entitlements;
 use App\Billing\Metric;
-use App\Content\UnitScore;
+use App\Content\ArticleScore;
 use App\Enums\BillingStatus;
 use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
@@ -57,7 +57,6 @@ final class BillingPeriodCalendarTest extends TestCase
     {
         parent::setUp();
         Queue::fake();
-        config(['social.enabled' => false]);
     }
 
     /** @return array<string, array{string, string}> */
@@ -225,7 +224,7 @@ final class BillingPeriodCalendarTest extends TestCase
     public function test_first_approval_is_counted_once_across_retry_and_renewal(): void
     {
         $project = $this->project();
-        $this->mock(UnitScore::class, function (MockInterface $mock): void {
+        $this->mock(ArticleScore::class, function (MockInterface $mock): void {
             /** @var Expectation $expectation */
             $expectation = $mock->shouldReceive('for');
             $expectation->andReturn(['score' => 100, 'publishable' => true, 'blocking' => [], 'checks' => []]);

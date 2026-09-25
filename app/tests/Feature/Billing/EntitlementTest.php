@@ -47,17 +47,18 @@ final class EntitlementTest extends TestCase
     }
 
     #[Test]
-    public function excluded_social_does_not_show_as_used_up_but_real_article_exhaustion_does(): void
+    public function an_excluded_allowance_does_not_show_as_used_up_but_real_article_exhaustion_does(): void
     {
-        config(['social.enabled' => false]);
-        ProjectSubscription::factory()->forProject($this->project)->plan('growth')->create();
+        // Starter includes no page improvements: a limit of zero is a feature
+        // the plan leaves out, not one the manager has used up.
+        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
         $entitlements = app(Entitlements::class);
         $entitlements->forget($this->project);
-        $this->assertNotContains(Metric::SocialPosts->value, $entitlements->for($this->project)->exhausted());
-        $entitlements->record($this->project, Metric::Articles, 30);
+        $this->assertNotContains(Metric::PageImprovements->value, $entitlements->for($this->project)->exhausted());
+        $entitlements->record($this->project, Metric::Articles, 12);
         $entitlements->forget($this->project);
         $this->assertContains(Metric::Articles->value, $entitlements->for($this->project)->exhausted());
-        $this->assertNotContains(Metric::SocialPosts->value, $entitlements->for($this->project)->exhausted());
+        $this->assertNotContains(Metric::PageImprovements->value, $entitlements->for($this->project)->exhausted());
     }
 
     #[Test]

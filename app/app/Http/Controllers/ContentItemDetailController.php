@@ -20,8 +20,8 @@ use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * The unit card (§7): the draft itself, its languages, its derivatives, the
- * brief version behind it, and what happened when it was delivered.
+ * The unit card (§7): the draft itself, its languages, the brief version
+ * behind it, and what happened when it was delivered.
  */
 class ContentItemDetailController extends Controller
 {
@@ -32,7 +32,7 @@ class ContentItemDetailController extends Controller
 
     public function __invoke(Request $request, ContentItem $item): Response
     {
-        $item->load(['localeVariants', 'derivatives', 'assets', 'articleSchedule.delivery', 'project.channels']);
+        $item->load(['localeVariants', 'assets', 'articleSchedule.delivery', 'project.channels']);
 
         $brief = $item->brand_brief_id === null
             ? null
@@ -94,13 +94,6 @@ class ContentItemDetailController extends Controller
                     'state' => $sibling->state->value,
                     'state_label' => $sibling->state->label(),
                     'is_self' => $sibling->is($item),
-                ])->values()->all(),
-            'derivatives' => $item->derivatives
-                ->map(fn (ContentItem $child): array => [
-                    'id' => $child->getKey(),
-                    'title' => $child->title,
-                    'type_label' => $child->type->label(),
-                    'state' => $child->state->value,
                 ])->values()->all(),
             'deliveries' => WebhookDelivery::query()
                 ->where('content_item_id', $item->getKey())

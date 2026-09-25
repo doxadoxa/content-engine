@@ -33,8 +33,8 @@ use App\Pipelines\Core\StepResult;
  *
  * A translation of the *subject*, not a search for a new one. The three rows of
  * a locale group are one unit in three languages — that is what makes them
- * shareable, from the repurpose tree down to the photographs
- * {@see HeroImage} lends between them — so the subject stays fixed
+ * shareable, down to the photographs {@see HeroImage} lends between
+ * them — so the subject stays fixed
  * and only its expression changes.
  *
  * What this deliberately does **not** do is find the phrase Russians actually

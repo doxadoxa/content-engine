@@ -45,23 +45,20 @@ final class ArticleCalendarRestorationTest extends TestCase
     {
         parent::setUp();
         $this->travelTo(Carbon::parse('2026-09-15 12:00:00'));
-        config(['social.enabled' => false]);
         Queue::fake();
     }
 
-    public function test_every_plan_includes_articles_and_a_calendar_but_no_social(): void
+    public function test_every_plan_includes_articles_and_a_calendar(): void
     {
         $catalog = app(PlanCatalog::class);
         $this->assertSame(30, $catalog->get('growth')->limit('articles'));
         $this->assertSame(1, $catalog->get('growth')->limit('content_plans'));
-        $this->assertSame(0, $catalog->get('growth')->limit('social_posts'));
         $this->assertSame(12, $catalog->get('starter')->limit('articles'));
         $this->assertSame(1, $catalog->get('starter')->limit('content_plans'));
-        $this->assertSame(0, $catalog->get('starter')->limit('social_posts'));
         $this->assertSame(3, $catalog->trial()->limit('articles'));
     }
 
-    public function test_article_launch_research_continues_once_and_never_starts_social(): void
+    public function test_article_launch_research_continues_once(): void
     {
         $project = $this->project();
         $run = app(ProjectLaunch::class)->begin($project);
@@ -73,7 +70,6 @@ final class ArticleCalendarRestorationTest extends TestCase
         PipelineRunFinished::dispatch($run);
         PipelineRunFinished::dispatch($run->refresh());
         $this->assertSame(1, PipelineRun::query()->where('pipeline', 'planning')->count());
-        $this->assertFalse(PipelineRun::query()->whereIn('pipeline', ['content_studio', 'repurpose', 'social_plan'])->exists());
         $this->assertSame(OnboardingStatus::Launching, $project->refresh()->onboarding_status);
     }
 
@@ -121,7 +117,6 @@ final class ArticleCalendarRestorationTest extends TestCase
         $items = ContentPlan::query()->firstOrFail()->contentItems()->get();
         $this->assertCount(3, $items);
         $this->assertSame(3, $items->pluck('scheduled_for')->unique()->count());
-        $this->assertTrue($items->every(fn (ContentItem $item): bool => $item->planned_derivatives === []));
         $this->assertSame(3, ArticleSchedule::query()->count());
         $this->assertSame(['09:00'], ArticleSchedule::query()->pluck('local_time')->unique()->all());
         $this->assertSame(['blocked'], ArticleSchedule::query()->pluck('status')->unique()->all());

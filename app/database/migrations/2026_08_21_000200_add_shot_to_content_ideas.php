@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-use App\ContentStudio\ContentStudioAssistant;
-use App\Support\Social\ContentMix;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -12,7 +10,7 @@ use Illuminate\Support\Facades\Schema;
  * The photograph this idea gets, decided while the month is still one thing.
  *
  * Variety across a set is a property of the set, and this engine already knows
- * that in one place: {@see ContentMix} exists because no amount of checking one
+ * that in one place: `ContentMix` exists because no amount of checking one
  * idea at a time catches a month where every idea is fine and all twenty are
  * how-tos. The pictures had the same problem and a worse remedy — the drafting
  * step read the subjects already stored on the plan and was told to differ from
@@ -27,7 +25,7 @@ use Illuminate\Support\Facades\Schema;
  *
  * So the decision moves to the one place that sees the whole month at once. The
  * planner writes twenty ideas in a single answer; it can give each a distinct
- * shot in that answer, and {@see ContentStudioAssistant} then hands the writer
+ * shot in that answer, and `ContentStudioAssistant` then hands the writer
  * a subject rather than asking it to invent one blind. The race is not raced
  * better, it stops existing.
  *

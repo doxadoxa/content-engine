@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-use App\ContentStudio\ContentStudioAssistant;
-use App\Support\Brand\VisualStyle;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -18,7 +16,7 @@ use Illuminate\Support\Facades\Schema;
  *
  * **The brief decides, not the model.** The obvious alternative is to let the
  * drafting model pick per post, and it cannot: the copy is written before the
- * photograph exists — {@see ContentStudioAssistant} drafts
+ * photograph exists — `ContentStudioAssistant` drafts
  * first and illustrates after — so the model would be choosing a cover for an
  * image it has never seen. It is also a consistency decision rather than an
  * editorial one. A brand whose carousels sometimes open on a photograph and
@@ -35,7 +33,7 @@ return new class extends Migration
     {
         Schema::table('brand_briefs', function (Blueprint $table): void {
             $table->string('carousel_cover', 16)
-                ->default(VisualStyle::DEFAULT_COVER)
+                ->default('photo')
                 ->after('brand_typeface');
         });
     }

@@ -10,15 +10,10 @@ use App\Billing\PlanSelection;
 use App\Billing\Subscriptions;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
-use App\Enums\InteractionState;
-use App\Enums\PostKind;
 use App\Feedback\ManagerResults;
-use App\Feedback\ProjectStateTrend;
 use App\Models\ArticleSchedule;
 use App\Models\AssistantThread;
 use App\Models\ContentItem;
-use App\Models\ContentPlan;
-use App\Models\Interaction;
 use App\Models\PageOpportunity;
 use App\Models\PageOutcomeReview;
 use App\Models\PageProposal;
@@ -27,17 +22,13 @@ use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Onboarding\WebsiteChecklist;
 use App\Publishing\Articles\ArticleSchedules;
-use App\Social\ActivationChecklist;
-use App\Social\RefusalLedger;
 use App\Support\Content\ManagerContent;
 use App\Support\Engine\WorkInFlight;
 use App\Support\Health\StackHealth;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use App\Visibility\VisibilityReport;
-use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -46,13 +37,11 @@ class HomeController extends Controller
 {
     public function __construct(
         private readonly WorkInFlight $work,
-        private readonly RefusalLedger $refusals,
     ) {}
 
     public function __invoke(
         Request $request,
         CurrentProject $current,
-        ProjectStateTrend $trend,
         StackHealth $health,
     ): Response {
         /** @var User $user */
@@ -69,11 +58,8 @@ class HomeController extends Controller
                 // nothing to pick.
                 'hasProjects' => ProjectManager::live($user)->exists(),
                 'checklist' => [],
-                'kinds' => [],
             ]);
         }
-
-        $now = CarbonImmutable::now($project->timezone);
 
         return Inertia::render('home/index', [
             'project' => [
@@ -82,35 +68,12 @@ class HomeController extends Controller
                 'site_name' => (string) ($project->site_analysis['name'] ?? $project->name),
             ],
             'hasProjects' => true,
-            'checklist' => config('social.enabled')
-                ? ActivationChecklist::for($project, Carbon::now()->startOfMonth())
-                : WebsiteChecklist::for($project),
-            // The kinds an operator may write by hand, each with the channels
-            // it goes to — because the kind decides the channels here exactly
-            // as it does in a proposal, and the chip has to say so before
-            // somebody picks one expecting all three.
-            'kinds' => config('social.enabled') ? array_map(
-                static fn (PostKind $kind): array => [
-                    'value' => $kind->value,
-                    'label' => $kind->label(),
-                    'channels' => array_map(
-                        static fn ($channel): string => $channel->value,
-                        $kind->channels(),
-                    ),
-                ],
-                PostKind::cases(),
-            ) : [],
+            'checklist' => WebsiteChecklist::for($project),
 
             // The conversations, newest first — the handful worth offering a
             // route back into. The box on this screen starts a new one; the
             // ones that already exist live at their own addresses.
             'chats' => $this->chats(),
-
-            // §7's mandatory line, and therefore not deferred: a line that
-            // arrives on a second round trip renders as silence for as long as
-            // anybody actually looks at the screen, which is the one thing the
-            // paragraph forbids.
-            'refusals' => config('social.enabled') ? $this->refusals->for($project, $now) : null,
 
             // Not deferred, for two reasons that are really one. A project in
             // its first hour has nothing else on this screen — deferring it
@@ -130,9 +93,9 @@ class HomeController extends Controller
             // The dashboard's primary purpose: show the saved results on first paint.
             'results' => fn (): array => app(ManagerResults::class)->for($project),
 
-            'needs' => Inertia::defer(fn (): array => $this->needs($now)),
-            'figures' => Inertia::defer(fn (): array => $this->figures($project, $trend, $now)),
-            'halves' => Inertia::defer(fn (): array => $this->halves($now)),
+            'needs' => Inertia::defer(fn (): array => $this->needs()),
+            'figures' => Inertia::defer(fn (): array => $this->figures()),
+            'halves' => Inertia::defer(fn (): array => $this->halves()),
             'health' => Inertia::defer(fn (): array => $health->check()),
         ]);
     }
@@ -160,7 +123,6 @@ class HomeController extends Controller
         $plan = app(PlanSelection::class)->selected($request, $project);
 
         $draft = ContentItem::query()
-            ->roots()
             ->whereNotIn('state', [ContentItemState::Idea])
             ->where('locale', $project->default_locale)
             ->latest()
@@ -172,7 +134,7 @@ class HomeController extends Controller
             // larger half of what a sample is worth: one article says whether
             // the writing is good, a calendar says whether we understood the
             // business.
-            'topics' => ContentItem::query()->roots()->whereNotNull('content_plan_id')->count(),
+            'topics' => ContentItem::query()->whereNotNull('content_plan_id')->count(),
             'draft' => $draft === null ? null : [
                 'id' => (string) $draft->getKey(),
                 'title' => $draft->title,
@@ -263,35 +225,18 @@ class HomeController extends Controller
     }
 
     /** @return array<string,mixed> */
-    private function needs(CarbonImmutable $now): array
+    private function needs(): array
     {
-        $open = Interaction::query()->open()
-            ->when(! config('social.enabled'), fn ($query) => $query->whereRaw('1 = 0'))->get();
-
-        $socialDrafts = config('social.enabled') ? ContentItem::query()->social()
-            ->inState(ContentItemState::Draft)->count() : 0;
-        $articleDrafts = ContentItem::query()->roots()
+        $articleDrafts = ContentItem::query()
             ->inState(ContentItemState::Draft)->count();
-        $articleApprovals = ContentItem::query()->roots()
+        $articleApprovals = ContentItem::query()
             ->inState(ContentItemState::Approved)->count();
-        $replyDrafts = $open
-            ->where('state', InteractionState::Drafted)
-            ->count();
         $dead = WebhookDelivery::query()
             ->where('status', DeliveryStatus::DeadLetter->value)
-            ->when(! config('social.enabled'), fn ($query) => $query->whereIn('content_item_id', ContentItem::query()->roots()->select('id')))
+            ->whereNotNull('content_item_id')
             ->count();
 
         return [
-            'conversations' => $open->count(),
-            // The same expression the reply queue sends, against the same
-            // clock. The number §4.2 is judged on has one definition, and two
-            // screens read a minute apart must not answer it differently.
-            'longest_wait_seconds' => $open
-                ->map(static fn (Interaction $row): int => (int) $row->received_at->diffInSeconds($now))
-                ->max(),
-            'reply_drafts' => $replyDrafts,
-            'social_drafts' => $socialDrafts,
             'article_drafts' => $articleDrafts,
             'page_reviews' => PageProposal::query()->whereIn('status', ['review_required', 'approved', 'failed'])->whereDoesntHave('publications', fn ($query) => $query->whereNotNull('verified_at')->whereColumn('page_publications.revision_id', 'page_proposals.current_revision_id'))->count(),
             // Approved and not gone out. On the project this screen was built
@@ -305,12 +250,12 @@ class HomeController extends Controller
             // tasks turned this headline into "184 things need you", which is
             // both true and useless. They get their own line instead, where a
             // failure of the engine belongs.
-            'total' => $open->count() + $socialDrafts + $articleDrafts + $articleApprovals,
+            'total' => $articleDrafts + $articleApprovals,
         ];
     }
 
     /**
-     * The three figures that change what an operator does next.
+     * The figures that change what an operator does next.
      *
      * Deliberately short. Published counts, targeted search volume, citation
      * coverage and impressions are all facts about the past that change no
@@ -318,10 +263,9 @@ class HomeController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function figures(Project $project, ProjectStateTrend $trend, CarbonImmutable $now): array
+    private function figures(): array
     {
         $report = VisibilityReport::latest();
-        $metrics = collect($trend->for($project, $now))->keyBy('key');
 
         return [
             'visibility' => [
@@ -333,31 +277,21 @@ class HomeController extends Controller
                 'last_asked_on' => $report->lastAskedOn?->toDateString(),
                 'monitored_prompts' => $report->monitoredPrompts(),
             ],
-            'audience' => $metrics->get('brand_demand'),
-            'visitors' => $metrics->get('direct_traffic'),
         ];
     }
 
     /**
-     * The two jobs this engine does, one line each.
+     * The engine's article half, in one line.
      *
-     * Both halves report the same three things — what is planned, what is out,
-     * and when the machine that fills them last ran — because the interesting
-     * failure is identical on both sides and neither screen used to show it: a
-     * half that has stopped planning looks exactly like a half with a quiet
-     * week until you go looking for the last run.
+     * What is planned, what is drafted and approved, and what is out — because
+     * a pipeline that has stopped planning looks exactly like a quiet week
+     * until the counts are side by side.
      *
      * @return array<string, mixed>
      */
-    private function halves(CarbonImmutable $now): array
+    private function halves(): array
     {
-        $articles = ContentItem::query()->roots();
-        $social = ContentItem::query()->social();
-
-        $month = $now->startOfMonth()->toDateString();
-        $plannedMonth = ContentPlan::query()
-            ->whereDate('month', $month)
-            ->first();
+        $articles = ContentItem::query();
 
         return [
             'articles' => [
@@ -366,17 +300,6 @@ class HomeController extends Controller
                 'approved' => (clone $articles)->inState(ContentItemState::Approved)->count(),
                 'published' => (clone $articles)->inState(ContentItemState::Published)->count(),
             ],
-            'social' => config('social.enabled') ? [
-                'planned' => (clone $social)->inState(ContentItemState::Idea)->count(),
-                'drafted' => (clone $social)->inState(ContentItemState::Draft)->count(),
-                'approved' => (clone $social)->inState(ContentItemState::Approved)->count(),
-                'published' => (clone $social)->inState(ContentItemState::Published)->count(),
-                // Whether this month has been proposed at all. `firstOrCreate`
-                // makes a bare row the moment anybody types an idea, so the
-                // version is what says a planner ran — not the row's existence.
-                'month_proposed' => $plannedMonth !== null
-                    && $plannedMonth->assistant_version > 0,
-            ] : null,
         ];
     }
 }

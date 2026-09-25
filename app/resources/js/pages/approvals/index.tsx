@@ -1,10 +1,5 @@
 import { Form, Head, Link } from '@inertiajs/react';
-import {
-    AlertTriangle,
-    CheckCircle2,
-    Inbox,
-    MessageCircle,
-} from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Inbox } from 'lucide-react';
 import { useState } from 'react';
 import { Pagination } from '@/components/pagination';
 import { SendBackDialog } from '@/components/send-back-dialog';
@@ -25,7 +20,6 @@ import {
 } from '@/components/workspace-page';
 import { index } from '@/routes/approvals';
 import { approve, show } from '@/routes/content';
-import { show as showPost } from '@/routes/social/posts';
 import type { Paginated } from '@/types';
 
 type Draft = {
@@ -38,20 +32,12 @@ type Draft = {
     scheduled_for: string | null;
     needs_original_data: boolean;
     locales: string[];
-    derivatives: number;
     factcheck_passed: boolean;
     factcheck_findings: number;
     entity_coverage: number | null;
     was_rejected: boolean;
     publishable: boolean;
     blocking: string[];
-    is_social: boolean;
-    social_band: string | null;
-    social_band_label: string | null;
-    segments: number;
-    excerpt: string | null;
-    slot_at: string | null;
-    expires_at: string | null;
 };
 
 type Props = {
@@ -112,24 +98,9 @@ export default function Approvals({ drafts, reasons }: Props) {
     );
 }
 
-/**
- * A slot or an expiry as a person reads it — a day and a time, in the reader's
- * own zone. §4.3's presence window is about being at a phone at a particular
- * hour, so the hour is the part that has to be legible.
- */
-function formatSlot(iso: string): string {
-    return new Date(iso).toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-}
-
 function QueueSummary({ drafts, total }: { drafts: Draft[]; total: number }) {
     const ready = drafts.filter((draft) => draft.publishable).length;
     const blocked = drafts.length - ready;
-    const posts = drafts.filter((draft) => draft.is_social).length;
 
     return (
         <section
@@ -151,11 +122,6 @@ function QueueSummary({ drafts, total }: { drafts: Draft[]; total: number }) {
             </div>
             <div className="flex gap-2">
                 <Badge className="rounded-full">{ready} ready</Badge>
-                {posts > 0 && (
-                    <Badge variant="outline" className="rounded-full">
-                        {posts} post{posts === 1 ? '' : 's'}
-                    </Badge>
-                )}
                 {blocked > 0 && (
                     <Badge variant="destructive" className="rounded-full">
                         {blocked} blocked
@@ -179,18 +145,8 @@ function DraftRow({ draft, onReject }: { draft: Draft; onReject: () => void }) {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                         <CardTitle className="text-base leading-snug break-words">
-                            {/* A post opens in the composer and an article in
-                                the unit card. One queue, two artefacts: the
-                                queue stays the operator's single five-minute
-                                habit (§7), and each row goes to the screen
-                                built for what it actually is rather than to a
-                                card that has to serve both. */}
                             <Link
-                                href={
-                                    draft.is_social
-                                        ? showPost(draft.id)
-                                        : show(draft.id)
-                                }
+                                href={show(draft.id)}
                                 className="hover:underline"
                             >
                                 {draft.title}
@@ -198,32 +154,13 @@ function DraftRow({ draft, onReject }: { draft: Draft; onReject: () => void }) {
                         </CardTitle>
                         <CardDescription className="mt-1 break-words">
                             {draft.type_label}
-                            {draft.is_social
-                                ? draft.social_band_label !== null && (
-                                      <> · {draft.social_band_label} band</>
-                                  )
-                                : draft.target_query !== null && (
-                                      <> · {draft.target_query}</>
-                                  )}
-                            {draft.slot_at !== null ? (
-                                <> · slot {formatSlot(draft.slot_at)}</>
-                            ) : (
-                                draft.scheduled_for !== null && (
-                                    <> · due {draft.scheduled_for}</>
-                                )
+                            {draft.target_query !== null && (
+                                <> · {draft.target_query}</>
+                            )}
+                            {draft.scheduled_for !== null && (
+                                <> · due {draft.scheduled_for}</>
                             )}
                         </CardDescription>
-
-                        {/* A post is short enough to read in the list, and its
-                            title is a label the planner wrote rather than
-                            anything that gets published. So the decision — is
-                            this what we want to say in public — is made on the
-                            same row as the button. */}
-                        {draft.excerpt !== null && (
-                            <p className="mt-3 max-w-prose text-sm whitespace-pre-line text-foreground/80">
-                                {draft.excerpt}
-                            </p>
-                        )}
                     </div>
 
                     <div className="flex w-full items-center gap-2 sm:w-auto sm:shrink-0">
@@ -272,41 +209,11 @@ function DraftRow({ draft, onReject }: { draft: Draft; onReject: () => void }) {
             </CardHeader>
 
             <CardContent className="flex flex-wrap items-center gap-2 border-t pt-4">
-                {draft.is_social ? (
-                    <>
-                        <Badge variant="outline">
-                            <MessageCircle
-                                className="size-3"
-                                aria-hidden="true"
-                            />
-                            Post
-                        </Badge>
-                        {draft.segments > 1 && (
-                            <Badge variant="outline">
-                                {draft.segments} segments
-                            </Badge>
-                        )}
-                        {draft.expires_at !== null && (
-                            <Badge variant="secondary">
-                                expires {formatSlot(draft.expires_at)}
-                            </Badge>
-                        )}
-                    </>
-                ) : (
-                    <>
-                        {draft.locales.map((locale) => (
-                            <Badge key={locale} variant="outline">
-                                {locale}
-                            </Badge>
-                        ))}
-
-                        {draft.derivatives > 0 && (
-                            <Badge variant="outline">
-                                {draft.derivatives} derived
-                            </Badge>
-                        )}
-                    </>
-                )}
+                {draft.locales.map((locale) => (
+                    <Badge key={locale} variant="outline">
+                        {locale}
+                    </Badge>
+                ))}
 
                 {/* The reasons not to approve, in front of the operator rather
                     than one click away. */}

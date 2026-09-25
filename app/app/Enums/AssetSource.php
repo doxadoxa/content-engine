@@ -28,25 +28,11 @@ enum AssetSource: string
     /** Uploaded by an operator. A photograph of something that happened. */
     case Uploaded = 'uploaded';
 
-    /**
-     * Laid out by this engine and drawn by a browser.
-     *
-     * Neither of the two above, and the difference is not bookkeeping. A
-     * rendered panel is deterministic — the same slide and the same brand
-     * produce the same picture — it costs nothing, and its text is exactly what
-     * was written rather than what a model made of it. That last property is
-     * the whole reason it exists: the engine forbids words inside generated
-     * pictures because every image model garbles them, which left a teaching
-     * carousel with nothing legible to show.
-     */
-    case Rendered = 'rendered';
-
     public function label(): string
     {
         return match ($this) {
             self::Generated => 'Generated',
             self::Uploaded => 'Photograph',
-            self::Rendered => 'Panel',
         };
     }
 }

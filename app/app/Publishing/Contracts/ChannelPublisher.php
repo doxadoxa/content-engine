@@ -32,8 +32,8 @@ use App\Publishing\PublishToChannels;
  * - {@see queue()} takes a unit and one channel and hands back the delivery
  *   row. It takes no event: which event a destination is owed is a fact about
  *   what that destination has already received, so the transport works it out
- *   rather than being told. `ApprovalController`, `PublishApprovedCommand` and
- *   the repurpose tree all only ever knew "publish this unit here".
+ *   rather than being told. `ApprovalController` and `PublishApprovedCommand`
+ *   only ever knew "publish this unit here".
  * - {@see attempt()} is the one `DeliverWebhookJob` calls, once per attempt.
  *   It must never throw: an outcome is a row, and the job has `$tries = 1`
  *   precisely so the queue does not invent attempts the contract never

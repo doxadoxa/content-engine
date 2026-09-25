@@ -48,7 +48,6 @@ type ChannelRow = {
     name: string;
     type: string;
     type_label: string;
-    is_social: boolean;
     is_enabled: boolean;
     /** Whether a secret is stored — never the secret itself. */
     has_secret: boolean;
@@ -65,15 +64,14 @@ type ChannelRow = {
     created_at: string | null;
 };
 
-type ChannelTypeOption = { value: string; label: string; is_social: boolean };
+type ChannelTypeOption = { value: string; label: string };
 
 type Props = {
     channels: ChannelRow[];
     types: ChannelTypeOption[];
 };
 
-export default function ChannelsIndex({ channels: allChannels, types }: Props) {
-    const channels = allChannels.filter((channel) => !channel.is_social);
+export default function ChannelsIndex({ channels, types }: Props) {
     const { auth } = usePage().props;
     const isOwner = auth.project?.role === 'owner';
     const [connecting, setConnecting] = useState(false);
@@ -170,13 +168,7 @@ export default function ChannelsIndex({ channels: allChannels, types }: Props) {
                                                 {channel.name}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge
-                                                    variant={
-                                                        channel.is_social
-                                                            ? 'secondary'
-                                                            : 'outline'
-                                                    }
-                                                >
+                                                <Badge variant="outline">
                                                     {channel.type_label}
                                                 </Badge>
                                             </TableCell>
@@ -503,7 +495,7 @@ export default function ChannelsIndex({ channels: allChannels, types }: Props) {
             {isOwner && (
                 <ConnectDialog
                     open={connecting}
-                    types={types.filter((type) => !type.is_social)}
+                    types={types}
                     onClose={() => setConnecting(false)}
                 />
             )}
@@ -570,10 +562,7 @@ function ChannelMobileCard({
             </CardHeader>
             <CardContent className="flex flex-col gap-4 px-5">
                 <div className="flex flex-wrap gap-2">
-                    <Badge
-                        variant={channel.is_social ? 'secondary' : 'outline'}
-                        className="rounded-full"
-                    >
+                    <Badge variant="outline" className="rounded-full">
                         {channel.type_label}
                     </Badge>
                     <Badge variant="outline" className="rounded-full">

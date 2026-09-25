@@ -282,18 +282,17 @@ final class BrandBriefScreenTest extends TestCase
             'slug' => 'como-limpar-janelas',
         ]);
         $pt->addLocale('en', 'how-to-clean-windows', 'How to clean windows');
-        ContentItem::factory()->count(3)->derivedFrom($pt)->create();
 
         $this->actingAs($this->operator)
             ->get(route('content.index'))
             ->assertOk()
             ->assertInertia(fn (AssertableInertia $page) => $page
                 ->component('content/index')
-                // Two locale rows and three derivatives are one unit.
+                // Two locale rows are one unit.
                 ->has('items.data', 1)
                 ->where('items.data.0.title', 'Como limpar janelas')
                 ->where('items.data.0.locales', ['en', 'pt-PT'])
-                ->where('items.data.0.derivatives', 3)
+                ->missing('items.data.0.derivatives')
             );
     }
 
@@ -369,7 +368,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function reading_the_site_again_refreshes_the_colours_it_suggests(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
         Http::fake(['*/screenshot' => Http::response($this->pagePng(), 200)]);
 
         $this->project->forceFill([
@@ -405,7 +404,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function reading_the_site_does_not_write_the_colours_into_the_brief(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
         Http::fake(['*/screenshot' => Http::response($this->pagePng(), 200)]);
 
         $brief = BrandBrief::revise($this->project, ['brand_colour' => '#111111'], null);
@@ -436,7 +435,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function a_read_that_finds_no_surface_withdraws_the_old_suggestion(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
 
         // A page that is all photograph: nothing on it is painted.
         Http::fake(['*/screenshot' => Http::response($this->noisePng(), 200)]);
@@ -461,7 +460,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function a_read_that_could_not_open_the_page_keeps_the_old_suggestion(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
         Http::fake(['*/screenshot' => Http::response(['message' => 'net::ERR_ABORTED'], 502)]);
 
         $this->project->forceFill([
@@ -486,7 +485,7 @@ final class BrandBriefScreenTest extends TestCase
     public function reading_the_site_is_queued_rather_than_done_in_the_request(): void
     {
         Queue::fake();
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
 
         // Nothing should reach it: the browser is the job's business now.
         Http::fake();
@@ -556,7 +555,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function a_finished_read_says_what_it_found(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
 
         // All photograph: read successfully, and nothing on it to suggest.
         Http::fake(['*/screenshot' => Http::response($this->noisePng(), 200)]);
@@ -579,7 +578,7 @@ final class BrandBriefScreenTest extends TestCase
      * The palette rides with the brief, and versions with it.
      *
      * It is a {@see BrandBrief::VISUAL_FIELDS} entry rather than a loose setting
-     * for the reason the rest of them are: a carousel drawn last month has to be
+     * for the reason the rest of them are: a picture drawn last month has to be
      * able to say which colours drew it, and a palette stored outside the
      * version history would silently re-answer that question every time somebody
      * edited it.
@@ -664,7 +663,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function a_read_takes_the_colours_the_stylesheet_declares(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
 
         Http::fake(['*/screenshot' => Http::response([
             // A picture that would census to a green band, so a fill of #002954
@@ -702,7 +701,7 @@ final class BrandBriefScreenTest extends TestCase
     #[Test]
     public function a_project_with_no_address_is_told_so_rather_than_failing(): void
     {
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
         Http::fake();
 
         $this->project->forceFill(['website_url' => ''])->save();

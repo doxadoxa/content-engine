@@ -28,8 +28,8 @@ final readonly class StepResult
     }
 
     /**
-     * Nothing to do, and that is fine — a derivative step for a channel this
-     * project does not publish to, say. Dependants are released as if it had
+     * Nothing to do, and that is fine — an illustration step for a project
+     * with no image provider, say. Dependants are released as if it had
      * succeeded, so a skip must genuinely mean "unnecessary" and never
      * "impossible": the latter is a failure and has to fail.
      *

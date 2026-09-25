@@ -87,8 +87,8 @@ generation skip when they are not configured.
 `app`, `horizon`, and `scheduler` use the same image with different
 `CONTAINER_MODE` values. The scheduler runs:
 
-- `engine:tick` hourly to start bounded research, planning, generation,
-  repurpose, and feedback work that is due.
+- `engine:tick` hourly to start bounded research, planning, generation, and
+  feedback work that is due.
 - `publish:approved` every 30 minutes to send approved content to verified
   automatic webhook destinations.
 - `audit:sweep` daily, which starts a site audit only for projects whose last
@@ -122,8 +122,7 @@ same side-effect window concurrently.
 ## Content, tenancy, and roles
 
 One `content_items` row is one locale of one item. Rows sharing a
-`locale_group_id` are localized variants; social derivatives point to their
-source through `parent_id`. State changes go through
+`locale_group_id` are localized variants. State changes go through
 `ContentItem::transitionTo()`, and Brand Brief revisions are append-only.
 
 Tenant-owned models use `BelongsToProject`. Reads fail closed when no current
@@ -176,18 +175,16 @@ is no card and links to the same checkout.
 
 There are **two layers of limit**, and they fail differently:
 
-- The **unit quota** — articles, social posts, audits, plans, assistant turns —
+- The **unit quota** — articles, audits, plans, assistant turns —
   is what the customer agreed to, and it is what a refusal names. It is
   *reserved* rather than checked and then counted: the guard lives inside the
   write, because two approvals racing for one remaining unit lock different
   rows and would otherwise both win. It is
-  consumed on *approval*, not on generation: the engine writes eight social
-  posts to keep one, and charging for the seven it discarded would make the
-  number on the screen meaningless.
+  consumed on *approval*, not on generation: charging for drafts that were
+  discarded would make the number on the screen meaningless.
 - The **cost ceiling** is a `cost_micros` fuse at roughly three times measured
   cost of goods. It is invisible to the customer and exists for the retry storm
-  and the mispriced model, not for legitimate use. The seven discarded drafts
-  land here.
+  and the mispriced model, not for legitimate use. Discarded drafts land here.
 
 The plan's *shape* limits — languages, publishing channels — are enforced where
 the shape changes, since no counter will notice them later.
@@ -247,7 +244,7 @@ builds and pushes two images to GHCR on every push to `main`:
 | Image | Contents |
 |---|---|
 | `ghcr.io/doxadoxa/content-engine` | The app, in all four roles — `CONTAINER_MODE` picks one of `app`, `horizon`, `queue`, `scheduler` |
-| `ghcr.io/doxadoxa/content-engine/renderer` | The Remotion renderer: Node, Chromium and the brand typeface |
+| `ghcr.io/doxadoxa/content-engine/renderer` | The screenshot renderer: Node and Chromium, used to photograph a project's website |
 
 Both are tagged `sha-<commit>` and `latest`, where `<commit>` is the full
 40-character sha and not the abbreviated one. Deploy the `sha-` tag.
@@ -439,9 +436,8 @@ tests/                           Postgres-backed unit and feature coverage
 - The provider adapters are fully faked in the suite. Exercise model, keyword,
   image, Google, and receiver integrations in a staging environment before
   production rollout.
-- Social channel records drive derivative generation; delivery still goes
-  through a verified webhook receiver. There are no direct LinkedIn, X,
-  Telegram, or WordPress API clients in this repository.
+- Delivery goes through a verified webhook receiver. There is no direct
+  WordPress API client in this repository.
 - Browser smoke checks currently remain a release procedure rather than a
   committed Playwright/axe suite. The PHP suite covers rendered props and
   authorization, while ESLint/TypeScript cannot replace responsive and

@@ -65,10 +65,11 @@ class Entitlements
      *
      * Recording is separate from checking on purpose. The check happens before
      * the work — a refusal must cost nothing — and the count happens when the
-     * work is real, which for content is approval rather than generation: the
-     * engine writes eight social posts to keep one, and charging a customer for
-     * the seven it discarded would make the number on their screen meaningless.
-     * The seven are not free, and they are what the cost ceiling is watching.
+     * work is real, which for content is approval rather than generation: a
+     * draft can be regenerated before one is kept, and charging a customer for
+     * the ones it discarded would make the number on their screen meaningless.
+     * The discarded drafts are not free, and they are what the cost ceiling is
+     * watching.
      */
     public function record(Project $project, Metric $metric, int $by = 1): void
     {

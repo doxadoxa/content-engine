@@ -92,8 +92,8 @@ return [
              * project advisory mutex), and that machinery stays: it also
              * protects against a worker being killed. But it was absorbing a
              * configuration fault rather than the rare case it was written for,
-             * and a two-phase publish has no equivalent protection — a
-             * duplicated Threads job is a duplicated post.
+             * and a publish has no equivalent protection — a duplicated
+             * delivery job is a duplicated post.
              *
              * Raise this whenever a supervisor's timeout goes up. It went up:
              * `pipeline-expensive` is 2100 now, because two steps on that queue

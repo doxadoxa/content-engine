@@ -18,9 +18,9 @@ use Illuminate\Support\Facades\Http;
  * `visual_language` is guessing a brand's appearance from its prose — which is
  * why the Brand Brief's colours have always had to be typed in by hand.
  *
- * **Optional, exactly like the panel renderer.** A deployment without
- * `RENDERER_URL` analyses sites the way it always did. This capability makes the
- * result better; it may not make the result conditional.
+ * **Optional.** A deployment without `RENDERER_URL` analyses sites the way it
+ * always did. This capability makes the result better; it may not make the
+ * result conditional.
  *
  * **The address is validated here and pinned there.** Every other outbound fetch
  * in this engine goes through {@see PublicHttpTarget}, which resolves the host,
@@ -112,7 +112,7 @@ final class SiteScreenshot
         }
 
         try {
-            $response = Http::timeout((int) config('content_studio.renderer.timeout', 120))
+            $response = Http::timeout((int) config('renderer.timeout', 120))
                 ->acceptJson()
                 ->post($this->base().'/screenshot', [
                     'url' => $target->url,
@@ -231,6 +231,6 @@ final class SiteScreenshot
 
     private function base(): string
     {
-        return rtrim((string) config('content_studio.renderer.url', ''), '/');
+        return rtrim((string) config('renderer.url', ''), '/');
     }
 }

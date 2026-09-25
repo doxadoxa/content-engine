@@ -4,12 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Billing\Entitlements;
-use App\Billing\Metric;
-use App\Content\PostScore;
-use App\Content\UnitScore;
+use App\Content\ArticleScore;
 use App\Enums\ContentItemState;
-use App\Enums\ContentItemType;
 use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Http\Requests\RejectContentRequest;
@@ -21,18 +17,13 @@ use App\Publishing\Articles\ArticleApproval;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
-use App\Support\Social\ChannelPayload;
-use App\Support\Social\ChannelPayloadSegment;
 use App\Support\Tenancy\CurrentProject;
-use Illuminate\Contracts\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
-use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -42,47 +33,22 @@ use Throwable;
  *
  * So it is ordered by what is most overdue, it shows why a draft might be
  * suspect before the operator opens it, and approving is one request.
- *
- * **Articles and posts, in one queue.** §7 gives the operator one screen and
- * five minutes, and a second queue would be a second habit — the one thing a
- * five-minute routine cannot absorb. So a social draft waits here beside the
- * articles, says on its row that it is a post, and is approved by the same
- * request. What differs is the checklist it is measured against, which
- * {@see UnitScore} picks: an article's critical checks are about a page and
- * would refuse every post ever written, which is how §4.3's whole contour used
- * to dead-end with nothing failing.
  */
 class ApprovalController extends Controller
 {
     public function __construct(
         private readonly PublishToChannels $channels,
-        private readonly UnitScore $score,
+        private readonly ArticleScore $score,
         private readonly PipelineRunner $runner,
         private readonly CurrentProject $current,
-        private readonly Entitlements $entitlements,
     ) {}
 
     public function index(): Response
     {
         $drafts = ContentItem::query()
-            // Root articles, and posts of either kind. `roots()` alone is the
-            // article half — it excludes both a locale variant and a social
-            // post — and a derivative post (§5's Derivative band) has a parent,
-            // so neither scope on its own reaches everything that waits on a
-            // human. The two together are the partition {@see ContentItem::scopeSocial()}
-            // was written to make expressible in SQL.
-            ->where(fn (QueryBuilder $query) => $query->roots()->orWhere(
-                fn (QueryBuilder $social) => $social->social(),
-            ))
-            ->when(! config('social.enabled'), fn ($query) => $query->where('type', '!=', ContentItemType::SocialPost->value))
             ->inState(ContentItemState::Draft)
-            ->with(['localeVariants', 'derivatives', 'assets'])
+            ->with(['localeVariants', 'assets'])
             ->orderByRaw('scheduled_for is null, scheduled_for asc')
-            // Within a day, a post has a time and an article does not. §4.3's
-            // presence window is the reason: a slot placed for 09:20 is a
-            // commitment to be at a phone at 09:20, so it sorts above the piece
-            // that is merely due today.
-            ->orderByRaw('slot_at is null, slot_at asc')
             ->orderBy('id')
             ->paginate(20)
             ->withQueryString();
@@ -102,19 +68,6 @@ class ApprovalController extends Controller
                     'was_rejected' => $item->reviewed_at !== null,
                     'publishable' => $score['publishable'],
                     'blocking' => $score['blocking'],
-                    // What tells a post apart from an article on the row. A
-                    // post has no target query, no locale spread and no
-                    // derivative count worth printing, and it does have a band,
-                    // a segment count and a body short enough to read in the
-                    // list — which is the whole reason it can share this queue
-                    // rather than needing one of its own.
-                    'is_social' => $item->isSocial(),
-                    'social_band' => $item->social_band?->value,
-                    'social_band_label' => $item->social_band?->label(),
-                    'segments' => count($this->segments($item)),
-                    'excerpt' => $this->excerpt($item),
-                    'slot_at' => $item->slot_at?->toIso8601String(),
-                    'expires_at' => $item->expires_at?->toIso8601String(),
                 ];
             }),
             'reasons' => array_map(
@@ -129,106 +82,25 @@ class ApprovalController extends Controller
 
     public function approve(ContentItem $item): RedirectResponse
     {
-        abort_if($item->isSocial() && ! config('social.enabled'), 404);
-
-        if (! $item->isSocial()) {
-            abort_unless(in_array($item->state, [ContentItemState::Draft, ContentItemState::Approved], true), 409, 'Only a finished draft can be approved.');
-            try {
-                app(ArticleApproval::class)->approve($item);
-            } catch (ValidationException $exception) {
-                if (isset($exception->errors()['article_allowance'])) {
-                    abort(409, $exception->getMessage());
-                }
-                throw $exception;
+        abort_unless(in_array($item->state, [ContentItemState::Draft, ContentItemState::Approved], true), 409, 'Only a finished draft can be approved.');
+        try {
+            app(ArticleApproval::class)->approve($item);
+        } catch (ValidationException $exception) {
+            if (isset($exception->errors()['article_allowance'])) {
+                abort(409, $exception->getMessage());
             }
-            $deliveries = app(ArticleSchedules::class)->dispatch($item);
-            $item->loadMissing('articleSchedule');
-            Inertia::flash('toast', ['type' => 'success', 'message' => $deliveries === []
-                ? ($item->articleSchedule === null ? 'Article approved. Choose a publication time or publish it now.' : 'Article approved. It will publish at its scheduled time.') : 'Article approved and queued for publishing.']);
-
-            return back();
+            throw $exception;
         }
-
-        $deliveries = DB::transaction(function () use ($item): array {
-            $draft = ContentItem::query()
-                ->whereKey($item->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            abort_unless($draft->state === ContentItemState::Draft, 409, 'Only a draft can be approved.');
-
-            $scored = $this->score->for($draft->loadMissing('assets'));
-
-            if (! $scored['publishable']) {
-                throw ValidationException::withMessages([
-                    'approval' => 'This draft is not publishable: '.implode(', ', $scored['blocking']).'.',
-                ]);
-            }
-
-            // The complaint has been answered — somebody accepted the work.
-            // Left standing it would be read by every future rewrite
-            // ({@see \App\Pipelines\Steps\Generation\CompileBrief}) and shown
-            // on the card as an outstanding objection to an article nobody
-            // objects to any more.
-            $draft->forceFill(['review' => [], 'reviewed_at' => null])->save();
-
-            $draft->approve();
-
-            // The plan's counter moves here, at approval, and not at
-            // generation. The engine writes eight social posts to keep one, and
-            // charging a customer for the seven it discarded would make the
-            // number on their screen mean nothing. The seven were not free —
-            // they are what the cost ceiling is watching, which is the whole
-            // reason there are two layers of limit.
-            //
-            // Checked as well as counted, and inside the row lock. Approval is
-            // the consumption point, so it is also the only place the allowance
-            // can be enforced — and it was incrementing blindly: a drafting
-            // batch leaves several candidates behind, so a project with one
-            // article left could approve five and publish all of them. A
-            // counter nothing reads before writing is a report, not a quota.
-            $metric = $draft->isSocial() ? Metric::SocialPosts : Metric::Articles;
-
-            // Reserved, not checked-then-counted. The lock above serialises
-            // *this* draft against itself and nothing else — two different
-            // drafts approved at the same instant contend for a counter that is
-            // a different row entirely, so both would read the same remaining
-            // allowance and both increment past it. `reserve()` puts the guard
-            // inside the write.
-            if (! $this->entitlements->reserve($draft->project, $metric)) {
-                // 409 rather than a redirect with a message, because this
-                // arrives from a queue screen that has to re-render: the draft
-                // stays exactly where it was, and the operator is told why.
-                abort(409, "This period’s {$metric->label()} are used up. This one can go out next period, or on a larger plan.");
-            }
-
-            return $this->channels->publishAutomatically($draft);
-        });
-
-        $refusal = $this->channels->refusal($item);
-
-        // Approved either way. The ceiling of §4.3 is about when a post lands,
-        // not about whether it was worth approving, and rolling the approval
-        // back would make the operator press the button again on Wednesday.
-        // What changes is the sentence: §7's last line is mandatory, and
-        // "approved." beside a post the engine has quietly decided not to send
-        // is the silence that line exists to prevent.
-        Inertia::flash('toast', [
-            'type' => $refusal === null ? 'success' : 'info',
-            'message' => match (true) {
-                $refusal !== null => "{$item->title} approved, but not going out yet: {$refusal}.",
-                $deliveries !== [] => "{$item->title} approved and queued for automatic publishing.",
-                default => "{$item->title} approved.",
-            },
-        ]);
+        $deliveries = app(ArticleSchedules::class)->dispatch($item);
+        $item->loadMissing('articleSchedule');
+        Inertia::flash('toast', ['type' => 'success', 'message' => $deliveries === []
+            ? ($item->articleSchedule === null ? 'Article approved. Choose a publication time or publish it now.' : 'Article approved. It will publish at its scheduled time.') : 'Article approved and queued for publishing.']);
 
         return back();
     }
 
     public function publish(ContentItem $item): RedirectResponse
     {
-        abort_if($item->isSocial() && ! config('social.enabled'), 404);
-
         abort_unless(
             in_array($item->state, [ContentItemState::Approved, ContentItemState::Published], true),
             409,
@@ -266,13 +138,9 @@ class ApprovalController extends Controller
 
     public function reject(RejectContentRequest $request, ContentItem $item): RedirectResponse
     {
-        abort_if($item->isSocial() && ! config('social.enabled'), 404);
-
-        if (! $item->isSocial()) {
-            $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->first();
-            if ($schedule !== null && ! in_array($schedule->status, ['paused', 'canceled', 'completed'], true)) {
-                app(ArticleSchedules::class)->change($item, $schedule->version, 'pause');
-            }
+        $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->first();
+        if ($schedule !== null && ! in_array($schedule->status, ['paused', 'canceled', 'completed'], true)) {
+            app(ArticleSchedules::class)->change($item, $schedule->version, 'pause');
         }
 
         DB::transaction(function () use ($request, $item): void {
@@ -367,10 +235,6 @@ class ApprovalController extends Controller
      * same brief produces the same article at full price. That one waits for a
      * human to fix the voice it is written from.
      *
-     * Articles only. A social post is a slot with a time on it and a TTL that
-     * may have passed; rewriting one belongs to §4.3's contour, not to this
-     * button.
-     *
      * A failure here does not fail the send-back. The unit is already back in
      * the queue with its note, which is the part the operator asked for; a run
      * that will not start is worth a log line and the ordinary tick, not an
@@ -378,7 +242,7 @@ class ApprovalController extends Controller
      */
     private function rewrite(ContentItem $item, RejectionReason $reason): bool
     {
-        if ($item->isSocial() || $reason->isBriefProblem()) {
+        if ($reason->isBriefProblem()) {
             return false;
         }
 
@@ -400,59 +264,6 @@ class ApprovalController extends Controller
 
             return false;
         }
-    }
-
-    /**
-     * The post as the operator will read it, or null for an article.
-     *
-     * A post is short enough that the row can hold the whole thing, and a queue
-     * that shows an article's title shows a post's text — the title of a social
-     * unit is a label the planner wrote, not something anybody is going to
-     * publish. Reading it here rather than in the browser keeps the decision
-     * ("is this what we want to say") on the same screen as the button.
-     */
-    private function excerpt(ContentItem $item): ?string
-    {
-        if (! $item->isSocial()) {
-            return null;
-        }
-
-        $segments = $this->segments($item);
-
-        return $segments === []
-            ? null
-            : Str::limit(implode("\n\n", $segments), 400);
-    }
-
-    /**
-     * §3's segments, as plain strings.
-     *
-     * A payload that cannot be parsed is read as no payload rather than
-     * allowed to throw: one unreadable JSON column would take down the whole
-     * queue, and {@see PostScore} already refuses to call such a
-     * unit publishable, so the row renders with nothing to read and a blocking
-     * reason beside it.
-     *
-     * @return list<string>
-     */
-    private function segments(ContentItem $item): array
-    {
-        $raw = $item->channel_payload;
-
-        if (! is_array($raw) || $raw === []) {
-            return [];
-        }
-
-        try {
-            $payload = ChannelPayload::fromArray($raw);
-        } catch (InvalidArgumentException) {
-            return [];
-        }
-
-        return array_map(
-            static fn (ChannelPayloadSegment $segment): string => $segment->text,
-            $payload->segments,
-        );
     }
 
     private function coverage(ContentItem $item): ?float

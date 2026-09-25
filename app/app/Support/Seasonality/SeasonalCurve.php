@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Support\Seasonality;
 
-use App\Support\Duty\DutyHours;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 
@@ -39,10 +38,10 @@ final readonly class SeasonalCurve
     /**
      * Read whatever the column holds.
      *
-     * Tolerant on purpose, like {@see DutyHours::fromArray()}:
-     * month keys come back from jsonb as strings, vendors have been known to
-     * send a thirteenth month, and a curve that is half-garbage should degrade
-     * to "no season" rather than fail a planning run.
+     * Tolerant on purpose: month keys come back from jsonb as strings, vendors
+     * have been known to send a thirteenth month, and a curve that is
+     * half-garbage should degrade to "no season" rather than fail a planning
+     * run.
      *
      * @param  array<array-key, mixed>|null  $raw
      */

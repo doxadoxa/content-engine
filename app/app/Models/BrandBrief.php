@@ -36,7 +36,6 @@ use Illuminate\Support\Facades\DB;
  * @property string $brand_accent
  * @property list<string> $brand_palette
  * @property string $brand_typeface
- * @property string $carousel_cover
  * @property string $overlay_position
  * @property string $overlay_case
  * @property list<string> $forbidden_topics
@@ -83,8 +82,6 @@ class BrandBrief extends Model
         // A key of VisualStyle::TYPEFACES, so it names a face the renderer's
         // image actually carries rather than one Chromium would fall back from.
         'brand_typeface',
-        // `photo` or `type`. A consistency decision, made once per brand.
-        'carousel_cover',
         'overlay_position',
         'overlay_case',
     ];
@@ -125,7 +122,6 @@ class BrandBrief extends Model
         'brand_accent' => VisualStyle::DEFAULT_ACCENT,
         'brand_palette' => '[]',
         'brand_typeface' => VisualStyle::DEFAULT_TYPEFACE,
-        'carousel_cover' => VisualStyle::DEFAULT_COVER,
         'overlay_position' => VisualStyle::DEFAULT_POSITION,
         'overlay_case' => VisualStyle::DEFAULT_CASE,
         'forbidden_topics' => '[]',
@@ -326,7 +322,6 @@ class BrandBrief extends Model
             // to read it as "carry on exactly as before".
             'brand_palette' => [],
             'brand_typeface' => VisualStyle::DEFAULT_TYPEFACE,
-            'carousel_cover' => VisualStyle::DEFAULT_COVER,
             'overlay_position' => VisualStyle::DEFAULT_POSITION,
             default => VisualStyle::DEFAULT_CASE,
         };

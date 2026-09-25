@@ -20,7 +20,7 @@ use Illuminate\Validation\ValidationException;
 
 final class ArticleWorkflow
 {
-    /** Product capability, independent of social and the subscription version. */
+    /** Product capability, independent of the subscription version. */
     public static function enabled(Project $project): bool
     {
         $plan = app(Entitlements::class)->for($project)->plan;
@@ -32,12 +32,12 @@ final class ArticleWorkflow
     {
         if ($window->periodStart !== null) {
             $period = self::period($project, $window);
-            $planned = $period === null ? 0 : ContentItem::acrossProjects()->where('project_id', $project->id)->roots()
+            $planned = $period === null ? 0 : ContentItem::acrossProjects()->where('project_id', $project->id)
                 ->where('article_planning_period_id', $period->id)->count();
 
             return min(max(0, ($window->pacingLimit ?? 0) - $planned), count(self::openSlots($project, $window)));
         }
-        $planned = ContentItem::acrossProjects()->where('project_id', $project->id)->roots()
+        $planned = ContentItem::acrossProjects()->where('project_id', $project->id)
             ->whereNotNull('content_plan_id')->whereBetween('scheduled_for', [$window->start->toDateString(), $window->end->toDateString()])
             ->distinct()->count('locale_group_id');
 
@@ -60,7 +60,7 @@ final class ArticleWorkflow
     {
         // Include manual and previous-period work: a new plan must not stack
         // its automatic slots on an existing publication at the same instant.
-        $planned = ContentItem::acrossProjects()->where('project_id', $project->id)->roots()->whereDoesntHave('articleSchedule')
+        $planned = ContentItem::acrossProjects()->where('project_id', $project->id)->whereDoesntHave('articleSchedule')
             ->whereBetween('planned_publication_at', [$window->start->copy()->utc(), $window->end->copy()->utc()])
             ->pluck('planned_publication_at');
         $scheduled = ArticleSchedule::acrossProjects()->where('project_id', $project->id)
@@ -127,7 +127,7 @@ final class ArticleWorkflow
         if ($remaining === null) {
             return null;
         }
-        $prepared = ContentItem::acrossProjects()->where('project_id', $project->id)->roots()
+        $prepared = ContentItem::acrossProjects()->where('project_id', $project->id)
             ->whereNotIn('id', DB::table('article_approval_records')->select('content_item_id')->where('project_id', $project->id))
             ->whereIn('state', [ContentItemState::Idea, ContentItemState::Queued, ContentItemState::Generating, ContentItemState::Draft])
             ->where(function ($query) use ($project): void {

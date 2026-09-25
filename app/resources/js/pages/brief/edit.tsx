@@ -48,7 +48,6 @@ type BriefContent = {
      */
     brand_palette: string[];
     brand_typeface: string;
-    carousel_cover: string;
     overlay_position: string;
     overlay_case: string;
     forbidden_topics: string[];
@@ -345,7 +344,7 @@ export default function BrandBriefEdit({
                                         </select>
                                         <p className="text-xs text-muted-foreground">
                                             {siteFont === null
-                                                ? 'What carousels and panels are set in.'
+                                                ? 'What panels are set in.'
                                                 : typefaces.some(
                                                         (face) =>
                                                             face.name.toLowerCase() ===
@@ -356,43 +355,6 @@ export default function BrandBriefEdit({
                                         </p>
                                         <InputError
                                             message={errors.brand_typeface}
-                                        />
-                                    </div>
-
-                                    {/*
-                                     * Once per brand, never per post. The
-                                     * drafting model writes the copy before the
-                                     * photograph exists, so a per-post choice
-                                     * would be made blind — and carousels that
-                                     * sometimes open on a picture and sometimes
-                                     * on flat colour read as two accounts.
-                                     */}
-                                    <div className="grid gap-2">
-                                        <Label htmlFor="carousel_cover">
-                                            Carousel cover
-                                        </Label>
-                                        <select
-                                            id="carousel_cover"
-                                            name="carousel_cover"
-                                            defaultValue={
-                                                brief?.carousel_cover ?? 'photo'
-                                            }
-                                            disabled={!isOwner}
-                                            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                                        >
-                                            <option value="photo">
-                                                The post's photograph
-                                            </option>
-                                            <option value="type">
-                                                The brand colour
-                                            </option>
-                                        </select>
-                                        <p className="text-xs text-muted-foreground">
-                                            What slide one is drawn on. The hook
-                                            is on it either way.
-                                        </p>
-                                        <InputError
-                                            message={errors.carousel_cover}
                                         />
                                     </div>
 
@@ -710,7 +672,7 @@ function VersionEntry({
  *
  * **Suggested, never applied.** The palette arrives from site analysis as three
  * values nobody has agreed to, and a wrong fill is not a visible error — it
- * quietly becomes every carousel for a month. So it sits beside the fields as
+ * quietly becomes every panel for a month. So it sits beside the fields as
  * something to click, the same way the assistant's goal is approved rather than
  * written straight into the month.
  */
@@ -956,7 +918,7 @@ function Colours({
                  *
                  * Which is why each swatch asks where rather than acting on a
                  * click. A colour that silently overwrote a field would be the
-                 * "wrong fill quietly becomes every carousel" failure with one
+                 * "wrong fill quietly becomes every panel" failure with one
                  * extra click in front of it, and the field it should land in is
                  * genuinely ambiguous — that ambiguity is what kept these
                  * read-only until there was a menu to resolve it.
@@ -1084,11 +1046,11 @@ function Swatch({ colour }: { colour: string }) {
  *
  * `<input type="color">` always has a value, so it has no way to express "this
  * brand has not got an accent" — and that state has to be expressible, because
- * it is the one every brief starts in and the one that keeps carousels looking
+ * it is the one every brief starts in and the one that keeps panels looking
  * exactly as they did before the field existed. A swatch alone would force every
  * brand to have a third colour, and the ones that picked whatever the input
  * happened to open on would be the worst off: a wrong accent is not a visible
- * error, it just quietly ships on every carousel.
+ * error, it just quietly ships on every panel.
  *
  * So the checkbox owns the decision and the swatch owns the value, and a hidden
  * field posts the empty string the server reads as "use the ink". The swatch
@@ -1160,7 +1122,7 @@ function AccentField({
                 Same as the text colour
             </label>
             <p className="text-xs text-muted-foreground">
-                What a carousel emphasises with — the figure on a statistic, the
+                What a panel emphasises with — the figure on a statistic, the
                 half of a comparison that matters.
             </p>
             <InputError message={error} />

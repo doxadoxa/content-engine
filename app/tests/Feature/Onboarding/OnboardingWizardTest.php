@@ -18,7 +18,6 @@ use App\Enums\OnboardingStatus;
 use App\Enums\PipelineRunStatus;
 use App\Models\BrandBrief;
 use App\Models\Channel;
-use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
@@ -104,7 +103,7 @@ final class OnboardingWizardTest extends TestCase
     {
         $operator = User::factory()->create();
         $this->fakeModel();
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
 
         Http::fake(['*/screenshot' => Http::response(
             $this->pagePng(),
@@ -148,7 +147,7 @@ final class OnboardingWizardTest extends TestCase
         $operator = User::factory()->create();
         $this->fakeModel();
         config([
-            'content_studio.renderer.url' => 'http://renderer:3020',
+            'renderer.url' => 'http://renderer:3020',
             'security.outbound.allow_unresolved_hosts' => true,
         ]);
 
@@ -175,7 +174,7 @@ final class OnboardingWizardTest extends TestCase
     {
         $operator = User::factory()->create();
         $this->fakeModel();
-        config(['content_studio.renderer.url' => null]);
+        config(['renderer.url' => null]);
 
         $this->actingAs($operator)
             ->postJson('/onboarding/analyse', ['url' => 'https://cleaningpoint.pt'])
@@ -198,7 +197,7 @@ final class OnboardingWizardTest extends TestCase
     {
         $operator = User::factory()->create();
         $this->fakeModel();
-        config(['content_studio.renderer.url' => 'http://renderer:3020']);
+        config(['renderer.url' => 'http://renderer:3020']);
 
         Http::fake(['*/screenshot' => Http::response(['message' => 'net::ERR_ABORTED'], 502)]);
 
@@ -213,7 +212,7 @@ final class OnboardingWizardTest extends TestCase
     /**
      * The brief offers the colours; it never applies them.
      *
-     * A wrong fill is not a visible error — it silently becomes every carousel
+     * A wrong fill is not a visible error — it silently becomes every image
      * for a month — so this is the same shape as the month's goal: the engine
      * proposes and a person agrees.
      */
@@ -336,7 +335,6 @@ final class OnboardingWizardTest extends TestCase
             'step' => 'channels',
             'answers' => [
                 'webhook_endpoint' => 'https://cleaningpoint.pt/api/content',
-                'social' => ['linkedin', 'x'],
             ],
         ])->assertOk();
 
@@ -388,10 +386,10 @@ final class OnboardingWizardTest extends TestCase
                 $brief->examples_liked,
             );
 
-            // §8: one content layer. The site and the social channels come out
-            // of the same wizard and read the same brief.
+            // The site the articles go to comes out of the same wizard that
+            // wrote the brief they are written from.
             $this->assertSame(
-                ['LinkedIn', 'Website', 'X'],
+                ['Website'],
                 Channel::query()->pluck('name')->sort()->values()->all(),
             );
             $this->assertSame(
@@ -408,36 +406,24 @@ final class OnboardingWizardTest extends TestCase
         $this->subscriptionCreated($project);
 
         // The engine started itself. Nobody has to press a second button.
-        Queue::assertPushed(
-            RunStepJob::class,
-            static fn (RunStepJob $job): bool => $job->stepKey === 'apply_content_studio_action'
-                && $job->queue === 'pipeline-expensive',
-        );
+        Queue::assertPushed(RunStepJob::class);
 
         $runs = PipelineRun::acrossProjects()
             ->where('project_id', $id)
             ->orderBy('pipeline')
             ->get();
 
-        // Three independent contours, not a chain: the Studio proposal, the SEO
-        // research the month is planned from, and a reading of the website the
-        // operator has just handed over. None needs the others, so one provider
-        // failing cannot silently cancel the rest.
+        // Two independent contours, not a chain: the SEO research the month is
+        // planned from, and a reading of the website the operator has just
+        // handed over. Neither needs the other, so one provider failing cannot
+        // silently cancel the rest.
         $this->assertSame(
-            ['content_studio', 'research', 'site_audit'],
+            ['research', 'site_audit'],
             $runs->pluck('pipeline')->all(),
         );
         $this->assertTrue($runs->every(
             static fn (PipelineRun $run): bool => $run->status !== PipelineRunStatus::Failed,
         ));
-
-        app(CurrentProject::class)->run($project, function (): void {
-            $plan = ContentPlan::query()->firstOrFail();
-            $run = PipelineRun::query()->where('pipeline', 'content_studio')->firstOrFail();
-
-            $this->assertSame($plan->getKey(), $run->input['content_plan_id']);
-            $this->assertSame('proposal', $run->input['action']);
-        });
     }
 
     #[Test]
@@ -770,38 +756,22 @@ final class OnboardingWizardTest extends TestCase
     }
 
     #[Test]
-    public function the_market_step_answers_when_somebody_is_on_duty(): void
+    public function the_market_step_stores_the_timezone_the_calendar_is_read_in(): void
     {
         $operator = User::factory()->create();
         $project = Project::factory()->onboarding()->create();
         $operator->projects()->attach($project, ['role' => 'owner']);
-
-        // Until it is answered the project is never on duty, so the planner
-        // schedules nothing rather than posting into a silence (§4.3).
-        $this->assertTrue($project->dutyHours()->isEmpty());
 
         $this->actingAs($operator)->postJson("/onboarding/{$project->getKey()}/save", [
             'step' => 'market',
             'answers' => [
                 'market' => 'pt',
                 'language' => 'pt-PT',
-                // The zone the hours are read in, answered on the same step
-                // for exactly that reason.
                 'timezone' => 'Europe/Lisbon',
-                'duty_hours' => [
-                    'sat' => [['10:00', '12:00']],
-                    'mon' => [['12:00', '18:00'], ['9:00', '12:00']],
-                ],
             ],
         ])->assertOk();
 
-        $project->refresh();
-
-        $this->assertSame('Europe/Lisbon', $project->timezone);
-        $this->assertSame(
-            ['mon' => [['09:00', '18:00']], 'sat' => [['10:00', '12:00']]],
-            $project->dutyHours()->toArray(),
-        );
+        $this->assertSame('Europe/Lisbon', $project->refresh()->timezone);
 
         // A later step must not wipe an answer it never asked about.
         $this->actingAs($operator)->postJson("/onboarding/{$project->getKey()}/save", [
@@ -809,31 +779,7 @@ final class OnboardingWizardTest extends TestCase
             'answers' => ['weekly_target' => 3],
         ])->assertOk();
 
-        $this->assertFalse($project->refresh()->dutyHours()->isEmpty());
-    }
-
-    #[Test]
-    public function duty_hours_that_are_not_day_keyed_ranges_are_refused_rather_than_stored(): void
-    {
-        $operator = User::factory()->create();
-        $project = Project::factory()->onboarding()->create();
-        $operator->projects()->attach($project, ['role' => 'owner']);
-        $url = "/onboarding/{$project->getKey()}/save";
-
-        $this->actingAs($operator)->postJson($url, [
-            'step' => 'market',
-            'answers' => ['language' => 'pt-PT', 'duty_hours' => ['funday' => [['09:00', '18:00']]]],
-        ])->assertUnprocessable()->assertJsonValidationErrors('answers.duty_hours');
-
-        $this->actingAs($operator)->postJson($url, [
-            'step' => 'market',
-            'answers' => ['language' => 'pt-PT', 'duty_hours' => ['mon' => 'all day']],
-        ])->assertUnprocessable()->assertJsonValidationErrors('answers.duty_hours.mon');
-
-        $project->refresh();
-
-        $this->assertSame([], $project->onboarding);
-        $this->assertNull($project->duty_hours);
+        $this->assertSame('Europe/Lisbon', $project->refresh()->timezone);
     }
 
     #[Test]

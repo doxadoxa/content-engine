@@ -57,9 +57,9 @@ final class MediaDiskTest extends TestCase
         // The type carries the classification, and this one says do not come
         // back. A retry restarts the step rather than resuming it, and the top
         // of every one of these steps is a paid image generation — so the
-        // ladder buys a second charge, and in SocialImage::variants() a set of
-        // duplicate candidates on the draft, in exchange for a bucket that may
-        // still be refusing. The callers degrade instead.
+        // ladder buys a second charge, and in a step that keeps several
+        // candidates a set of duplicates on the draft, in exchange for a bucket
+        // that may still be refusing. The callers degrade instead.
         $classified = new ErrorClassifier()->isRetryable(
             new MediaWriteFailed('Could not write panels/x.png to the s3 disk.'),
         );

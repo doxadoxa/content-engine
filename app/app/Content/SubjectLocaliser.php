@@ -6,7 +6,6 @@ namespace App\Content;
 
 use App\Ai\Contracts\ModelSession;
 use App\Ai\ModelRequest;
-use App\ContentStudio\ContentStudioAssistant;
 use App\Media\HeroImage;
 use App\Models\ContentItem;
 use App\Pipelines\Steps\Planning\LocaliseVariants;
@@ -25,7 +24,7 @@ use Illuminate\Support\Str;
  *
  * A translation of the *subject*, not a search for a new one. The rows of a
  * locale group are one unit in several languages — that is what lets them share
- * a repurpose tree, a seasonal curve and the photographs
+ * a seasonal curve and the photographs
  * {@see HeroImage} lends between them — so the subject stays fixed
  * and only its expression changes. What it produces is **not** a researched
  * keyword and has no volume behind it; see
@@ -36,9 +35,9 @@ use Illuminate\Support\Str;
  * does it for a month as it is planned, and `planning:localise` does it for the
  * rows planned before that step existed.
  *
- * Takes the model door rather than reaching for one, matching
- * {@see ContentStudioAssistant}: inside a pipeline that door
- * is the step's own context, so the call is metered onto the step that made it.
+ * Takes the model door rather than reaching for one: inside a pipeline that
+ * door is the step's own context, so the call is metered onto the step that
+ * made it.
  */
 final class SubjectLocaliser
 {

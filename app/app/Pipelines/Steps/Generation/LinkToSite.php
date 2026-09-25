@@ -8,17 +8,16 @@ use App\Models\SitePage;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
-use App\Pipelines\Steps\Repurpose\LinksPayload;
 use App\Support\Corpus\CorpusIndex;
 use App\Support\Corpus\SiteLibrary;
 
 /**
  * Internal links: to this engine's own articles, and to the site's own pages.
  *
- * The second half is the one that was missing. Linking used to run only in the
- * repurpose pipeline and only against the corpus of what this engine had
- * written — which on a new project is nothing, so every article went out with
- * zero internal links while the project's sitemap sat unread in the database.
+ * The second half matters most early on. The corpus of what this engine has
+ * written is empty on a new project, so linking only against it would send
+ * every article out with zero internal links while the project's sitemap sat
+ * unread in the database.
  *
  * A link to a page that already ranks is worth more than a link to an article
  * published yesterday, so the site's own pages come first.

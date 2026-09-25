@@ -23,12 +23,6 @@ use RuntimeException;
  * @property Carbon $month
  * @property ContentPlanStatus $status
  * @property Carbon|null $approved_at
- * @property string|null $assistant_summary
- * @property array<string, mixed> $assistant_strategy
- * @property int $assistant_version
- * @property int|null $assistant_accepted_version
- * @property Carbon|null $assistant_proposed_at
- * @property Carbon|null $assistant_accepted_at
  */
 class ContentPlan extends Model
 {
@@ -42,18 +36,6 @@ class ContentPlan extends Model
     protected $fillable = [
         'month',
         'status',
-        'assistant_summary',
-        'assistant_strategy',
-        'assistant_version',
-        'assistant_accepted_version',
-        'assistant_proposed_at',
-        'assistant_accepted_at',
-    ];
-
-    /** @var array<string, mixed> */
-    protected $attributes = [
-        'assistant_strategy' => '{}',
-        'assistant_version' => 0,
     ];
 
     /**
@@ -90,24 +72,6 @@ class ContentPlan extends Model
         return $this->hasMany(ContentItem::class);
     }
 
-    /** @return HasMany<ContentIdea, $this> */
-    public function contentIdeas(): HasMany
-    {
-        return $this->hasMany(ContentIdea::class);
-    }
-
-    /** @return HasMany<ContentPlanMessage, $this> */
-    public function messages(): HasMany
-    {
-        return $this->hasMany(ContentPlanMessage::class);
-    }
-
-    public function hasAcceptedAssistantVersion(): bool
-    {
-        return $this->assistant_version > 0
-            && $this->assistant_accepted_version === $this->assistant_version;
-    }
-
     /**
      * @return array<string, string>
      */
@@ -117,11 +81,6 @@ class ContentPlan extends Model
             'month' => 'date',
             'status' => ContentPlanStatus::class,
             'approved_at' => 'datetime',
-            'assistant_strategy' => 'array',
-            'assistant_version' => 'integer',
-            'assistant_accepted_version' => 'integer',
-            'assistant_proposed_at' => 'datetime',
-            'assistant_accepted_at' => 'datetime',
         ];
     }
 }

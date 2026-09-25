@@ -944,43 +944,31 @@ class PipelineRunner
 
     private function retirementReason(string $key, ?string $itemId, string $projectId): ?string
     {
-        if (in_array($key, ['research', 'planning', 'generation'], true)) {
-            $unit = $itemId === null ? null : ContentItem::acrossProjects()->where('project_id', $projectId)->whereKey($itemId)->first();
-            if ($unit?->isSocial() !== true) {
-                $project = Project::query()->whereKey($projectId)->first();
-                $entitlements = app(Entitlements::class);
-                if ($project !== null) {
-                    $entitlements->forget($project);
-                }
-                if ($project === null || ! ArticleWorkflow::enabled($project)) {
-                    return 'This subscription does not include article creation.';
-                }
-                if (ArticleWorkflow::usesBillingPeriod($project)) {
-                    try {
-                        PlanningWindow::forProject($project);
-                    } catch (ValidationException $exception) {
-                        return $exception->getMessage();
-                    }
-                }
-                $alreadyCounted = $unit !== null && DB::table('article_approval_records')
-                    ->where('project_id', $projectId)->where('content_item_id', $unit->id)->exists();
-                $metric = $key === 'planning' || $alreadyCounted ? null : Metric::Articles;
-                if (($refusal = $entitlements->for($project)->refusal($metric)) !== null) {
-                    return $refusal->message;
-                }
-            }
-        }
-
-        if (config('social.enabled')) {
+        if (! in_array($key, ['research', 'planning', 'generation'], true)) {
             return null;
         }
 
-        $social = str_starts_with($key, 'social_')
-            || in_array($key, ['repurpose', 'content_studio'], true)
-            || ($itemId !== null && ContentItem::acrossProjects()
-                ->where('project_id', $projectId)->whereKey($itemId)->social()->exists());
+        $unit = $itemId === null ? null : ContentItem::acrossProjects()->where('project_id', $projectId)->whereKey($itemId)->first();
+        $project = Project::query()->whereKey($projectId)->first();
+        $entitlements = app(Entitlements::class);
+        if ($project !== null) {
+            $entitlements->forget($project);
+        }
+        if ($project === null || ! ArticleWorkflow::enabled($project)) {
+            return 'This subscription does not include article creation.';
+        }
+        if (ArticleWorkflow::usesBillingPeriod($project)) {
+            try {
+                PlanningWindow::forProject($project);
+            } catch (ValidationException $exception) {
+                return $exception->getMessage();
+            }
+        }
+        $alreadyCounted = $unit !== null && DB::table('article_approval_records')
+            ->where('project_id', $projectId)->where('content_item_id', $unit->id)->exists();
+        $metric = $key === 'planning' || $alreadyCounted ? null : Metric::Articles;
 
-        return $social ? 'Social publishing is retired.' : null;
+        return $entitlements->for($project)->refusal($metric)?->message;
     }
 
     /** Stop queued or recoverable retired work without erasing completed steps or costs. */

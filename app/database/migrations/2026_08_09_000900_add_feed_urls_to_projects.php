@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Integrations\Feeds\FeedReader;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -29,7 +28,7 @@ use Illuminate\Support\Facades\Schema;
  * `keyword_search` and webhooks alone.
  *
  * Every URL here is validated on the way in by `App\Rules\PublicHttpUrl`, and
- * again on every hop of every fetch by {@see FeedReader} — an address that
+ * again on every hop of every fetch by `FeedReader` — an address that
  * passed validation in March can resolve to a private one in August, and this
  * column is operator-supplied input pointed at by an unattended hourly job.
  */

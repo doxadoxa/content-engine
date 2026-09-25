@@ -271,8 +271,7 @@ return [
             // It had drifted below two steps at once. AskAssistants asks for
             // 1800 and its docblock explains that a shorter deadline kills a
             // paid sweep half way and pays for it twice — which is exactly what
-            // 900 was doing to it. ApplyContentStudioAction asked for 900, a tie
-            // with this number, so which fired first was a coin toss.
+            // 900 was doing to it.
             //
             // 2100 clears the longest (1800) with room. The cost is real and
             // worth stating: a genuinely wedged step now occupies the single

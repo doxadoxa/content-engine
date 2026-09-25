@@ -50,7 +50,6 @@ class ChannelController extends Controller
                 'name' => $channel->name,
                 'type' => $channel->type->value,
                 'type_label' => $channel->type->label(),
-                'is_social' => $channel->type->isSocial(),
                 'is_enabled' => $channel->is_enabled,
                 // Whether a secret exists, never the secret. The model hides
                 // the attribute too; this is the deliberate, redacted answer.
@@ -66,8 +65,7 @@ class ChannelController extends Controller
             'types' => array_map(static fn (ChannelType $type): array => [
                 'value' => $type->value,
                 'label' => $type->label(),
-                'is_social' => $type->isSocial(),
-            ], ChannelType::offered()),
+            ], ChannelType::cases()),
         ]);
     }
 
@@ -86,7 +84,6 @@ class ChannelController extends Controller
             : null;
 
         if ($limit !== null && Channel::query()
-            ->when(! config('social.enabled'), fn ($query) => $query->whereIn('type', ChannelType::offered()))
             ->count() >= $limit) {
             throw ValidationException::withMessages([
                 'name' => $limit === 1
@@ -109,8 +106,6 @@ class ChannelController extends Controller
 
     public function update(ChannelRequest $request, Channel $channel): RedirectResponse
     {
-        abort_if($channel->type->isSocial() && ! config('social.enabled'), 404);
-
         // A blank secret means "leave it alone", not "clear it". An operator
         // toggling auto-publish should not have to re-paste a token they
         // cannot read back out of the form.
@@ -153,8 +148,6 @@ class ChannelController extends Controller
      */
     public function ping(Channel $channel, ChannelPublisherRegistry $publishers, CurrentProject $current): RedirectResponse
     {
-        abort_if($channel->type->isSocial() && ! config('social.enabled'), 404);
-
         abort_unless($publishers->canPing($channel->type), 409, 'This kind of channel cannot receive a test delivery.');
 
         $project = $current->get();
@@ -176,13 +169,11 @@ class ChannelController extends Controller
 
     public function autopublish(Channel $channel, ChannelPublisherRegistry $publishers): RedirectResponse
     {
-        abort_if($channel->type->isSocial() && ! config('social.enabled'), 404);
-
         abort_unless($publishers->canAutopublish($channel->type), 409, 'This kind of channel cannot publish automatically.');
 
         $enable = ! $channel->autopublish;
 
-        abort_if($enable && ($channel->type->isSocial() ? $channel->verified_at === null : ! app(ArticleSchedules::class)->compatible($channel)), 409, 'Test this channel successfully before enabling automatic publishing.');
+        abort_if($enable && ! app(ArticleSchedules::class)->compatible($channel), 409, 'Test this channel successfully before enabling automatic publishing.');
 
         $channel->forceFill(['autopublish' => $enable])->save();
 

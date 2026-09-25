@@ -107,10 +107,9 @@ return [
              * rather than by anyone's decision, and something else on the next
              * host. Two things go wrong when it drifts. Comparing a
              * `timestamptz` column against a plain `timestamp` one shifts by
-             * the session offset without a word, which is what the per-source
-             * attribution query of §3 does when it joins `signals.occurred_at`
-             * to `content_items.published_at`. And a bug that depends on the
-             * host's timezone is a bug nobody can reproduce.
+             * the session offset without a word, and the schema has both. And
+             * a bug that depends on the host's timezone is a bug nobody can
+             * reproduce.
              */
             'timezone' => env('DB_TIMEZONE', 'UTC'),
         ],

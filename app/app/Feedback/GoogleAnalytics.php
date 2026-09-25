@@ -116,7 +116,7 @@ class GoogleAnalytics implements AnalyticsGateway
     }
 
     /**
-     * Sessions by channel, social engagement and conversions (§6).
+     * Sessions by channel and conversions (§6).
      *
      * One report over `sessionDefaultChannelGroup`, which is GA4's own
      * classification rather than ours. Re-deriving channels from source and
@@ -154,8 +154,6 @@ class GoogleAnalytics implements AnalyticsGateway
             'dimensions' => [['name' => 'sessionDefaultChannelGroup']],
             'metrics' => [
                 ['name' => 'sessions'],
-                ['name' => 'engagedSessions'],
-                ['name' => 'userEngagementDuration'],
                 ['name' => 'keyEvents'],
             ],
             'limit' => 100,
@@ -169,9 +167,6 @@ class GoogleAnalytics implements AnalyticsGateway
         $total = 0;
         $direct = 0;
         $referral = 0;
-        $social = 0;
-        $socialEngaged = 0;
-        $socialSeconds = 0;
         $conversions = 0;
 
         foreach ($rows as $row) {
@@ -194,7 +189,7 @@ class GoogleAnalytics implements AnalyticsGateway
             // denominator, and a denominator that only counts the channels we
             // are proud of is not one.
             $total += $sessions;
-            $conversions += $value(3);
+            $conversions += $value(1);
 
             if ($group === 'Direct') {
                 $direct += $sessions;
@@ -202,15 +197,6 @@ class GoogleAnalytics implements AnalyticsGateway
 
             if ($group === 'Referral') {
                 $referral += $sessions;
-            }
-
-            // "Organic Social" and "Paid Social" are two groups and one
-            // channel. §6 asks about the share of social traffic, and a
-            // boosted post is still the account's audience arriving.
-            if (str_contains($group, 'Social')) {
-                $social += $sessions;
-                $socialEngaged += $value(1);
-                $socialSeconds += $value(2);
             }
         }
 
@@ -220,9 +206,6 @@ class GoogleAnalytics implements AnalyticsGateway
             totalSessions: $total,
             directSessions: $direct,
             referralSessions: $referral,
-            socialSessions: $social,
-            socialEngagedSessions: $socialEngaged,
-            socialEngagementSeconds: $socialSeconds,
             conversions: $conversions,
         );
     }

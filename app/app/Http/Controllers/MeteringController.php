@@ -8,7 +8,6 @@ use App\Models\AssistantMessage;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
-use App\Support\Metering\PostCostReport;
 use App\Support\Metering\ProjectSpend;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\Request;
@@ -21,16 +20,8 @@ use Inertia\Response;
  *
  * Four readings, because they answer four different questions: per step ("is
  * the fact-check worth what it costs"), per pipeline ("is research or
- * generation the expensive one"), per day ("is it getting worse"), and — the
- * one the social spec adds — per *published post*.
- *
- * That last one is not a fifth slice of the same cake. §8 changes the unit:
- * "единица — опубликованный пост, а не сгенерированный", because the drafting
- * pipeline writes eight and keeps one and a report counting calls "соврёт в
- * разы". It is on this screen rather than on a new one because an operator
- * comparing the price of a post against the price of an article should not have
- * to hold two tabs open to do it — which is also §12's sixth exit criterion,
- * and the criterion says *separated from*, not *somewhere else than*.
+ * generation the expensive one"), per day ("is it getting worse"), and per
+ * unit ("what did this article cost").
  */
 class MeteringController extends Controller
 {
@@ -62,14 +53,6 @@ class MeteringController extends Controller
             // compared against, and there must be one of it.
             'spend' => $project instanceof Project
                 ? ProjectSpend::for($project, $since)->toArray()
-                : null,
-
-            // §8, and not deferred, for the same reason as everything else on
-            // this page: it is a handful of aggregates over the window the rest
-            // of the screen already reads, and it is now the headline number
-            // rather than a footnote to the others.
-            'social' => $project instanceof Project
-                ? PostCostReport::for($project, $since)->toArray()
                 : null,
         ]);
     }

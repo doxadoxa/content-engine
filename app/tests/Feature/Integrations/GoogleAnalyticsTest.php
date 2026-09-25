@@ -194,20 +194,19 @@ final class GoogleAnalyticsTest extends TestCase
     }
 
     #[Test]
-    public function the_channel_split_folds_both_social_groups_and_totals_everything(): void
+    public function the_channel_split_totals_everything(): void
     {
         $project = $this->connected();
 
         Http::fake([
             'analyticsdata.googleapis.com/*' => Http::response([
                 'rows' => [
-                    $this->channel('Direct', 220, 180, 9000, 4),
-                    $this->channel('Referral', 130, 90, 4000, 2),
-                    $this->channel('Organic Social', 150, 110, 5000, 3),
-                    // A boosted post is still the account's audience arriving.
-                    $this->channel('Paid Social', 50, 40, 1500, 1),
-                    // Not named by §6, and still part of the denominator.
-                    $this->channel('Organic Search', 450, 300, 20000, 7),
+                    $this->channel('Direct', 220, 4),
+                    $this->channel('Referral', 130, 2),
+                    $this->channel('Organic Social', 150, 3),
+                    $this->channel('Paid Social', 50, 1),
+                    // Not split out, and still part of the denominator.
+                    $this->channel('Organic Search', 450, 7),
                 ],
             ]),
         ]);
@@ -218,9 +217,6 @@ final class GoogleAnalyticsTest extends TestCase
         $this->assertSame(1000, $audience->totalSessions);
         $this->assertSame(220, $audience->directSessions);
         $this->assertSame(130, $audience->referralSessions);
-        $this->assertSame(200, $audience->socialSessions);
-        $this->assertSame(150, $audience->socialEngagedSessions);
-        $this->assertSame(6500, $audience->socialEngagementSeconds);
         $this->assertSame(17, $audience->conversions);
     }
 
@@ -258,14 +254,12 @@ final class GoogleAnalyticsTest extends TestCase
     /**
      * @return array<string, mixed>
      */
-    private function channel(string $group, int $sessions, int $engaged, int $seconds, int $keyEvents): array
+    private function channel(string $group, int $sessions, int $keyEvents): array
     {
         return [
             'dimensionValues' => [['value' => $group]],
             'metricValues' => [
                 ['value' => (string) $sessions],
-                ['value' => (string) $engaged],
-                ['value' => (string) $seconds],
                 ['value' => (string) $keyEvents],
             ],
         ];

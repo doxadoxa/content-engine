@@ -15,9 +15,9 @@ use LogicException;
  * {@see ChannelPublisherRegistry} indexes on the type it is handed and never
  * used to consult {@see ChannelPublisher::supports()}, so the two could
  * disagree and nothing would say so: a line in `AppServiceProvider` with the
- * wrong constant would route every Threads delivery through the webhook
- * transport, which would sign a post with a shared secret and POST it at an
- * endpoint the channel does not have. The failure would surface as a delivery
+ * wrong constant would route every WordPress delivery through the webhook
+ * transport, which would sign an article with a shared secret and POST it at
+ * an endpoint the channel does not have. The failure would surface as a delivery
  * error about a missing URL, three layers away from the wrong word.
  *
  * A `LogicException` rather than a runtime one on purpose. This cannot be

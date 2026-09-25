@@ -111,7 +111,7 @@ return [
                 // costs one research run to make. `articles` is overridden
                 // per subscription to the count of whatever plan was
                 // selected, so the calendar shown is the calendar bought.
-                'articles' => 12, 'content_plans' => 1, 'social_posts' => 0,
+                'articles' => 12, 'content_plans' => 1,
                 'page_improvements' => 0, 'site_audits' => 1, 'assistant_turns' => 0,
                 // The AI visibility check is a paid thing and stays one.
                 'ai_answers' => 0, 'ai_questions' => 0, 'ai_frequency_days' => 30,
@@ -128,7 +128,7 @@ return [
             'name' => 'Website growth trial', 'price_cents' => 0, 'currency' => 'usd',
             'self_serve' => false, 'stripe_price' => null,
             'limits' => [
-                'articles' => 3, 'content_plans' => 1, 'social_posts' => 0,
+                'articles' => 3, 'content_plans' => 1,
                 'page_improvements' => 1, 'site_audits' => 1, 'assistant_turns' => 20,
                 'ai_answers' => 12, 'ai_questions' => 3, 'ai_frequency_days' => 30,
                 'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
@@ -139,7 +139,7 @@ return [
             'name' => 'Starter', 'price_cents' => 2_900, 'currency' => 'usd',
             'self_serve' => true, 'stripe_price' => env('STRIPE_PRICE_SMALL'),
             'limits' => [
-                'articles' => 12, 'content_plans' => 1, 'social_posts' => 0,
+                'articles' => 12, 'content_plans' => 1,
                 'page_improvements' => 0, 'site_audits' => 1, 'assistant_turns' => 100,
                 'ai_answers' => 12, 'ai_questions' => 3, 'ai_frequency_days' => 30,
                 'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,
@@ -150,7 +150,7 @@ return [
             'name' => 'Growth', 'price_cents' => 8_900, 'currency' => 'usd',
             'self_serve' => true, 'stripe_price' => env('STRIPE_PRICE_MEDIUM'),
             'limits' => [
-                'articles' => 30, 'content_plans' => 1, 'social_posts' => 0,
+                'articles' => 30, 'content_plans' => 1,
                 'page_improvements' => 4, 'site_audits' => 1, 'assistant_turns' => 100,
                 'ai_answers' => 200, 'ai_questions' => 10, 'ai_frequency_days' => 7,
                 'locales' => 1, 'seats' => 2, 'channels' => 1, 'tracked_pages' => 20,

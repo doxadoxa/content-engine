@@ -17,7 +17,6 @@ use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
 use App\Pipelines\Exceptions\TerminalStepFailure;
-use App\Pipelines\Steps\Repurpose\HeroPayload;
 use App\Support\Content\SafeMarkdown;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -31,10 +30,8 @@ use Throwable;
  * a comparable published article carries four, and that is the number a reader
  * scrolls past without noticing the length.
  *
- * In generation and not only in repurpose, because an article without an image
- * is not a finished article — it was reaching the approvals queue as a wall of
- * text, and the only way to get a picture was to run a second pipeline over it
- * by hand.
+ * In generation, because an article without an image is not a finished
+ * article — it would reach the approvals queue as a wall of text.
  *
  * Runs after the draft is saved and edits the body afterwards: the images have
  * to go under headings that exist, and the headings are only settled once the

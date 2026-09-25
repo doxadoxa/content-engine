@@ -19,7 +19,7 @@ final class PlanChanges
         if ($current->currency === $target->currency && $target->priceCents < $current->priceCents) {
             return true;
         }
-        foreach (['articles', 'page_improvements', 'social_posts', 'locales', 'seats', 'channels'] as $metric) {
+        foreach (['articles', 'page_improvements', 'locales', 'seats', 'channels'] as $metric) {
             if ($target->limit($metric) !== null && ($current->limit($metric) === null || $target->limit($metric) < $current->limit($metric))) {
                 return true;
             }

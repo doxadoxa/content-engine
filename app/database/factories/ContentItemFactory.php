@@ -37,7 +37,6 @@ class ContentItemFactory extends Factory
             'project_id' => fn (): mixed => $this->resolveProject(),
             'content_plan_id' => null,
             'brand_brief_id' => null,
-            'parent_id' => null,
             'locale_group_id' => (string) Str::ulid(),
             'locale' => 'en',
             'state' => ContentItemState::Idea,
@@ -88,24 +87,6 @@ class ContentItemFactory extends Factory
         return $this->state(fn (): array => [
             'locale_group_id' => $localeGroupId,
             'locale' => $locale,
-        ]);
-    }
-
-    /**
-     * A social post derived from a parent. Derivatives inherit the parent's
-     * entities and links (§2), so the factory copies them rather than inventing
-     * unrelated ones.
-     */
-    public function derivedFrom(ContentItem $parent, ContentItemType $type = ContentItemType::SocialPost): static
-    {
-        return $this->state(fn (): array => [
-            'parent_id' => $parent->getKey(),
-            'project_id' => $parent->project_id,
-            'content_plan_id' => $parent->content_plan_id,
-            'locale' => $parent->locale,
-            'type' => $type,
-            'entities' => $parent->entities,
-            'target_query' => $parent->target_query,
         ]);
     }
 }

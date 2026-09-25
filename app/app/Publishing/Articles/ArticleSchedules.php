@@ -36,7 +36,7 @@ final class ArticleSchedules
         $item->loadMissing('project');
         $project = $item->project;
         $optedAt = $project->onboarding['article_automation_started_at'] ?? null;
-        if ($item->isSocial() || ! is_string($optedAt)
+        if (! is_string($optedAt)
             || $item->created_at->lt(CarbonImmutable::parse($optedAt))) {
             return null;
         }
@@ -75,7 +75,7 @@ final class ArticleSchedules
         return $this->mutate($item, function (?ArticleSchedule $schedule) use ($actor, $item, $input): ArticleSchedule {
             $this->version($schedule, $input['expected_version']);
             $this->require($schedule?->status !== 'completed', 'This article was already published.');
-            $this->require(! $item->isSocial() && ! $item->state->isLive(), 'A published article cannot receive a new initial publication schedule.');
+            $this->require(! $item->state->isLive(), 'A published article cannot receive a new initial publication schedule.');
             $channel = Channel::query()->whereKey($input['channel_id'])->firstOrFail();
             $this->require($channel->project_id === $item->project_id && $this->compatible($channel), 'Choose an enabled website connection with a successful article publishing test.');
             $this->require(in_array($input['mode'], ['automatic', 'review_first'], true), 'Choose automatic or review first.');
@@ -205,7 +205,7 @@ final class ArticleSchedules
 
     public function compatible(Channel $channel): bool
     {
-        return ! $channel->type->isSocial() && $channel->is_enabled && $channel->verified_at !== null
+        return $channel->is_enabled && $channel->verified_at !== null
             && $this->publishers->publishes($channel->type) && $channel->hasSecret()
             && ($channel->type !== ChannelType::Webhook || trim((string) ($channel->config['endpoint'] ?? '')) !== '')
             && ($channel->type !== ChannelType::WordPress || ($channel->config['article_publishing_verified'] ?? false) === true);
@@ -250,7 +250,7 @@ final class ArticleSchedules
             'channels' => $this->channels($item->project)->map(fn (Channel $channel): array => [
                 'id' => $channel->id, 'name' => $channel->name, 'type' => $channel->type->value, 'autopublish' => $channel->autopublish,
             ])->all(),
-            'can_schedule' => ! $item->isSocial() && ! $item->state->isLive() && $schedule?->status !== 'completed'
+            'can_schedule' => ! $item->state->isLive() && $schedule?->status !== 'completed'
                 && ($schedule?->delivery === null || ($schedule->delivery->attempts === 0 && $schedule->delivery->article_attempt_started_at === null)),
         ];
     }

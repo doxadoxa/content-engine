@@ -43,17 +43,6 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
             'name' => config('app.name'),
-            // Whether this deployment has a social presence at all
-            // (config/social.php). Shared rather than passed per page because
-            // the sidebar is rendered on every one of them, and the two entries
-            // it decides — Today and Conversations — lead to routes that do not
-            // exist when it is false.
-            //
-            // Hidden and not disabled. A greyed-out row is a promise that
-            // something in the interface can turn it on, and nothing can:
-            // `SOCIAL_PRESENCE_ENABLED` lives in the environment and needs a
-            // Meta app behind it before it would mean anything.
-            'social' => ['enabled' => (bool) config('social.enabled')],
             'auth' => [
                 'user' => $request->user(),
                 // Closures, because this method runs on the way *in* — before

@@ -42,7 +42,6 @@ class PullContentController extends Controller
         $position = is_string($cursor) ? $this->cursors->decode($cursor) : null;
 
         $query = ContentItem::query()
-            ->roots()
             ->whereIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value])
             // Ordered by the column the cursor moves along, so a page boundary
             // cannot skip a row that was edited mid-read.

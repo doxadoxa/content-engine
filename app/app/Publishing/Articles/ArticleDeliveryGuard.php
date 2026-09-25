@@ -15,7 +15,7 @@ final class ArticleDeliveryGuard
     {
         $delivery->loadMissing(['contentItem.project', 'channel']);
         $item = $delivery->contentItem;
-        if ($item === null || $item->isSocial()) {
+        if ($item === null) {
             return null;
         }
         $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->first();

@@ -49,8 +49,7 @@ class CalendarController extends Controller
         $until = $month->copy()->addMonth()->utc();
 
         $units = ContentItem::query()
-            ->roots()
-            ->with(['localeVariants', 'derivatives', 'articleSchedule.delivery', 'project.channels'])
+            ->with(['localeVariants', 'articleSchedule.delivery', 'project.channels'])
             ->where(fn ($query) => $query
                 ->whereHas('articleSchedule', fn ($schedule) => $schedule->where('status', '!=', 'canceled')->where('publish_at', '>=', $from)->where('publish_at', '<', $until))
                 ->orWhere(fn ($planned) => $planned->whereDoesntHave('articleSchedule')->whereBetween('scheduled_for', [$month->toDateString(), $month->copy()->endOfMonth()->toDateString()])))
@@ -77,17 +76,16 @@ class CalendarController extends Controller
                 'status' => $plan->status->value,
                 'approved' => $plan->isApproved(),
             ],
-            // One card per topic, not one per language. `roots()` only excludes
-            // social derivatives — locale variants have no parent — so a project
-            // publishing in three languages showed every article three times.
+            // One card per topic, not one per language. Every locale is a row
+            // of its own, so a project publishing in three languages showed
+            // every article three times.
             // The card already carries a "3 langs" badge; it was being drawn on
             // each of the three.
             'units' => $this->oneCardPerTopic($units, $timezone),
             'unscheduled' => ContentItem::query()
-                ->roots()
                 ->where(fn ($query) => $query->where(fn ($unscheduled) => $unscheduled->whereDoesntHave('articleSchedule')->whereNull('scheduled_for'))->orWhereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'canceled')))
                 ->whereNotIn('state', ['published', 'refreshing'])
-                ->with(['localeVariants', 'derivatives', 'articleSchedule.delivery', 'project.channels'])
+                ->with(['localeVariants', 'articleSchedule.delivery', 'project.channels'])
                 ->orderByDesc('topic_volume')
                 ->limit(25)
                 ->get()
@@ -112,7 +110,7 @@ class CalendarController extends Controller
         }
 
         $hasThisMonth = ContentItem::query()
-            ->roots()->whereDoesntHave('articleSchedule')
+            ->whereDoesntHave('articleSchedule')
             ->whereBetween('scheduled_for', [
                 $thisMonth->toDateString(),
                 $thisMonth->copy()->endOfMonth()->toDateString(),
@@ -124,7 +122,7 @@ class CalendarController extends Controller
         }
 
         $next = ContentItem::query()
-            ->roots()->whereDoesntHave('articleSchedule')
+            ->whereDoesntHave('articleSchedule')
             ->whereNotNull('scheduled_for')
             ->where('scheduled_for', '>=', $thisMonth->toDateString())
             ->orderBy('scheduled_for')

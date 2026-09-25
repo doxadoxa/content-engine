@@ -11,9 +11,8 @@ use App\Models\BrandBrief;
  *
  * The companion to `visual_language`, not a replacement for it. That field is
  * prose and goes to an image model, which is the right shape for instructing
- * one. This is for the renderers — the text overlay on a photograph, the
- * structured panel a teaching carousel is made of — and they need a fill
- * colour, an ink colour, a corner and a case rule. None of those can be read
+ * one. This is for the renderers — the text overlay on a photograph — and
+ * they need a fill colour, an ink colour, a corner and a case rule. None of those can be read
  * out of "warm, unfussy, always a real workspace" without asking a model, and a
  * brand whose colour is decided by a model is a brand with a different colour
  * every Tuesday.
@@ -45,7 +44,7 @@ final readonly class VisualStyle
      * that has not been asked for an accent has not got one, so the honest
      * fallback is the colour it already uses for emphasis — its ink — and not a
      * hue this engine picked. Every brief predating the field lands here, which
-     * is why adding it changed no existing carousel.
+     * is why adding it changed no existing picture.
      */
     public const string DEFAULT_ACCENT = '';
 
@@ -60,21 +59,6 @@ final readonly class VisualStyle
     public const array CASES = ['sentence', 'upper'];
 
     public const string DEFAULT_TYPEFACE = 'instrument-sans';
-
-    public const string DEFAULT_COVER = 'photo';
-
-    /**
-     * What a carousel's first slide is drawn on.
-     *
-     * `photo` sets the hook over the post's own photograph behind a scrim;
-     * `type` draws it on the brand's fill like every other slide. Both are
-     * covers — the difference is whether the picture is the ground or is absent
-     * — and neither is a per-post decision. See the migration that added the
-     * column for why the model may not choose this.
-     *
-     * @var list<string>
-     */
-    public const array COVERS = ['photo', 'type'];
 
     /**
      * The faces a panel can be set in, as slug => family name.
@@ -120,8 +104,6 @@ final readonly class VisualStyle
         public string $case,
         /** The slug of the face a panel is set in. Always one of {@see TYPEFACES}. */
         public string $typeface = self::DEFAULT_TYPEFACE,
-        /** Whether a carousel opens on its photograph or on the brand's fill. */
-        public string $cover = self::DEFAULT_COVER,
         /**
          * The brand's other colours, heaviest first, and usually empty.
          *
@@ -162,9 +144,6 @@ final readonly class VisualStyle
             typeface: array_key_exists((string) $brief->brand_typeface, self::TYPEFACES)
                 ? (string) $brief->brand_typeface
                 : self::DEFAULT_TYPEFACE,
-            cover: in_array($brief->carousel_cover, self::COVERS, true)
-                ? $brief->carousel_cover
-                : self::DEFAULT_COVER,
             palette: self::palette($brief),
         );
     }

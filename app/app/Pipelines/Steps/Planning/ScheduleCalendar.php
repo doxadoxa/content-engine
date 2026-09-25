@@ -10,7 +10,6 @@ use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\ContentPlanStatus;
 use App\Models\ArticlePlanningPeriod;
-use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\Project;
@@ -80,8 +79,6 @@ class ScheduleCalendar extends AbstractStep
         // keyword and the two are not always the same.
         $extraLocales = $context->project->writtenLocales();
 
-        $derivativeChannels = $this->socialChannels();
-
         $planned = 0;
 
         /** @var list<array{id: string, locale: string, source_id: string}> $localeRows */
@@ -89,7 +86,7 @@ class ScheduleCalendar extends AbstractStep
 
         $plan = DB::transaction(function () use (
             $context, $window, $month, $selection, $typing, $needData,
-            $extraLocales, $derivativeChannels, &$planned, &$localeRows
+            $extraLocales, &$planned, &$localeRows
         ): ContentPlan {
             $locked = Project::query()->whereKey($context->project->id)->lockForUpdate()->firstOrFail();
             $window = PlanningWindow::forProject($locked, $context->get('month'), $context->get('article_period_started_at'));
@@ -98,13 +95,13 @@ class ScheduleCalendar extends AbstractStep
             $maxTopics = min(ArticleWorkflow::calendarCapacity($context->project, $window), $available === null ? count($selection->selected) : intdiv($available, max(1, count($extraLocales))));
             // Selection ran before the project lock. Never move work another
             // completed planner has already placed on a calendar.
-            $eligible = ContentItem::query()->roots()->inState(ContentItemState::Idea)->whereNull('content_plan_id')
+            $eligible = ContentItem::query()->inState(ContentItemState::Idea)->whereNull('content_plan_id')
                 ->whereIn('id', $selection->selected)->lockForUpdate()->get()->keyBy('id');
             $selectedIds = array_slice(array_values(array_filter($selection->selected, fn (string $id): bool => $eligible->has($id))), 0, $maxTopics);
             if ($window->periodStart !== null) {
                 $openDates = ArticleWorkflow::openSlots($locked, $window);
             } else {
-                $occupied = ContentItem::query()->roots()->whereNotNull('content_plan_id')
+                $occupied = ContentItem::query()->whereNotNull('content_plan_id')
                     ->whereBetween('scheduled_for', [$window->start->toDateString(), $window->end->toDateString()])->get()
                     ->map(fn (ContentItem $item): string => $item->scheduled_for->toDateString())->flip()->all();
                 $openDates = array_values(array_filter($window->dates($window->days()), fn (Carbon $date): bool => ! isset($occupied[$date->toDateString()])));
@@ -152,7 +149,6 @@ class ScheduleCalendar extends AbstractStep
                     'planned_publication_at' => $period === null ? null : $dates[$index]->copy()->utc(),
                     'type' => ContentItemType::from($typing->types[$id] ?? $unit->type->value),
                     'needs_original_data' => isset($needData[$id]),
-                    'planned_derivatives' => $derivativeChannels,
                 ])->save();
 
                 app(ArticleSchedules::class)->scheduleNew($unit, $period === null ? Carbon::parse($dates[$index]->toDateString().' 09:00', $context->project->timezone) : $dates[$index]);
@@ -179,7 +175,6 @@ class ScheduleCalendar extends AbstractStep
                         'article_planning_period_id' => $period?->id,
                         'planned_publication_at' => $period === null ? null : $dates[$index]->copy()->utc(),
                         'needs_original_data' => isset($needData[$id]),
-                        'planned_derivatives' => $derivativeChannels,
                         'intent' => $unit->intent,
                         'cluster' => $unit->cluster,
                         // `topic_difficulty` and `topic_volume` are absent on
@@ -237,44 +232,6 @@ class ScheduleCalendar extends AbstractStep
             locales: count($localeRows),
             variants: $localeRows,
         ));
-    }
-
-    /**
-     * The channels this project's articles may be cut up for.
-     *
-     * From its own connected channels, not from a global config default. The
-     * default said "linkedin, x" for every project on the installation, so a
-     * project that connected Telegram got posts planned for two channels it
-     * does not have and none for the one it does.
-     *
-     * Narrowed by `takesArticleDerivatives()` and not by `isSocial()`: Threads
-     * is social and takes no cross-posts (§1, fact 3), so planning a derivative
-     * for it here would put a slice of an article on the one channel where that
-     * costs reach on everything published after it. Its share of the article
-     * arrives through the Derivative band in `social_plan` instead.
-     *
-     * Falls back to the config only when nothing suitable is connected, so a
-     * project set up before channels existed still plans something.
-     *
-     * @return list<string>
-     */
-    private function socialChannels(): array
-    {
-        if (! config('social.enabled')) {
-            return [];
-        }
-        $connected = array_values(array_unique(
-            Channel::query()
-                ->where('is_enabled', true)
-                ->get()
-                ->filter(static fn (Channel $channel): bool => $channel->type->takesArticleDerivatives())
-                ->map(static fn (Channel $channel): string => $channel->type->value)
-                ->all()
-        ));
-
-        return $connected !== []
-            ? $connected
-            : array_values(array_map('strval', (array) config('research.default_derivative_channels', [])));
     }
 
     /**

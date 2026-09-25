@@ -34,10 +34,9 @@ use Throwable;
  * was written against it had: forty-five ideas, fifty-two approved, nothing
  * published, and the last planning run seventeen days earlier.
  *
- * Both actions are the same divergence {@see ContentStudioController::storeIdea()}
- * already makes for the social half — a person may put a unit into the engine
- * without the planner's permission — and they are held to the same rule it is:
- * the engine still writes it, a person still approves it, nothing publishes.
+ * Both actions let a person put a unit into the engine without the planner's
+ * permission, and both are held to the same rule: the engine still writes it,
+ * a person still approves it, nothing publishes.
  */
 class ArticleController extends Controller
 {

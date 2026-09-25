@@ -71,10 +71,6 @@ final class ArticleBusinessFacts
 
     public function refusal(ContentItem $item): ?string
     {
-        if ($item->isSocial()) {
-            return null;
-        }
-
         return app(CurrentProject::class)->run($item->project_id, function () use ($item): ?string {
             $context = DB::table('article_business_contexts')->where('project_id', $item->project_id)->where('content_item_id', $item->id)->orderByDesc('id')->first();
             if ($context === null) {

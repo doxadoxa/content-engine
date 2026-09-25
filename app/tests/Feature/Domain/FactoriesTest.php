@@ -11,12 +11,9 @@ use App\Models\BrandBrief;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
-use App\Models\Interaction;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
-use App\Models\ProjectState;
-use App\Models\Signal;
 use App\Models\WebhookDelivery;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -63,9 +60,6 @@ final class FactoriesTest extends TestCase
             PipelineRun::class => PipelineRun::factory()->createOne(),
             PipelineStep::class => PipelineStep::factory()->createOne(),
             WebhookDelivery::class => WebhookDelivery::factory()->createOne(),
-            Signal::class => Signal::factory()->createOne(),
-            Interaction::class => Interaction::factory()->createOne(),
-            ProjectState::class => ProjectState::factory()->createOne(),
         ];
 
         foreach ($rows as $class => $row) {
@@ -94,14 +88,6 @@ final class FactoriesTest extends TestCase
             PipelineRun::class => PipelineRun::factory()->createMany(3),
             PipelineStep::class => PipelineStep::factory()->createMany(3),
             WebhookDelivery::class => WebhookDelivery::factory()->createMany(3),
-            // The three §3 tables have uniqueness of their own, and
-            // `project_states` is the sharpest case on this list: one row per
-            // project per day, so its factory hands out consecutive days from a
-            // per-instance counter. A fixed date would collide on the second
-            // row, which is exactly what this test is for.
-            Signal::class => Signal::factory()->createMany(3),
-            Interaction::class => Interaction::factory()->createMany(3),
-            ProjectState::class => ProjectState::factory()->createMany(3),
         ];
 
         foreach ($batches as $class => $batch) {
@@ -185,7 +171,6 @@ final class FactoriesTest extends TestCase
     public function the_channel_factory_states_produce_what_they_claim(): void
     {
         $this->assertTrue(Channel::factory()->webhook()->create()->type === ChannelType::Webhook);
-        $this->assertTrue(Channel::factory()->social()->create()->type->isSocial());
         $this->assertFalse(Channel::factory()->withoutSecret()->create()->hasSecret());
         $this->assertFalse(Channel::factory()->disabled()->create()->is_enabled);
     }

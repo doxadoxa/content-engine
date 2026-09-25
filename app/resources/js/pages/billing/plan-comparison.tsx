@@ -53,7 +53,7 @@ export function PlanComparison({
         ...new Set(
             plans.flatMap((plan) => plan.limits.map((limit) => limit.key)),
         ),
-    ].filter((key) => key !== 'articles' && key !== 'social_posts');
+    ].filter((key) => key !== 'articles');
     const currentLimits = new Map(
         details?.limits.map((limit) => [limit.key, limit.value]) ?? [],
     );

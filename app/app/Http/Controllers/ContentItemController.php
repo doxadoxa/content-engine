@@ -20,13 +20,11 @@ use Inertia\Response;
  * The content list — read-only, as §2.3 asks.
  *
  * Nothing generates units yet, so this exists to show that the model of §2 is
- * real: units grouped by locale, derivatives hanging off a parent, states a
- * pipeline will move. Phase 7 replaces it with the calendar and the approvals
- * queue.
+ * real: units grouped by locale, and states a pipeline will move. Phase 7
+ * replaces it with the calendar and the approvals queue.
  *
  * One row is a *unit*, not a row of the table. A bilingual guide is two rows in
- * `content_items` and both of them are roots, so listing rows directly would
- * print it twice — which is precisely the "юнит ≠ статья" mistake §2 is written
+ * `content_items`, so listing rows directly would print it twice — which is precisely the "юнит ≠ статья" mistake §2 is written
  * to prevent.
  */
 class ContentItemController extends Controller
@@ -61,7 +59,7 @@ class ContentItemController extends Controller
 
         // Keep the matching root separately from the complete unit. The
         // matching root makes a translated title and its filter state visible;
-        // the complete unit keeps every locale and derivative on the card.
+        // the complete unit keeps every locale on the card.
         $matchingRoots = (clone $matching)
             ->whereIn('locale_group_id', $groupIds)
             ->get()
@@ -70,7 +68,6 @@ class ContentItemController extends Controller
         // Only the groups on this page get their trees. Loading everything and
         // grouping in PHP made response size grow with the entire project.
         $roots = ContentItem::query()
-            ->roots()
             ->whereIn('locale_group_id', $groupIds)
             ->withTree()
             ->with(['contentPlan', 'articleSchedule.delivery', 'project.channels'])
@@ -162,9 +159,6 @@ class ContentItemController extends Controller
             'published_at' => $item->published_at?->toIso8601String(),
             'plan_month' => $item->contentPlan?->month->format('Y-m'),
             'locales' => $group->pluck('locale')->unique()->sort()->values()->all(),
-            // Across the whole unit: a Portuguese post derived from the
-            // Portuguese row still belongs to this unit.
-            'derivatives' => $group->sum(fn (ContentItem $row): int => $row->derivatives->count()),
         ];
     }
 }

@@ -312,53 +312,6 @@ final class EngineTickTest extends TestCase
     }
 
     #[Test]
-    public function social_posts_wait_for_the_article_to_be_published(): void
-    {
-        // With a social allowance, so it is the draft that holds repurpose
-        // back and not a plan with no social posts in it.
-        $project = Project::factory()->withSocialAllowance()->create(['weekly_target' => 3]);
-
-        $this->inProject($project, function (): void {
-            ContentItem::factory()->create([
-                'state' => ContentItemState::Draft,
-                'body_markdown' => '## Something',
-                'planned_derivatives' => ['linkedin', 'x'],
-            ]);
-        });
-
-        $this->tick();
-
-        // Repurpose refuses a draft outright — a social post links to the
-        // article. Queueing drafts made every social run fail at its first
-        // step, which is why a project with LinkedIn and X connected had
-        // nothing on either.
-        $this->assertFalse(
-            PipelineRun::acrossProjects()->where('pipeline', 'repurpose')->exists(),
-        );
-    }
-
-    #[Test]
-    public function a_published_article_gets_cut_down_for_social(): void
-    {
-        // No plan on sale includes social posts; the allowance is granted as
-        // an override so the repurpose path still runs.
-        $project = Project::factory()->withSocialAllowance()->create(['weekly_target' => 3]);
-
-        $this->inProject($project, function (): void {
-            ContentItem::factory()->published()->create([
-                'body_markdown' => '## Something',
-                'planned_derivatives' => ['linkedin', 'x'],
-            ]);
-        });
-
-        $this->tick();
-
-        $this->assertTrue(
-            PipelineRun::acrossProjects()->where('pipeline', 'repurpose')->exists(),
-        );
-    }
-
-    #[Test]
     public function nothing_starts_while_something_is_still_running(): void
     {
         $project = $this->project();

@@ -13,8 +13,8 @@ use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
- * Exit criterion 3 of phase 2: a unit with two locales and three derivatives is
- * built and read without a query per child.
+ * Exit criterion 3 of phase 2: a unit in several locales is built and read
+ * without a query per row.
  *
  * The count is asserted exactly rather than as "small". A bound like `< 10`
  * passes just as happily when a relation quietly starts lazy-loading and the
@@ -36,50 +36,48 @@ final class ContentItemTreeTest extends TestCase
     }
 
     #[Test]
-    public function a_unit_is_built_with_two_locales_and_three_derivatives(): void
+    public function a_unit_is_built_with_two_locales(): void
     {
-        [$pt, $en] = $this->unitWithTwoLocalesAndThreeDerivatives();
+        [$pt, $en] = $this->unitWithTwoLocales();
 
         $this->assertSame($pt->locale_group_id, $en->locale_group_id);
         $this->assertSame(2, $pt->localeVariants()->count());
-        $this->assertSame(3, $pt->derivatives()->count());
 
-        // Derivatives inherit the parent's entities and links (§2).
-        $this->assertSame($pt->entities, $pt->derivatives()->first()?->entities);
+        // A locale carries the subject over; only the language changes.
+        $this->assertSame($pt->entities, $en->entities);
     }
 
     #[Test]
     public function the_whole_tree_is_read_in_a_fixed_number_of_queries(): void
     {
-        $this->unitWithTwoLocalesAndThreeDerivatives();
+        $this->unitWithTwoLocales();
 
         $queries = $this->countQueries(function (): void {
-            $roots = ContentItem::query()->roots()->withTree()->get();
+            $units = ContentItem::query()->withTree()->get();
 
             // Touch everything the dashboard would touch. If any of it were
-            // lazy, the count below would move with the number of children.
-            foreach ($roots as $root) {
-                $root->localeVariants->each(fn (ContentItem $item) => $item->locale);
-                $root->derivatives->each(fn (ContentItem $item) => $item->title);
+            // lazy, the count below would move with the number of rows.
+            foreach ($units as $unit) {
+                $unit->localeVariants->each(fn (ContentItem $item) => $item->locale);
             }
         });
 
-        // One for the roots, one for every locale variant, one for every
-        // derivative. Three, whatever the tree's size.
-        $this->assertSame(3, $queries);
+        // One for the units, one for every locale variant. Two, whatever the
+        // tree's size.
+        $this->assertSame(2, $queries);
     }
 
     #[Test]
     public function the_count_does_not_grow_with_the_tree(): void
     {
-        $this->unitWithTwoLocalesAndThreeDerivatives();
+        $this->unitWithTwoLocales();
 
         $small = $this->countQueries(fn () => $this->readAllTrees());
 
-        // A second unit, twice as wide as the first.
+        // A second unit, wider than the first.
         $other = ContentItem::factory()->locale('pt-PT')->create();
         $other->addLocale('en', 'second-unit-en', 'Second unit');
-        ContentItem::factory()->count(6)->derivedFrom($other)->create();
+        $other->addLocale('es', 'second-unit-es', 'Second unit');
 
         $large = $this->countQueries(fn () => $this->readAllTrees());
 
@@ -89,7 +87,7 @@ final class ContentItemTreeTest extends TestCase
     #[Test]
     public function locale_variants_include_the_row_itself(): void
     {
-        [$pt, $en] = $this->unitWithTwoLocalesAndThreeDerivatives();
+        [$pt, $en] = $this->unitWithTwoLocales();
 
         // "The unit in every language" is the useful question, and it is the
         // same answer whichever locale row you ask it from.
@@ -103,33 +101,10 @@ final class ContentItemTreeTest extends TestCase
         );
     }
 
-    #[Test]
-    public function roots_excludes_derivatives(): void
-    {
-        $this->unitWithTwoLocalesAndThreeDerivatives();
-
-        // Two locale rows are roots; the three social posts are not.
-        $this->assertSame(2, ContentItem::query()->roots()->count());
-        $this->assertSame(5, ContentItem::query()->count());
-    }
-
-    #[Test]
-    public function a_derivative_knows_it_is_one(): void
-    {
-        [$pt] = $this->unitWithTwoLocalesAndThreeDerivatives();
-
-        $derivative = $pt->derivatives()->first();
-
-        $this->assertNotNull($derivative);
-        $this->assertTrue($derivative->isDerivative());
-        $this->assertFalse($pt->isDerivative());
-        $this->assertTrue($pt->is($derivative->parent));
-    }
-
     /**
      * @return array{ContentItem, ContentItem}
      */
-    private function unitWithTwoLocalesAndThreeDerivatives(): array
+    private function unitWithTwoLocales(): array
     {
         $pt = ContentItem::factory()->locale('pt-PT')->create([
             'title' => 'Como limpar janelas',
@@ -138,16 +113,13 @@ final class ContentItemTreeTest extends TestCase
 
         $en = $pt->addLocale('en', 'how-to-clean-windows', 'How to clean windows');
 
-        ContentItem::factory()->count(3)->derivedFrom($pt)->create();
-
         return [$pt, $en];
     }
 
     private function readAllTrees(): void
     {
-        ContentItem::query()->roots()->withTree()->get()->each(function (ContentItem $root): void {
-            $root->localeVariants->each(fn (ContentItem $item) => $item->locale);
-            $root->derivatives->each(fn (ContentItem $item) => $item->title);
+        ContentItem::query()->withTree()->get()->each(function (ContentItem $unit): void {
+            $unit->localeVariants->each(fn (ContentItem $item) => $item->locale);
         });
     }
 

@@ -85,8 +85,8 @@ final readonly class ProjectSpend
      * `pipeline_runs.cost_micros` is written once, by
      * {@see PipelineRun::rollUpTotals()}, when a run settles. It
      * is the sum of that run's steps, so for anything finished the two agree
-     * exactly. For anything *running* they do not: a `content_studio` run that
-     * has already bought twenty pictures reports zero at the run level until it
+     * exactly. For anything *running* they do not: a `generation` run that has
+     * already bought its pictures reports zero at the run level until it
      * finishes, and a run whose worker died reports zero for ever.
      *
      * A cost ceiling reading the run level would therefore be blind to precisely
