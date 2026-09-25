@@ -44,15 +44,6 @@ RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --opt
 FROM php-base AS wayfinder
 COPY --from=vendor /app /app
 ENV APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-# Generated with the social presence on, whatever the deployment then runs with.
-# Wayfinder writes one module per registered route, so generating with the
-# switch off deletes `@/routes/today`, `@/routes/engage` and `@/routes/threads`
-# and the build fails on their imports. The helpers are a type-level description
-# of every route this application can serve; which of them a given deployment
-# registers is a runtime question, and the image is built once for both answers.
-# The components that import them are hidden by the `social.enabled` Inertia
-# prop, not by whether the module exists.
-ENV SOCIAL_PRESENCE_ENABLED=true
 RUN php artisan wayfinder:generate --with-form --no-interaction
 
 # ---- Stage 4: Front-end assets ----

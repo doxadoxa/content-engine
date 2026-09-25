@@ -51,8 +51,6 @@ type ContentRow = {
     plan_month: string | null;
     /** Every language this unit exists in. */
     locales: string[];
-    /** How many social posts hang off it. */
-    derivatives: number;
 };
 
 type Props = {

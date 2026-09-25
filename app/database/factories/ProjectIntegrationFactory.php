@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Database\Factories;
 
 use App\Enums\IntegrationProvider;
-use App\Integrations\Threads\ThreadsConnection;
 use App\Models\ProjectIntegration;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -38,33 +37,6 @@ class ProjectIntegrationFactory extends Factory
             ],
             'connected_at' => now(),
         ];
-    }
-
-    /**
-     * A connected Threads account (§9).
-     *
-     * `refresh_token` stays null and the long-lived token lives in
-     * `access_token`, which is the arrangement {@see ThreadsConnection} explains
-     * at length: Threads has one credential that renews by presenting itself,
-     * and copying it into both columns would mean two encrypted copies of one
-     * secret drifting apart on every renewal. The expiry is far out so that
-     * nothing in a publishing test accidentally exercises the renewal path.
-     */
-    public function threads(): static
-    {
-        return $this->state(fn (): array => [
-            'provider' => IntegrationProvider::Threads,
-            'refresh_token' => null,
-            'access_token' => 'threads-long-lived-token',
-            'access_token_expires_at' => now()->addDays(60),
-            'scopes' => (array) config('services.threads.scopes'),
-            // Both halves of what the callback writes. The username is not
-            // decoration: it is what tells a reply the account itself wrote
-            // from a reply somebody sent us, and a fixture without it would
-            // exercise only the branch where that question cannot be answered.
-            'config' => ['user_id' => '17841400000000000', 'username' => 'brandname'],
-            'connected_at' => now(),
-        ]);
     }
 
     /** Connected, but nothing chosen yet — the state right after the callback. */

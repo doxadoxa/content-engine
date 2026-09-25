@@ -23,7 +23,6 @@ use App\Models\User;
 use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
 use App\Publishing\ChannelPublisherRegistry;
-use App\Support\Duty\DutyHours;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Contracts\Cache\Lock;
@@ -90,14 +89,6 @@ class OnboardingController extends Controller
             'selectedPlan' => $this->selection->selected($request, $draft)->toArray(),
             'plans' => array_map(static fn (Plan $plan): array => $plan->toArray(), $this->plans->selfServe()),
             'trialDays' => $this->plans->trialDays(),
-            'channelTypes' => array_map(static fn (ChannelType $type): array => [
-                'value' => $type->value,
-                'label' => $type->label(),
-                'is_social' => $type->isSocial(),
-            ], array_values(array_filter(
-                ChannelType::cases(),
-                static fn (ChannelType $type): bool => ! $type->isSocial() || (bool) config('social.enabled'),
-            ))),
         ]);
     }
 
@@ -441,14 +432,6 @@ class OnboardingController extends Controller
                     ...array_map('strval', $answers['extra_languages'] ?? []),
                 ])),
                 'timezone' => (string) ($answers['timezone'] ?? $project->timezone),
-                // Canonicalised through the value object on the way in, so the
-                // column holds days in week order with touching windows merged
-                // and unusable ranges dropped — never the half-typed shape the
-                // wizard happened to post. Unanswered leaves what is there,
-                // which for a new project is nothing, which is "never on duty".
-                'duty_hours' => DutyHours::fromArray(
-                    is_array($answers['duty_hours'] ?? null) ? $answers['duty_hours'] : $project->duty_hours,
-                )->toArray(),
             ],
             'business' => [
                 'name' => (string) ($answers['name'] ?? $project->name),
@@ -612,8 +595,8 @@ class OnboardingController extends Controller
     }
 
     /**
-     * §8: a project is one content layer across a site and its social channels,
-     * so the wizard connects them together and they share one brief.
+     * The site the project publishes to, connected from the wizard's answers so
+     * the first article has somewhere to go.
      */
     private function connectChannels(Project $project): void
     {
@@ -645,19 +628,6 @@ class OnboardingController extends Controller
             // a month later as an article that said Published and was not.
             $this->publishers->for(ChannelType::Webhook)->ping($website, $project);
         }
-
-        foreach (config('social.enabled') ? array_map('strval', $answers['social'] ?? []) : [] as $type) {
-            $channelType = ChannelType::tryFrom($type);
-
-            if ($channelType === null || ! $channelType->isSocial()) {
-                continue;
-            }
-
-            Channel::query()->updateOrCreate(
-                ['name' => $channelType->label()],
-                ['type' => $channelType, 'config' => [], 'is_enabled' => true],
-            );
-        }
     }
 
     /**
@@ -678,7 +648,6 @@ class OnboardingController extends Controller
             'seed_keywords' => $project->research_seeds,
             'weekly_target' => $project->weekly_target,
             'autopublish' => $project->autopublish,
-            'duty_hours' => $project->dutyHours()->toArray(),
             'analysis' => $project->site_analysis,
             'onboarding' => $project->onboarding,
         ];

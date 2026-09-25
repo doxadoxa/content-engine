@@ -20,11 +20,10 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\PendingCommand;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
-use Tests\Feature\Pipelines\SocialListenTest;
 use Tests\TestCase;
 
 /**
- * A killed worker must not cost a post (§9).
+ * A killed worker must not cost an article (§9).
  *
  * `pending` is the one delivery status nothing in the engine ever revisits:
  * {@see DeliverWebhookJob} has one try, the re-dispatch path only looks at
@@ -116,8 +115,8 @@ final class StrandedDeliveryTest extends TestCase
 
         // Twenty minutes is inside the queue's own `retry_after`, so a worker
         // may simply be slow. Sweeping here would dispatch a second copy of a
-        // delivery that is still running, which for Threads is a duplicate root
-        // post — the failure §9 exists to prevent.
+        // delivery that is still running, which is an article published twice
+        // — the failure §9 exists to prevent.
         $delivery = $this->pending(minutesAgo: 20);
 
         $this->sweep();
@@ -282,8 +281,7 @@ final class StrandedDeliveryTest extends TestCase
 
     /**
      * `artisan()` is typed `PendingCommand|int` and `assertSuccessful()` only
-     * records the expectation — the command runs in `__destruct()`. Same helper
-     * as {@see SocialListenTest}.
+     * records the expectation — the command runs in `__destruct()`.
      */
     private function sweep(): void
     {

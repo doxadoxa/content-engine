@@ -23,7 +23,6 @@ class FeedbackController extends Controller
     public function __invoke(): Response
     {
         $live = ContentItem::query()
-            ->roots()
             ->whereIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value])
             ->withSum('metrics as impressions', 'impressions')
             ->withSum('metrics as clicks', 'clicks')
@@ -49,7 +48,6 @@ class FeedbackController extends Controller
                 'refresh_reason' => $unit->refresh_reason,
             ]),
             'refresh_queue' => ContentItem::query()
-                ->roots()
                 ->whereIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value])
                 ->whereNotNull('refresh_due_at')
                 ->orderBy('refresh_due_at')
@@ -72,7 +70,6 @@ class FeedbackController extends Controller
     private function summary(): array
     {
         $live = ContentItem::query()
-            ->roots()
             ->whereIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value]);
 
         return [

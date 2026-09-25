@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Support\Duty\DutyHours;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -25,7 +24,7 @@ use Illuminate\Support\Facades\Schema;
  * twice a year.
  *
  * Nullable, and null is read as "never on duty" rather than "always" — see
- * {@see DutyHours}. §11.4 makes this a new onboarding question, and until it is
+ * `DutyHours`. §11.4 makes this a new onboarding question, and until it is
  * answered the planner must not schedule a post into a silence nobody is
  * watching.
  */

@@ -57,11 +57,9 @@ export default function Terms({
                 <p>
                     {entity.product} is a software platform for organic
                     marketing. It builds a brand brief from material you supply,
-                    plans content, drafts articles and social posts, generates
-                    images, checks how visible your brand is in search engines
-                    and AI assistants, and — where you connect a channel —
-                    publishes approved work and collects the replies it
-                    receives.
+                    plans content, drafts articles, generates images, checks how
+                    visible your brand is in search engines and AI assistants,
+                    and — where you connect a channel — publishes approved work.
                 </p>
                 <p>
                     <strong>
@@ -161,10 +159,10 @@ export default function Terms({
             <Section id="connections" title="6. Connected accounts">
                 <p>
                     The Service can connect to third-party accounts you control,
-                    such as Google Search Console, Google Analytics, and
-                    Threads. Those connections are made with your authorisation
-                    and can be withdrawn by you at any time, from within the
-                    Service or from the provider.
+                    such as Google Search Console and Google Analytics. Those
+                    connections are made with your authorisation and can be
+                    withdrawn by you at any time, from within the Service or
+                    from the provider.
                 </p>
                 <p>
                     Your use of those platforms remains governed by their own

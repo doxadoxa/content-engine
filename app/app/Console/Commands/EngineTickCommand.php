@@ -31,11 +31,10 @@ use Throwable;
  *
  * Every pipeline in this application was startable by hand and started by
  * nothing. A project could be onboarded, planned and left: the calendar filled
- * up with dates nobody would ever write, no social post was ever cut, and
- * nothing published. "Set it up and it runs" was true of every part except the
- * part that runs it.
+ * up with dates nobody would ever write, and nothing was published. "Set it up
+ * and it runs" was true of every part except the part that runs it.
  *
- * One command rather than six schedule entries, because the decisions are
+ * One command rather than a schedule entry per pipeline, because the decisions are
  * conditional on each other — there is no point planning a month from an empty
  * idea pool, or drafting a unit whose plan was never approved — and a crontab
  * cannot express that.
@@ -71,12 +70,11 @@ class EngineTickCommand extends Command
      *
      * The project-level check above asks only whether this project may spend at
      * all, and a used-up quota is deliberately *not* a global refusal — running
-     * out of articles must not stop social posts. But that left the tick free
+     * out of articles must not stop measurement. But that left the tick free
      * to keep writing articles after the article allowance was gone: the manual
      * routes carry metric-specific middleware and unattended generation, which
      * is where almost all the money goes, carried none.
      *
-     * `repurpose` counts against social posts because that is what it makes.
      * `research` counts against articles because that is the only thing it
      * exists to feed — a project with no articles left has nothing to research
      * for. `feedback` and `visibility` are measurement rather than production:
@@ -89,8 +87,6 @@ class EngineTickCommand extends Command
         'generation' => Metric::Articles,
         'research' => Metric::Articles,
         'planning' => Metric::ContentPlans,
-        'repurpose' => Metric::SocialPosts,
-        'content_studio' => Metric::SocialPosts,
     ];
 
     /**
@@ -100,13 +96,12 @@ class EngineTickCommand extends Command
      * Every entry here is something {@see due()} can return. Written as a list
      * rather than derived, because it is a *rule* — "the article contour waits
      * for the article contour" — and a derived set would silently grow the day
-     * somebody starts a social pipeline from here.
+     * somebody starts an unrelated pipeline from here.
      */
     private const array CONTOUR = [
         'research',
         'planning',
         'generation',
-        'repurpose',
         'feedback',
         'visibility',
     ];
@@ -145,9 +140,9 @@ class EngineTickCommand extends Command
     private function tick(Project $project, PipelineRunner $runner): void
     {
         // Nothing else while the last thing in *this* contour is still going.
-        // The six pipelines here feed each other, and starting planning while
+        // The five pipelines here feed each other, and starting planning while
         // research is still filling the pool plans a month from half of it.
-        // Listening does not feed them and does not stop them — see
+        // A pipeline outside the contour does not stop them — see
         // {@see isBusy()}.
         if ($this->isBusy($project)) {
             $this->line("  {$project->slug}: still working, nothing started");
@@ -258,7 +253,6 @@ class EngineTickCommand extends Command
         //    it. The cap goes on {@see leadLocales()} instead, where it can be
         //    counted in units rather than in rows.
         $toDraft = ContentItem::query()
-            ->roots()
             ->inState(ContentItemState::Idea)
             ->whereNotNull('content_plan_id')
             ->whereNotNull('scheduled_for')
@@ -285,27 +279,6 @@ class EngineTickCommand extends Command
             ];
         }
 
-        // 2. Social, for published articles that were promised derivatives and
-        //    have none. Published only: a social post links to the article, and
-        //    repurpose refuses a draft outright.
-        $toRepurpose = ContentItem::query()->when(! config('social.enabled'), fn ($query) => $query->whereRaw('1 = 0'))
-            ->roots()
-            ->inState(ContentItemState::Published)
-            ->whereNotNull('body_markdown')
-            ->whereDoesntHave('derivatives')
-            ->orderByDesc('updated_at')
-            ->limit(self::MAX_STARTS)
-            ->get()
-            ->filter(static fn (ContentItem $unit): bool => $unit->planned_derivatives !== []);
-
-        foreach ($toRepurpose as $unit) {
-            $work[] = [
-                'pipeline' => 'repurpose',
-                'why' => "cutting “{$unit->title}” down for social",
-                'unit' => $unit->getKey(),
-            ];
-        }
-
         if ($work !== []) {
             return $work;
         }
@@ -316,7 +289,6 @@ class EngineTickCommand extends Command
 
         // Nothing is due today, so the rest is about not running out.
         $spareIdeas = ContentItem::query()
-            ->roots()
             ->inState(ContentItemState::Idea)
             ->whereNull('content_plan_id')
             ->count();
@@ -333,7 +305,6 @@ class EngineTickCommand extends Command
         }
 
         $plannedAhead = ContentItem::query()
-            ->roots()
             ->whereNotNull('scheduled_for')
             ->where('scheduled_for', '>=', Carbon::today()->toDateString())
             ->count();
@@ -344,7 +315,6 @@ class EngineTickCommand extends Command
         $monthEndsSoon = Carbon::today()->diffInDays(Carbon::today()->endOfMonth()) <= self::PLAN_AHEAD_DAYS;
 
         $nextMonthPlanned = ContentItem::query()
-            ->roots()
             ->whereBetween('scheduled_for', [
                 $nextMonth->toDateString(),
                 $nextMonth->copy()->endOfMonth()->toDateString(),
@@ -376,7 +346,7 @@ class EngineTickCommand extends Command
     /** @return list<array{pipeline: string, why: string}> */
     private function dueMeasurements(Project $project): array
     {
-        $hasLive = ContentItem::query()->roots()->inState(ContentItemState::Published)->exists()
+        $hasLive = ContentItem::query()->inState(ContentItemState::Published)->exists()
             || SitePage::query()->exists();
 
         if ($hasLive && ! $this->ranWithin($project, 'feedback', 24 * 7)) {
@@ -452,15 +422,7 @@ class EngineTickCommand extends Command
             return 0;
         }
 
-        // Articles only, and `roots()` is what makes that true — a social draft
-        // has no parent since §3 and would otherwise be approved here by a
-        // project-wide flag that knows nothing about
-        // {@see \App\Enums\SocialBand::canEverAutopublish()}. The Conversation
-        // and Reaction bands are marked "никогда" in §5, and a post released by
-        // an article's rulebook is §10's "аккаунт под автоматикой" happening by
-        // omission. Social autopublish is decided by the governor in 12.5.
         $drafts = ContentItem::query()
-            ->roots()
             ->inState(ContentItemState::Draft)
             ->whereNotNull('body_markdown')
             ->whereHas('articleSchedule', fn ($query) => $query->where('mode', 'automatic')->whereIn('status', ['active', 'blocked']))
@@ -488,27 +450,16 @@ class EngineTickCommand extends Command
      * Whether this project's *article* contour is still working.
      *
      * Scoped to {@see CONTOUR} rather than to every pipeline, and that scope is
-     * the whole point. The reason to wait at all is that these six feed each
+     * the whole point. The reason to wait at all is that these five feed each
      * other — planning a month while research is still filling the pool plans
      * it from half a pool — and a pipeline that feeds none of them is not a
      * reason to wait for anything.
      *
-     * The rule is "each contour blocks only itself", not "ignore listening
-     * specifically". Both would fix the stall in front of us; only the first
-     * one stays fixed. §4.1 gives the listening contour its own hourly schedule
-     * entry and {@see SocialListenCommand::isListening()} already scopes its
-     * own guard to `social_listen` for the mirror-image reason, and §4.2 and
-     * §4.3 add two more contours behind it — engage, which is event-driven and
-     * measured in minutes, and publish. Naming one exception would have to be
-     * amended once per contour, and the amendment nobody makes is the one that
-     * halts research, planning, drafting and publishing for a whole project.
-     *
-     * What this cost before it was scoped: 12.3 put `social:listen` on the same
-     * cron minute as `engine:tick`, both in the background, so every hour the
-     * tick had a coin-flip chance of finding a listening run in flight and
-     * doing nothing at all. A listening run wedged at `Pending` — a worker
-     * down, a dispatch that failed — stopped the project permanently, and the
-     * only symptom was one line an hour saying everything was fine.
+     * The rule is "each contour blocks only itself", not a list of exceptions.
+     * A site audit, an AI sample or a page improvement runs on its own
+     * schedule, and naming each one as an exception would have to be amended
+     * once per contour — and the amendment nobody makes is the one that halts
+     * research, planning, drafting and publishing for a whole project.
      *
      * `Pending` counts as busy alongside `Running`: a run is `Pending` from the
      * moment the runner writes the row, and a tick that started a second copy
@@ -531,7 +482,6 @@ class EngineTickCommand extends Command
     {
         return PipelineRun::query()
             ->whereIn('pipeline', self::CONTOUR)
-            ->forActiveProduct()
             ->inFlight()
             ->exists();
     }

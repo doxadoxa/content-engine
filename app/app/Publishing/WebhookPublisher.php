@@ -43,7 +43,7 @@ use Throwable;
  */
 class WebhookPublisher implements ChannelPublisher
 {
-    /** §9's "механика", now shared with the Threads transport. */
+    /** §9's "механика", shared with every transport. */
     use RecordsDeliveryOutcome;
 
     public function __construct(
@@ -137,8 +137,6 @@ class WebhookPublisher implements ChannelPublisher
      */
     public function queue(ContentItem $unit, Channel $channel, ?WebhookEvent $event = null): WebhookDelivery
     {
-        abort_if(($unit->isSocial() || $channel->type->isSocial()) && ! config('social.enabled'), 409, 'Social publishing is retired.');
-
         $event ??= $this->eventFor($unit, $channel);
         $deliveryId = WebhookPayload::newDeliveryId();
         $payload = WebhookPayload::for($unit, $event, $deliveryId);
@@ -191,8 +189,6 @@ class WebhookPublisher implements ChannelPublisher
      */
     public function replay(WebhookDelivery $delivery): WebhookDelivery
     {
-        abort_if(RetiredSocialDelivery::applies($delivery), 409, 'Social publishing is retired.');
-
         if ($delivery->article_schedule_id !== null) {
             $lock = Cache::lock('webhook-delivery:'.$delivery->id, (int) config('publishing.timeout', 15) + 30);
             abort_unless($lock->get(), 409, 'This publication is still being delivered.');

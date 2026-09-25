@@ -8,17 +8,13 @@ use App\Audit\SiteAuditStarter;
 use App\Billing\Entitlements;
 use App\Billing\Metric;
 use App\Console\Commands\EngineTickCommand;
-use App\ContentStudio\ContentStudioAction;
-use App\ContentStudio\ContentStudioOperations;
 use App\Enums\ContentItemState;
 use App\Enums\OnboardingStatus;
 use App\Enums\PipelineRunStatus;
 use App\Models\ContentItem;
-use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Core\PipelineRunner;
-use App\Pipelines\Definitions\ContentStudioPipeline;
 use App\Pipelines\Events\PipelineRunFinished;
 use App\Support\Engine\ArticleWorkflow;
 use App\Support\Engine\MonthPlanner;
@@ -71,10 +67,9 @@ class ProjectLaunch
      * written. The operator would be looking at a spinner for a job whose
      * result appears on a different screen.
      *
-     * The same shape and the same reasoning as
-     * {@see EngineTickCommand::CONTOUR}: a list, because
-     * it is a rule about which work feeds which, and a derived set would grow
-     * silently the day another pipeline is started from here.
+     * The same shape and the same reasoning as {@see EngineTickCommand::CONTOUR}:
+     * a list, because it is a rule about which work feeds which, and a derived
+     * set would grow silently the day another pipeline is started from here.
      *
      * @var list<string>
      */
@@ -82,16 +77,11 @@ class ProjectLaunch
         'research',
         'planning',
         'generation',
-        // Spelled out rather than ContentStudioPipeline::key(), which a class
-        // constant cannot call. The keys are database values and the other
-        // three are literals here for the same reason.
-        'content_studio',
     ];
 
     public function __construct(
         private readonly PipelineRunner $runner,
         private readonly CurrentProject $current,
-        private readonly ContentStudioOperations $studio,
         private readonly SiteAuditStarter $audits,
         private readonly Entitlements $entitlements,
     ) {}
@@ -113,12 +103,9 @@ class ProjectLaunch
             $project->forceFill(['onboarding' => [...$project->onboarding, 'article_automation_started_at' => now()->toIso8601String()]])->save();
         }
         $research = app(MonthPlanner::class)->start($project);
-        if (config('social.enabled')) {
-            $this->startContentStudio($project);
-        }
 
         // The site the engine is about to write *for*, read once at the start.
-        // Beside research rather than after it, and a third independent contour
+        // Beside research rather than after it, and an independent contour
         // rather than a link in the chain: it needs nothing research produces,
         // nothing downstream needs its result, and a site whose sitemap is
         // unreachable must not stop a project from being planned. It is also
@@ -151,31 +138,6 @@ class ProjectLaunch
 
         if (! ArticleWorkflow::enabled($project)) {
             $this->settle($project);
-
-            return;
-        }
-
-        // The Studio proposal starts beside research because the wizard has
-        // already supplied enough project context. It is part of launch work,
-        // but not a dependency of the SEO research/planning/generation chain:
-        // one provider failure must not silently cancel the other product.
-        if ($run->pipeline === ContentStudioPipeline::key()) {
-            if (! config('social.enabled')) {
-                $this->settleIfFinished($project);
-
-                return;
-            }
-
-            if (
-                $run->status === PipelineRunStatus::Completed
-                && ($run->input['action'] ?? null) === ContentStudioAction::Proposal->value
-            ) {
-                $this->startStudioDrafts($project, (string) ($run->input['content_plan_id'] ?? ''));
-
-                return;
-            }
-
-            $this->settleIfFinished($project);
 
             return;
         }
@@ -243,7 +205,6 @@ class ProjectLaunch
 
         $live = PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
-            ->forActiveProduct()
             ->whereIn('pipeline', self::LAUNCH_PIPELINES)
             ->inFlight()
             ->exists();
@@ -268,49 +229,6 @@ class ProjectLaunch
         }
     }
 
-    private function startContentStudio(Project $project): void
-    {
-        $this->current->run($project, function () use ($project): void {
-            $plan = ContentPlan::query()->firstOrCreate([
-                'month' => now()->startOfMonth(),
-            ]);
-
-            if ($plan->assistant_version > 0) {
-                return;
-            }
-
-            $this->studio->start($project, $plan, ContentStudioAction::Proposal);
-        });
-    }
-
-    private function startStudioDrafts(Project $project, string $planId): void
-    {
-        $this->current->run($project, function () use ($project, $planId): void {
-            $plan = ContentPlan::query()->whereKey($planId)->first();
-
-            if ($plan === null) {
-                $this->settleIfFinished($project);
-
-                return;
-            }
-
-            $hasStarterDrafts = ContentItem::query()
-                ->where('content_plan_id', $plan->getKey())
-                ->whereNotNull('content_idea_id')
-                ->exists();
-
-            if ($hasStarterDrafts) {
-                $this->settleIfFinished($project);
-
-                return;
-            }
-
-            $this->studio->start($project, $plan, ContentStudioAction::Generate, [
-                'initial' => true,
-            ]);
-        });
-    }
-
     private function afterPlanning(Project $project, PipelineRun $run): void
     {
         if (! ArticleWorkflow::enabled($project)) {
@@ -327,7 +245,6 @@ class ProjectLaunch
         }
         $this->current->run($project, function () use ($project, $planId): void {
             $units = ContentItem::query()
-                ->roots()
                 ->inState(ContentItemState::Idea)
                 ->where('content_plan_id', $planId)
                 ->where('locale', $project->default_locale)
@@ -358,7 +275,6 @@ class ProjectLaunch
     {
         $stillRunning = PipelineRun::acrossProjects()
             ->where('project_id', $project->getKey())
-            ->forActiveProduct()
             ->whereIn('pipeline', self::LAUNCH_PIPELINES)
             ->whereIn('status', [PipelineRunStatus::Pending->value, PipelineRunStatus::Running->value])
             ->exists();

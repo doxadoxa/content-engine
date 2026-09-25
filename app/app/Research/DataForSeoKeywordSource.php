@@ -145,7 +145,7 @@ class DataForSeoKeywordSource implements KeywordSource
                 language: $tag ?? $this->languageFor($market, $language),
                 // Already in the response, unasked for and until now thrown
                 // away — which is exactly what §5 means by seasonality being a
-                // field and a method rather than an integration.
+                // field rather than an integration.
                 volumeByMonth: $this->monthlyCurve($info),
             );
         }

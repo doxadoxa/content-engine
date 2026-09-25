@@ -12,8 +12,6 @@ use App\Http\Controllers\ApprovalController;
 use App\Models\ArticleSchedule;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleDeliveryGuard;
-use App\Publishing\RetiredSocialDelivery;
-use App\Publishing\ThreadsPublisher;
 use App\Publishing\WebhookPublisher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -23,13 +21,13 @@ use Illuminate\Support\Facades\Log;
  *
  * §9 is explicit that a second channel changes the transport and not the
  * mechanics: "Таблица доставок, бэкофф и replay остаются общими: меняется
- * транспорт, а не механика." {@see WebhookPublisher} and
- * {@see ThreadsPublisher} had written that sentence out twice, and the two
- * copies had already drifted — one recorded the response code on a retry and
- * the other left a stale one on the row, one recorded the status it was given
- * and the other a literal 200. Neither divergence was a decision. They are the
- * ordinary fate of a hundred and forty duplicated lines, and the only fix that
- * holds is for there to be one copy.
+ * транспорт, а не механика." {@see WebhookPublisher} and the other transports
+ * had written that sentence out more than once, and the copies had already
+ * drifted — one recorded the response code on a retry and another left a stale
+ * one on the row, one recorded the status it was given and another a literal
+ * 200. Neither divergence was a decision. They are the ordinary fate of a
+ * hundred and forty duplicated lines, and the only fix that holds is for there
+ * to be one copy.
  *
  * What is deliberately *not* here is anything a transport knows: which failures
  * are retryable, what a status code means, when a unit counts as published. A
@@ -185,22 +183,16 @@ trait RecordsDeliveryOutcome
      */
     protected function refuseIfWithdrawn(WebhookDelivery $delivery): ?WebhookDelivery
     {
-        if (RetiredSocialDelivery::stop($delivery)) {
-            return $delivery;
-        }
-
         $unit = $delivery->contentItem;
 
         if ($unit === null) {
             return null;
         }
 
-        if (! $unit->isSocial()) {
-            $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
-                ?? app(ArticleBusinessFacts::class)->refusal($unit);
-            if ($refusal !== null) {
-                return $this->deadLetter($delivery, $refusal);
-            }
+        $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
+            ?? app(ArticleBusinessFacts::class)->refusal($unit);
+        if ($refusal !== null) {
+            return $this->deadLetter($delivery, $refusal);
         }
 
         // `refreshing` is on the list deliberately. It is live text being

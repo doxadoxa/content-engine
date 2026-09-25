@@ -169,8 +169,8 @@ class ReadSitePalette implements ShouldQueue
         }
 
         // The rest of what the page declares, kept beside the three the
-        // renderers use. A brand has more colours than a panel has slots, and
-        // the operator picking between them is better served seeing the set than
+        // brief has fields for. A brand has more colours than that, and the
+        // operator picking between them is better served seeing the set than
         // being handed our arithmetic on it — which is the whole difference
         // between this and the census it replaces.
         //

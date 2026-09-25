@@ -36,7 +36,6 @@ use Illuminate\Support\Facades\DB;
  * @property string $brand_accent
  * @property list<string> $brand_palette
  * @property string $brand_typeface
- * @property string $carousel_cover
  * @property string $overlay_position
  * @property string $overlay_case
  * @property list<string> $forbidden_topics
@@ -63,13 +62,12 @@ class BrandBrief extends Model
     ];
 
     /**
-     * The look as values a renderer draws with, beside the prose above.
+     * The look as exact values, beside the prose above.
      *
      * Their own group because they are neither free text nor a list: each has a
      * constrained set of legal values, and {@see VisualStyle} is what enforces
      * them at the point of use. They are still CONTENT_FIELDS, so a change to
-     * the brand colour makes a new version like any other edit — which is what
-     * lets a post published last month say what colour it was made in.
+     * the brand colour makes a new version like any other edit.
      *
      * @var list<string>
      */
@@ -77,14 +75,10 @@ class BrandBrief extends Model
         'brand_colour',
         'brand_ink',
         'brand_accent',
-        // Ordered by weight on the page. Versioned with the rest, so a post
-        // published last month can still say which palette drew it.
+        // Ordered by weight on the page, and versioned with the rest.
         'brand_palette',
-        // A key of VisualStyle::TYPEFACES, so it names a face the renderer's
-        // image actually carries rather than one Chromium would fall back from.
+        // A key of VisualStyle::TYPEFACES.
         'brand_typeface',
-        // `photo` or `type`. A consistency decision, made once per brand.
-        'carousel_cover',
         'overlay_position',
         'overlay_case',
     ];
@@ -125,7 +119,6 @@ class BrandBrief extends Model
         'brand_accent' => VisualStyle::DEFAULT_ACCENT,
         'brand_palette' => '[]',
         'brand_typeface' => VisualStyle::DEFAULT_TYPEFACE,
-        'carousel_cover' => VisualStyle::DEFAULT_COVER,
         'overlay_position' => VisualStyle::DEFAULT_POSITION,
         'overlay_case' => VisualStyle::DEFAULT_CASE,
         'forbidden_topics' => '[]',
@@ -294,10 +287,10 @@ class BrandBrief extends Model
             $clean[$field] = match (true) {
                 $value !== null => $value,
                 in_array($field, self::LIST_FIELDS, true) => [],
-                // Clearing a colour or a corner means "back to the house
-                // value", not "no value". A renderer with an empty string for
-                // a fill draws nothing, and the operator who blanked the field
-                // meant to undo their choice rather than to break the panel.
+                // Clearing a colour or a position means "back to the house
+                // value", not "no value": the operator who blanked the field
+                // meant to undo their choice, and an empty fill is not a
+                // colour.
                 in_array($field, self::VISUAL_FIELDS, true) => self::visualDefault($field),
                 default => '',
             };
@@ -326,7 +319,6 @@ class BrandBrief extends Model
             // to read it as "carry on exactly as before".
             'brand_palette' => [],
             'brand_typeface' => VisualStyle::DEFAULT_TYPEFACE,
-            'carousel_cover' => VisualStyle::DEFAULT_COVER,
             'overlay_position' => VisualStyle::DEFAULT_POSITION,
             default => VisualStyle::DEFAULT_CASE,
         };

@@ -9,10 +9,7 @@ use App\Models\BrandBrief;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
-use App\Models\Interaction;
 use App\Models\Project;
-use App\Models\ProjectState;
-use App\Models\Signal;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -100,55 +97,22 @@ final class DomainConstraintsTest extends TestCase
     }
 
     #[Test]
-    public function a_parent_with_derivatives_cannot_be_deleted(): void
-    {
-        $parent = ContentItem::factory()->create();
-        ContentItem::factory()->derivedFrom($parent)->create();
-
-        $this->expectException(QueryException::class);
-
-        // Deleting the article out from under its social posts would leave
-        // rows claiming to be derived from something that no longer exists.
-        $parent->delete();
-    }
-
-    #[Test]
-    public function a_parent_can_be_deleted_once_its_derivatives_are_gone(): void
-    {
-        $parent = ContentItem::factory()->create();
-        $derivative = ContentItem::factory()->derivedFrom($parent)->create();
-
-        $derivative->delete();
-        $parent->delete();
-
-        $this->assertSame(0, ContentItem::query()->count());
-    }
-
-    #[Test]
     public function deleting_a_project_takes_its_whole_tree_with_it(): void
     {
         $plan = ContentPlan::factory()->create();
         $brief = BrandBrief::revise($this->project, ['tone' => 'Warm.']);
 
-        $parent = ContentItem::factory()->create([
+        $unit = ContentItem::factory()->locale('pt-PT')->create([
             'content_plan_id' => $plan->getKey(),
             'brand_brief_id' => $brief->getKey(),
         ]);
-        ContentItem::factory()->count(2)->derivedFrom($parent)->create();
-        Asset::factory()->hero()->for($parent, 'contentItem')->create();
+        $unit->addLocale('en', 'how-to-clean-windows', 'How to clean windows');
+        Asset::factory()->hero()->for($unit, 'contentItem')->create();
         Channel::factory()->create();
 
-        // The social tables of §3 are part of the tree too, and their cascade
-        // is worth asserting rather than assuming: a signal is referenced by
-        // both a unit and an interaction, so "delete the project" only works if
-        // every one of those references gives way in the same statement.
-        $signal = Signal::factory()->create();
-        Interaction::factory()->create(['signal_id' => $signal->getKey()]);
-        ProjectState::factory()->count(2)->create();
-
-        // The parent/child and brief foreign keys are NO ACTION rather than
-        // RESTRICT precisely so this one statement still works: everything
-        // referencing and referenced goes in the same breath.
+        // The brief foreign key is NO ACTION rather than RESTRICT precisely so
+        // this one statement still works: everything referencing and
+        // referenced goes in the same breath.
         $this->project->delete();
 
         $this->assertSame(0, ContentItem::acrossProjects()->count());
@@ -156,9 +120,6 @@ final class DomainConstraintsTest extends TestCase
         $this->assertSame(0, Channel::acrossProjects()->count());
         $this->assertSame(0, ContentPlan::acrossProjects()->count());
         $this->assertSame(0, BrandBrief::acrossProjects()->count());
-        $this->assertSame(0, Signal::acrossProjects()->count());
-        $this->assertSame(0, Interaction::acrossProjects()->count());
-        $this->assertSame(0, ProjectState::acrossProjects()->count());
     }
 
     #[Test]
@@ -210,13 +171,12 @@ final class DomainConstraintsTest extends TestCase
     #[Test]
     public function every_tenant_table_refuses_a_null_project(): void
     {
-        // The three social tables are on the list for the reason the list
-        // exists: the tenant scope is a global scope in PHP, so a row that can
-        // hold a null project is a row a raw insert or a job with no tenant can
-        // put outside every project and inside none.
+        // The tenant scope is a global scope in PHP, so a row that can hold a
+        // null project is a row a raw insert or a job with no tenant can put
+        // outside every project and inside none.
         $tables = [
             'brand_briefs', 'channels', 'content_plans', 'content_items', 'assets',
-            'pipeline_runs', 'webhook_deliveries', 'signals', 'interactions', 'project_states',
+            'pipeline_runs', 'webhook_deliveries',
         ];
 
         foreach ($tables as $table) {

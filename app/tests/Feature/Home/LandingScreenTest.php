@@ -14,10 +14,9 @@ use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\PipelineStep;
 use App\Models\Project;
-use App\Models\ProjectState;
 use App\Models\User;
+use App\Onboarding\WebsiteChecklist;
 use App\Support\Tenancy\CurrentProject;
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
@@ -39,9 +38,6 @@ use Tests\TestCase;
 final class LandingScreenTest extends TestCase
 {
     use RefreshDatabase;
-
-    /** Mid-morning, mid-week: Wednesday 12 August 2026, 10:00 UTC. */
-    private const string NOW = '2026-08-12 10:00:00';
 
     #[Test]
     public function a_launching_project_shows_the_work_rather_than_a_grid_of_zeroes(): void
@@ -188,28 +184,20 @@ final class LandingScreenTest extends TestCase
     }
 
     #[Test]
-    public function the_two_halves_of_the_engine_are_both_reported(): void
+    public function the_article_half_of_the_engine_is_reported(): void
     {
         [$operator, $project] = $this->operatorIn(OnboardingStatus::Active);
 
         app(CurrentProject::class)->run($project, function (): void {
-            // Articles: planned and approved, none of it out. The shape this
-            // band exists for — a half that has quietly stopped shipping.
+            // Planned and approved, none of it out. The shape this band exists
+            // for — a pipeline that has quietly stopped shipping.
             ContentItem::factory()->count(3)->create([
                 'type' => ContentItemType::Explainer,
-                'parent_id' => null,
                 'state' => ContentItemState::Idea,
             ]);
             ContentItem::factory()->count(2)->create([
                 'type' => ContentItemType::Explainer,
-                'parent_id' => null,
                 'state' => ContentItemState::Approved,
-            ]);
-
-            ContentItem::factory()->create([
-                'type' => ContentItemType::SocialPost,
-                'channel_type' => 'threads',
-                'state' => ContentItemState::Draft,
             ]);
         });
 
@@ -219,121 +207,60 @@ final class LandingScreenTest extends TestCase
             ->assertOk()
             ->assertJsonPath('props.halves.articles.planned', 3)
             ->assertJsonPath('props.halves.articles.approved', 2)
-            ->assertJsonPath('props.halves.articles.published', 0)
-            ->assertJsonPath('props.halves.social.drafted', 1);
+            ->assertJsonPath('props.halves.articles.published', 0);
     }
 
     #[Test]
-    public function the_morning_is_counted_once_across_both_halves(): void
+    public function the_morning_is_counted_once(): void
     {
         [$operator, $project] = $this->operatorIn(OnboardingStatus::Active);
 
         app(CurrentProject::class)->run($project, function (): void {
             ContentItem::factory()->count(2)->create([
                 'type' => ContentItemType::Explainer,
-                'parent_id' => null,
                 'state' => ContentItemState::Approved,
             ]);
             ContentItem::factory()->create([
                 'type' => ContentItemType::Explainer,
-                'parent_id' => null,
-                'state' => ContentItemState::Draft,
-            ]);
-            ContentItem::factory()->count(4)->create([
-                'type' => ContentItemType::SocialPost,
-                'channel_type' => 'threads',
                 'state' => ContentItemState::Draft,
             ]);
         });
 
-        // The count that used to be three counts on three screens, two of which
-        // disagreed because one was scoped to `social()` and the other to
-        // `roots()` with nothing on either saying so.
         $this->actingAs($operator)
             ->withHeaders($this->partial('needs'))
             ->get('/home')
             ->assertOk()
             ->assertJsonPath('props.needs.article_approvals', 2)
             ->assertJsonPath('props.needs.article_drafts', 1)
-            ->assertJsonPath('props.needs.social_drafts', 4)
-            ->assertJsonPath('props.needs.total', 7);
+            ->assertJsonPath('props.needs.total', 3);
     }
 
     #[Test]
-    public function a_figure_never_measured_reads_as_unmeasured_and_never_as_zero(): void
+    public function a_visibility_score_never_measured_reads_as_unmeasured_and_never_as_zero(): void
     {
-        $this->travelTo(CarbonImmutable::parse(self::NOW));
+        [$operator] = $this->operatorIn(OnboardingStatus::Active);
 
-        [$operator, $project] = $this->operatorIn(OnboardingStatus::Active);
-
-        // Fourteen days of traffic and not one day of Search Console. This is
-        // the ordinary shape of a project whose Google grant covers GA4 only,
-        // and a zero here would say the brand lost every impression it had.
-        app(CurrentProject::class)->run($project, function (): void {
-            for ($back = 1; $back <= 14; $back++) {
-                ProjectState::factory()->create([
-                    'captured_on' => CarbonImmutable::parse(self::NOW)->subDays($back)->toDateString(),
-                    'brand_impressions' => null,
-                    'brand_clicks' => null,
-                    'brand_queries' => null,
-                    'direct_sessions' => 120,
-                    'post_impressions' => null,
-                    'post_replies' => null,
-                ]);
-            }
-        });
-
+        // Never asked is not the same as asked and absent from every answer,
+        // and both would render as 0% if the null were coerced.
         $this->actingAs($operator)
             ->withHeaders($this->partial('figures'))
             ->get('/home')
             ->assertOk()
-            ->assertJsonPath('props.figures.audience.key', 'brand_demand')
-            ->assertJsonPath('props.figures.audience.measured', false)
-            ->assertJsonPath('props.figures.audience.current', null)
-            // Measured, and measured as a real number rather than as a total
-            // that grows with the number of days somebody happened to capture.
-            ->assertJsonPath('props.figures.visitors.key', 'direct_traffic')
-            ->assertJsonPath('props.figures.visitors.measured', true)
-            ->assertJsonPath('props.figures.visitors.current', 120)
-            // Never asked is not the same as asked and absent from every
-            // answer, and both would render as 0% if the null were coerced.
-            ->assertJsonPath('props.figures.visibility.score', null);
+            ->assertJsonPath('props.figures.visibility.score', null)
+            ->assertJsonPath('props.figures.visibility.last_asked_on', null);
     }
 
     #[Test]
-    public function a_measured_figure_is_a_direction_and_not_a_reading(): void
+    public function an_empty_account_is_not_told_it_has_reviewed_content(): void
     {
-        $this->travelTo(CarbonImmutable::parse(self::NOW));
+        [, $project] = $this->operatorIn(OnboardingStatus::Active);
 
-        [$operator, $project] = $this->operatorIn(OnboardingStatus::Active);
-        $today = CarbonImmutable::parse(self::NOW);
+        $steps = app(CurrentProject::class)->run($project, fn (): array => WebsiteChecklist::for($project));
 
-        app(CurrentProject::class)->run($project, function () use ($today): void {
-            // A fortnight at 100 a day, then a fortnight at 200.
-            for ($back = 15; $back <= 28; $back++) {
-                ProjectState::factory()->create([
-                    'captured_on' => $today->subDays($back)->toDateString(),
-                    'brand_impressions' => 100,
-                ]);
-            }
-
-            for ($back = 1; $back <= 14; $back++) {
-                ProjectState::factory()->create([
-                    'captured_on' => $today->subDays($back)->toDateString(),
-                    'brand_impressions' => 200,
-                ]);
-            }
-        });
-
-        $this->actingAs($operator)
-            ->withHeaders($this->partial('figures'))
-            ->get('/home')
-            ->assertOk()
-            ->assertJsonPath('props.figures.audience.current', 200)
-            ->assertJsonPath('props.figures.audience.previous', 100)
-            ->assertJsonPath('props.figures.audience.direction', 'up')
-            // Doubled, and reported as a fraction rather than as the reading.
-            ->assertJsonPath('props.figures.audience.change', 1);
+        $review = collect($steps)->firstWhere('key', 'approve');
+        $this->assertNotNull($review);
+        $this->assertFalse($review['done']);
+        $this->assertTrue($review['locked']);
     }
 
     #[Test]

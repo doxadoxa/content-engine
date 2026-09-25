@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
-use App\Enums\ChannelType;
 use App\Enums\OnboardingStatus;
-use App\Http\Requests\Concerns\ValidatesDutyHours;
 use App\Models\Project;
 use App\Rules\PublicHttpUrl;
 use Illuminate\Foundation\Http\FormRequest;
@@ -14,8 +12,6 @@ use Illuminate\Validation\Rule;
 
 final class OnboardingStepRequest extends FormRequest
 {
-    use ValidatesDutyHours;
-
     private const array STEPS = [
         'offer',
         'market',
@@ -54,7 +50,7 @@ final class OnboardingStepRequest extends FormRequest
     {
         return match ($step) {
             'offer' => ['key'],
-            'market' => ['market', 'language', 'extra_languages', 'timezone', 'duty_hours'],
+            'market' => ['market', 'language', 'extra_languages', 'timezone'],
             'business' => ['name', 'description', 'audiences'],
             'voice' => [
                 'tone', 'visual_language', 'forbidden', 'author_name',
@@ -65,7 +61,7 @@ final class OnboardingStepRequest extends FormRequest
             // asked in the voice step until the publishing step gave it a
             // better home, and a draft half-answered under the old shape must
             // still be resumable.
-            'channels' => ['destination', 'webhook_endpoint', 'webhook_secret', 'sitemap_url', 'social'],
+            'channels' => ['destination', 'webhook_endpoint', 'webhook_secret', 'sitemap_url'],
             'settings' => ['weekly_target', 'target_words', 'autopublish'],
             default => [],
         };
@@ -82,7 +78,6 @@ final class OnboardingStepRequest extends FormRequest
                 'answers.extra_languages' => ['sometimes', 'array', 'max:10'],
                 'answers.extra_languages.*' => ['string', 'max:12', 'distinct', 'regex:/^[a-z]{2,3}(?:-[A-Z]{2})?$/'],
                 'answers.timezone' => ['sometimes', 'string', 'timezone'],
-                ...self::dutyHoursRules('answers.duty_hours'),
             ],
             'business' => [
                 'answers.name' => ['required', 'string', 'max:255'],
@@ -110,14 +105,6 @@ final class OnboardingStepRequest extends FormRequest
                 'answers.sitemap_url' => ['sometimes', 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
                 'answers.webhook_endpoint' => ['sometimes', 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
                 'answers.webhook_secret' => ['sometimes', 'nullable', 'string', 'max:500'],
-                'answers.social' => [Rule::prohibitedIf(! config('social.enabled')), 'sometimes', 'array', 'max:10'],
-                'answers.social.*' => [
-                    'string', 'distinct',
-                    Rule::in(array_map(
-                        static fn (ChannelType $type): string => $type->value,
-                        array_filter(ChannelType::cases(), static fn (ChannelType $type): bool => $type->isSocial()),
-                    )),
-                ],
             ],
             'settings' => [
                 'answers.weekly_target' => ['sometimes', 'integer', 'min:1', 'max:7'],

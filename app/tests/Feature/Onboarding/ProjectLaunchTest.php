@@ -31,7 +31,7 @@ final class ProjectLaunchTest extends TestCase
     use RefreshDatabase;
 
     #[Test]
-    public function research_and_the_studio_proposal_start_when_onboarding_finishes(): void
+    public function research_starts_when_onboarding_finishes(): void
     {
         Queue::fake();
 
@@ -42,45 +42,6 @@ final class ProjectLaunchTest extends TestCase
         $this->assertSame('research', $run->pipeline);
         $this->assertSame(OnboardingStatus::Launching, $project->refresh()->onboarding_status);
         $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'research')->count());
-        $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'content_studio')->count());
-
-        app(CurrentProject::class)->run($project, function (): void {
-            $plan = ContentPlan::query()->firstOrFail();
-            $run = PipelineRun::query()->where('pipeline', 'content_studio')->firstOrFail();
-
-            $this->assertSame(now()->startOfMonth()->toDateString(), $plan->month->toDateString());
-            $this->assertSame($plan->getKey(), $run->input['content_plan_id']);
-            $this->assertSame('proposal', $run->input['action']);
-        });
-    }
-
-    #[Test]
-    public function a_finished_studio_proposal_queues_three_starter_channel_drafts(): void
-    {
-        Queue::fake();
-
-        $project = Project::factory()->onboarding()->create();
-        $launch = app(ProjectLaunch::class);
-        $launch->begin($project);
-
-        $proposal = PipelineRun::acrossProjects()
-            ->where('pipeline', 'content_studio')
-            ->where('input->action', 'proposal')
-            ->firstOrFail();
-        $proposal->forceFill([
-            'status' => PipelineRunStatus::Completed,
-            'finished_at' => now(),
-        ])->save();
-
-        $launch->advance($proposal);
-
-        $starter = PipelineRun::acrossProjects()
-            ->where('pipeline', 'content_studio')
-            ->where('input->action', 'generate_week')
-            ->firstOrFail();
-
-        $this->assertTrue($starter->input['initial']);
-        $this->assertSame($proposal->input['content_plan_id'], $starter->input['content_plan_id']);
     }
 
     #[Test]
@@ -104,6 +65,28 @@ final class ProjectLaunchTest extends TestCase
             PipelineRun::acrossProjects()->where('pipeline', 'planning')->count(),
             'A finished research run must start exactly one planning run.',
         );
+    }
+
+    #[Test]
+    public function research_that_found_nothing_settles_the_launch_without_writing_anything(): void
+    {
+        Queue::fake();
+
+        $project = Project::factory()->onboarding()->create();
+        $run = app(ProjectLaunch::class)->begin($project);
+
+        $this->assertNotNull($run);
+        $this->assertSame('research', $run->pipeline);
+
+        // Finishing research is not permission to plan or draft on its own: an
+        // empty idea pool leaves nothing to plan, and the launch settles
+        // rather than waiting on work that will never start.
+        $run->forceFill(['status' => PipelineRunStatus::Completed, 'finished_at' => now()])->save();
+        PipelineRunFinished::dispatch($run);
+
+        $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
+        $this->assertFalse(PipelineRun::acrossProjects()->whereIn('pipeline', ['planning', 'generation'])->exists());
+        $this->assertSame(0, ContentItem::acrossProjects()->count());
     }
 
     #[Test]
@@ -138,9 +121,7 @@ final class ProjectLaunchTest extends TestCase
         $plannedIds = [];
         $unplannedId = '';
         app(CurrentProject::class)->run($project, function () use ($project, &$planId, &$plannedIds, &$unplannedId): void {
-            // `begin()` also starts the optional Studio proposal, which owns
-            // this calendar's plan. Reuse that plan so the test mirrors the
-            // single monthly plan the launch flow keeps in production.
+            // The single monthly plan the launch flow keeps in production.
             $plan = ContentPlan::query()->firstOrCreate([
                 'month' => now()->startOfMonth(),
             ]);
@@ -223,31 +204,6 @@ final class ProjectLaunchTest extends TestCase
     }
 
     #[Test]
-    public function a_failed_studio_proposal_does_not_cancel_the_research_chain(): void
-    {
-        Queue::fake();
-
-        $project = Project::factory()->onboarding()->create();
-        $launch = app(ProjectLaunch::class);
-        $launch->begin($project);
-
-        $studio = PipelineRun::acrossProjects()
-            ->where('pipeline', 'content_studio')
-            ->firstOrFail();
-        $studio->forceFill(['status' => PipelineRunStatus::Failed])->save();
-
-        $launch->advance($studio);
-
-        $this->assertSame(OnboardingStatus::Launching, $project->refresh()->onboarding_status);
-        $this->assertTrue(
-            PipelineRun::acrossProjects()->where('pipeline', 'research')->exists(),
-        );
-        $this->assertFalse(
-            PipelineRun::acrossProjects()->where('pipeline', 'planning')->exists(),
-        );
-    }
-
-    #[Test]
     public function a_launch_whose_chain_died_is_settled_when_somebody_looks(): void
     {
         Queue::fake();
@@ -299,9 +255,9 @@ final class ProjectLaunchTest extends TestCase
         app(ProjectLaunch::class)->begin($project);
 
         // The wizard has just handed us a website, which is the only moment the
-        // audit knows one exists. A third independent contour beside research
-        // and the Studio: none of the three needs the others, and one provider
-        // failing must not silently cancel the other two.
+        // audit knows one exists. An independent contour beside research:
+        // neither needs the other, and one provider failing must not silently
+        // cancel the other.
         $this->assertSame(
             1,
             PipelineRun::acrossProjects()->where('pipeline', 'site_audit')->count(),

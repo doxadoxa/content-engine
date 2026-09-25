@@ -187,17 +187,4 @@ return [
     'minimum_volume' => (int) env('RESEARCH_MINIMUM_VOLUME', 50),
     'maximum_difficulty' => (int) env('RESEARCH_MAXIMUM_DIFFICULTY', 70),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Planning
-    |--------------------------------------------------------------------------
-    |
-    | Which channels a planned unit is expected to be repurposed to. Recorded on
-    | the unit in phase 4 so the month's cost is estimable; the derivatives
-    | themselves are built in phase 8.
-    |
-    */
-
-    'default_derivative_channels' => ['linkedin', 'x'],
-
 ];

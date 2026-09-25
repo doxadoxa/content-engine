@@ -4,7 +4,7 @@ name: Build & Push Images
 #
 #   ghcr.io/<owner>/<repo>            the multi-mode app image (app/horizon/
 #                                     queue/scheduler, chosen by CONTAINER_MODE)
-#   ghcr.io/<owner>/<repo>/renderer   the Remotion renderer (Node + Chromium)
+#   ghcr.io/<owner>/<repo>/renderer   the screenshot renderer (Node + Chromium)
 #
 # PRs do NOT build images — tests.yml validates them; the images are built only
 # once a change lands on main, to save CI compute. Deploy by pulling the
@@ -188,9 +188,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          # Context is `app/`, not `app/docker/renderer/`: the Dockerfile copies
-          # `resources/fonts` from the application so the panels are drawn with
-          # the same WOFF2 files the site already ships.
+          # Context is `app/`, not `app/docker/renderer/`: the Dockerfile's
+          # COPY paths start at the application root.
           context: ./app
           file: ./app/docker/renderer/Dockerfile
           platforms: linux/amd64

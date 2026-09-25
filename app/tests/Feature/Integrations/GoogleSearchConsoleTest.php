@@ -233,51 +233,6 @@ final class GoogleSearchConsoleTest extends TestCase
         Http::assertSentCount(2);
     }
 
-    #[Test]
-    public function brand_demand_is_matched_on_the_name_and_asked_by_query(): void
-    {
-        $project = $this->connected();
-
-        Http::fake([
-            'www.googleapis.com/*' => Http::response([
-                'rows' => [
-                    ['keys' => ['example brand'], 'impressions' => 100, 'clicks' => 30],
-                    ['keys' => ['examplebrand lisbon'], 'impressions' => 40, 'clicks' => 9],
-                    ['keys' => ['how to clean a kettle'], 'impressions' => 5000, 'clicks' => 200],
-                ],
-            ]),
-        ]);
-
-        $project->forceFill(['name' => 'Example Brand'])->save();
-
-        $demand = $this->console()->brandDemand($project, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-01'));
-
-        $this->assertNotNull($demand);
-        $this->assertSame(140, $demand->impressions);
-        $this->assertSame(39, $demand->clicks);
-        $this->assertSame(['example brand' => 100, 'examplebrand lisbon' => 40], $demand->queries);
-
-        // The slice is by query, not by page: nobody types a URL, and the
-        // query dimension is the only one that can say who was looking for us.
-        Http::assertSent(static fn (ClientRequest $request): bool => $request['dimensions'] === ['query']);
-    }
-
-    #[Test]
-    public function a_refused_brand_read_is_null_rather_than_a_brand_nobody_searched_for(): void
-    {
-        $project = $this->connected();
-
-        Http::fake(['www.googleapis.com/*' => Http::response(['error' => ['message' => 'nope']], 403)]);
-
-        // Zero brand demand is a real and terrible reading. A refusal must not
-        // be able to produce it.
-        $this->assertNull(
-            $this->console()->brandDemand($project, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-01'))
-        );
-
-        $this->assertNull($this->integrationFor($project)?->last_synced_at);
-    }
-
     private function console(): GoogleSearchConsole
     {
         return app(GoogleSearchConsole::class);

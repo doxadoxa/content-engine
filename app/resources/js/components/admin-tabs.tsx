@@ -12,10 +12,10 @@ export type AdminSection = 'overview' | 'projects' | 'users' | 'subscriptions';
  * the panel was a cul-de-sac and its other three screens could be reached only
  * by typing the address. That is the bug this fixes; it is not a redesign.
  *
- * Tabs rather than entries in the sidebar column, following {@see SocialTabs}.
- * The sidebar is the operator's, and administration is deliberately not on it:
- * an ordinary customer gains nothing by learning that `/admin` is a real
- * address on this deployment.
+ * Tabs rather than entries in the sidebar column. The sidebar is the
+ * operator's, and administration is deliberately not on it: an ordinary
+ * customer gains nothing by learning that `/admin` is a real address on this
+ * deployment.
  *
  * Ordered by what somebody arriving here is usually answering. The overview is
  * where the menu lands. Projects is where every action lives — a plan, a trial,

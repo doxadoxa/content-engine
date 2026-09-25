@@ -95,7 +95,6 @@ const TOOL_LABELS: Record<string, string> = {
     read_visibility: 'Checked how you appear in AI answers',
     read_content_state: 'Looked at what you have planned and published',
     read_brand_brief: 'Read the brand brief',
-    write_post: 'Started a post',
     write_article: 'Started an article',
     plan_month: 'Started planning the month',
 };

@@ -40,7 +40,6 @@ use App\Onboarding\FakeSiteReader;
 use App\Onboarding\HttpSiteReader;
 use App\Pipelines\Events\PipelineRunFinished;
 use App\Publishing\ChannelPublisherRegistry;
-use App\Publishing\ThreadsPublisher;
 use App\Publishing\WebhookPublisher;
 use App\Publishing\WordPressPublisher;
 use App\Research\AhrefsKeywordSource;
@@ -156,37 +155,18 @@ class AppServiceProvider extends ServiceProvider
             ? new FakePageSpeed
             : $this->app->make(GooglePageSpeedInsights::class));
 
-        // Which transport reaches which channel (§9). Two members, and the
-        // second one arriving as a line here rather than as a search for every
+        // Which transport reaches which channel (§9). Two members, and a
+        // third arriving as a line here rather than as a search for every
         // place that assumed webhook is the whole point of the registry.
         //
-        // The Threads line is conditional on `social.enabled`, and leaving it
-        // out is the correct shape rather than a convenient one. A registry
-        // entry is a claim that this installation can reach that type; with no
-        // Meta app it cannot, and registering the publisher anyway would make
-        // the claim by construction and disprove it one delivery at a time.
-        //
-        // An existing Threads channel survives the switch being turned off, and
-        // {@see PublishToChannels} already says what happens to it: `enabled()`
-        // selects channels by `publishableTypes()`, so the channel is "a
-        // destination that was never selected" rather than a delivery that
-        // fails. That is a skip, but not a silent one — `manualTargets()` reads
-        // through the same filter, so the unit card counts zero channels and
-        // the publish button offers what it will actually do. The dishonest
-        // version of this is a registry that accepts the channel and a
-        // transport that throws on the way out, which is the same outcome
-        // discovered later and attributed to Meta.
-        $this->app->singleton(ChannelPublisherRegistry::class, function (): ChannelPublisherRegistry {
-            $registry = (new ChannelPublisherRegistry($this->app))
-                ->register(ChannelType::Webhook, WebhookPublisher::class)
-                ->register(ChannelType::WordPress, WordPressPublisher::class);
-
-            if (config('social.enabled')) {
-                $registry->register(ChannelType::Threads, ThreadsPublisher::class);
-            }
-
-            return $registry;
-        });
+        // A type with no entry — the pull API — is not a delivery that fails:
+        // {@see \App\Publishing\PublishToChannels} selects channels by
+        // `publishableTypes()`, so it is a destination that was never
+        // selected, and `manualTargets()` reads through the same filter so the
+        // unit card counts what the publish button will actually do.
+        $this->app->singleton(ChannelPublisherRegistry::class, fn (): ChannelPublisherRegistry => (new ChannelPublisherRegistry($this->app))
+            ->register(ChannelType::Webhook, WebhookPublisher::class)
+            ->register(ChannelType::WordPress, WordPressPublisher::class));
 
         // Same arrangement for keyword data (§4.1): one door, a fake behind it
         // in tests, and no second path out to a vendor.

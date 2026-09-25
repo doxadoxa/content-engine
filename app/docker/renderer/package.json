@@ -6,7 +6,6 @@
     "start": "node src/server.mjs"
   },
   "dependencies": {
-    "@remotion/bundler": "4.0.373",
     "@remotion/renderer": "4.0.373",
     "react": "19.1.0",
     "react-dom": "19.1.0",

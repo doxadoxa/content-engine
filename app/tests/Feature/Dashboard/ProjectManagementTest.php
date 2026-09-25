@@ -9,7 +9,6 @@ use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Support\Tenancy\ProjectManager;
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\Test;
@@ -82,129 +81,24 @@ final class ProjectManagementTest extends TestCase
     }
 
     #[Test]
-    public function duty_hours_are_stored_in_the_canonical_shape(): void
-    {
-        [$operator, $project] = $this->operatorWithOwnProject();
-
-        $this->actingAs($operator)->patch("/projects/{$project->getKey()}", [
-            'name' => $project->name,
-            'slug' => $project->slug,
-            'timezone' => 'Europe/Lisbon',
-            'default_locale' => 'en',
-            'status' => 'active',
-            'duty_hours' => [
-                'sat' => [['10:00', '12:00']],
-                // Unpadded, out of order, touching, and one range that is not
-                // one. What is written back is the reading the engine uses, so
-                // an operator can see what their answer became.
-                'mon' => [['12:00', '18:00'], ['9:00', '12:00'], ['18:00', '09:00']],
-            ],
-        ])->assertRedirect('/projects');
-
-        $this->assertSame(
-            ['mon' => [['09:00', '18:00']], 'sat' => [['10:00', '12:00']]],
-            $project->refresh()->dutyHours()->toArray(),
-        );
-    }
-
-    #[Test]
-    public function a_duty_hours_payload_that_is_not_day_keyed_ranges_is_refused(): void
-    {
-        [$operator, $project] = $this->operatorWithOwnProject();
-
-        $base = [
-            'name' => $project->name,
-            'slug' => $project->slug,
-            'timezone' => 'Europe/Lisbon',
-            'default_locale' => 'en',
-            'status' => 'active',
-        ];
-
-        // A day key nobody can act on. The value object would drop it in
-        // silence, which is the one outcome an operator cannot debug.
-        $this->actingAs($operator)
-            ->patch("/projects/{$project->getKey()}", [
-                ...$base,
-                'duty_hours' => ['funday' => [['09:00', '18:00']]],
-            ])
-            ->assertSessionHasErrors('duty_hours');
-
-        $this->actingAs($operator)
-            ->patch("/projects/{$project->getKey()}", [
-                ...$base,
-                'duty_hours' => ['mon' => 'all day'],
-            ])
-            ->assertSessionHasErrors('duty_hours.mon');
-
-        $this->assertNull($project->refresh()->duty_hours);
-    }
-
-    #[Test]
-    public function a_project_nobody_answered_the_question_for_is_never_on_duty(): void
-    {
-        $project = Project::factory()->create();
-
-        $this->assertNull($project->refresh()->duty_hours);
-        $this->assertTrue($project->dutyHours()->isEmpty());
-
-        // Not "always available". An unanswered onboarding question that read
-        // as round-the-clock cover would publish at 04:00 into a silence.
-        $this->assertFalse($project->dutyHours()->covers(
-            CarbonImmutable::parse('2026-07-01 10:00', 'UTC'),
-            90,
-            $project->timezone,
-        ));
-    }
-
-    #[Test]
-    public function the_column_is_read_back_through_the_value_object_after_a_round_trip(): void
-    {
-        // The jsonb → cast → fromArray path is the one production uses, and it
-        // is not the same path as calling fromArray on a literal: Postgres
-        // reorders jsonb keys, so week order has to be restored on read.
-        $project = Project::factory()->create([
-            'duty_hours' => ['wed' => [['9:00', '13:00']]],
-            'timezone' => 'Europe/Lisbon',
-        ]);
-
-        $hours = $project->refresh()->dutyHours();
-
-        $this->assertSame(['wed' => [['09:00', '13:00']]], $hours->toArray());
-
-        // 08:30 UTC in July is 09:30 in Lisbon, which is inside the window.
-        $this->assertTrue($hours->covers(
-            CarbonImmutable::parse('2026-07-01 08:30', 'UTC'),
-            90,
-            $project->timezone,
-        ));
-
-        $this->assertFalse($hours->covers(
-            CarbonImmutable::parse('2026-07-01 07:00', 'UTC'),
-            90,
-            $project->timezone,
-        ));
-    }
-
-    #[Test]
-    public function an_operator_member_cannot_change_the_duty_hours(): void
+    public function an_operator_member_cannot_change_the_settings(): void
     {
         $operator = User::factory()->create();
-        $project = Project::factory()->create();
+        $project = Project::factory()->create(['timezone' => 'UTC']);
         $operator->projects()->attach($project, ['role' => 'operator']);
 
         // The settings route carries `project.owner`, so this is 403 rather
-        // than a validation failure — when somebody is on duty decides when the
-        // project publishes, and that is the owner's call.
+        // than a validation failure — the timezone decides when the project
+        // publishes, and that is the owner's call.
         $this->actingAs($operator)->patch("/projects/{$project->getKey()}", [
             'name' => $project->name,
             'slug' => $project->slug,
             'timezone' => 'Europe/Lisbon',
             'default_locale' => 'en',
             'status' => 'active',
-            'duty_hours' => ['mon' => [['00:00', '24:00']]],
         ])->assertForbidden();
 
-        $this->assertNull($project->refresh()->duty_hours);
+        $this->assertSame('UTC', $project->refresh()->timezone);
     }
 
     #[Test]

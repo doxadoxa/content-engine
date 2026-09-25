@@ -23,21 +23,6 @@ enum ContentItemType: string
     /** "Best X", "7 ways to Y" — a list is its own shape, not an explainer. */
     case Listicle = 'listicle';
 
-    /**
-     * A post on a social channel (§3).
-     *
-     * Adding it removes a hack rather than adding a feature: the repurpose
-     * pipeline had no type for what it was writing, so every derivative was
-     * saved as an `Explainer`. That made "how many explainers has this project
-     * published" unanswerable and, worse, gave a 300-character post the
-     * schema.org type of an article.
-     *
-     * A social unit is also the one type that may exist without a parent (§1.3
-     * — "родитель необязателен"), which is why the type has to be nameable
-     * independently of the tree it may or may not hang from.
-     */
-    case SocialPost = 'social_post';
-
     public function label(): string
     {
         return match ($this) {
@@ -46,7 +31,6 @@ enum ContentItemType: string
             self::Product => 'Product',
             self::Comparison => 'Comparison',
             self::Listicle => 'Listicle',
-            self::SocialPost => 'Social post',
         };
     }
 
@@ -63,7 +47,6 @@ enum ContentItemType: string
             // schema.org has no Listicle; ItemList is what a numbered article
             // actually is, and it is what earns the list treatment in results.
             self::Listicle => 'ItemList',
-            self::SocialPost => 'SocialMediaPosting',
         };
     }
 }

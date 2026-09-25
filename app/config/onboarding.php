@@ -16,6 +16,5 @@ return [
     */
     'defaults' => [
         'weekly_target' => 7,
-        'derivative_channels' => [],
     ],
 ];

@@ -16,20 +16,19 @@ use App\Pipelines\Steps\Generation\IllustrateDraft;
  * top, and the top is a paid image generation.
  *
  * This was retryable for two commits and the two things it broke are the
- * argument. `SocialImage::variants()` persists each variant as it is made, so a
- * write failing on the third left the first two committed and the retry drew
- * them again: a second charge and duplicate candidates on the draft, which is a
+ * argument. A step that persists several pictures as it makes them left the
+ * first ones committed when a later write failed, and the retry drew them
+ * again: a second charge and duplicate candidates on the draft, which is a
  * wrong draft rather than merely an expensive one. And every image step meters
  * its spend only after the picture is safely stored, so each re-drawn attempt
  * was paid for and recorded nowhere.
  *
- * Terminal instead, which every caller already knows how to survive: the hero
- * catches in {@see IllustrateDraft} and
- * ContentStudioAssistant both degrade to a post that ships without its picture,
- * and {@see CarouselPanels} skips the panel. That is this codebase's settled
- * answer to a picture that will not come — "an unillustrated draft is a weaker
- * draft; a failed batch is no drafts at all" — and a storage failure is the
- * same situation arriving one step later.
+ * Terminal instead, which the caller already knows how to survive: the hero
+ * catch in {@see IllustrateDraft} degrades to an article that ships without its
+ * picture. That is this codebase's settled answer to a picture that will not
+ * come — "an unillustrated draft is a weaker draft; a failed batch is no drafts
+ * at all" — and a storage failure is the same situation arriving one step
+ * later.
  *
  * What is given up is real: a bucket that blinked for ten seconds now costs
  * that picture rather than recovering it. Buying that back means resuming

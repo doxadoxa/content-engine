@@ -18,7 +18,6 @@ use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
-use App\Models\ProjectState;
 use App\Models\SitePage;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
@@ -172,7 +171,6 @@ final class ManagerWorkspaceTest extends TestCase
     public function results_do_not_turn_legacy_direct_visits_into_search_clicks(): void
     {
         SitePage::factory()->create(['tracked_at' => now()]);
-        ProjectState::factory()->create(['captured_on' => now()->subDay(), 'direct_sessions' => 120, 'brand_impressions' => 400]);
         $this->get('/performance')->assertOk()->assertInertia(fn (AssertableInertia $page) => $page
             ->where('report.pages.0.current.search.clicks', null)->where('report.pages.0.current.search.impressions', null)
             ->where('report.pages.0.current.search.observed_days', 0)->missing('results'));
@@ -201,7 +199,7 @@ final class ManagerWorkspaceTest extends TestCase
 
     private function article(ContentItemState $state): ContentItem
     {
-        return ContentItem::factory()->create(['state' => $state, 'parent_id' => null, 'locale' => 'en']);
+        return ContentItem::factory()->create(['state' => $state, 'locale' => 'en']);
     }
 
     private function schedule(ContentItem $article, string $date, string $mode = 'automatic'): ArticleSchedule

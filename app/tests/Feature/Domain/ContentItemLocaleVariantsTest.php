@@ -1,0 +1,146 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Domain;
+
+use App\Models\ContentItem;
+use App\Models\Project;
+use App\Support\Tenancy\CurrentProject;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
+
+/**
+ * Exit criterion 3 of phase 2: a unit in several locales is built and read
+ * without a query per row.
+ *
+ * The count is asserted exactly rather than as "small". A bound like `< 10`
+ * passes just as happily when a relation quietly starts lazy-loading and the
+ * list happens to be short — one row on screen during a test, forty in front
+ * of an operator.
+ */
+final class ContentItemLocaleVariantsTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private Project $project;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->project = Project::factory()->multilingual()->create();
+        app(CurrentProject::class)->set($this->project);
+    }
+
+    #[Test]
+    public function a_unit_is_built_with_two_locales(): void
+    {
+        [$pt, $en] = $this->unitWithTwoLocales();
+
+        $this->assertSame($pt->locale_group_id, $en->locale_group_id);
+        $this->assertSame(2, $pt->localeVariants()->count());
+
+        // A locale carries the subject over; only the language changes.
+        $this->assertSame($pt->entities, $en->entities);
+    }
+
+    #[Test]
+    public function every_locale_is_read_in_a_fixed_number_of_queries(): void
+    {
+        $this->unitWithTwoLocales();
+
+        $queries = $this->countQueries(function (): void {
+            $units = ContentItem::query()->withLocaleVariants()->get();
+
+            // Touch everything the dashboard would touch. If any of it were
+            // lazy, the count below would move with the number of rows.
+            foreach ($units as $unit) {
+                $unit->localeVariants->each(fn (ContentItem $item) => $item->locale);
+            }
+        });
+
+        // One for the units, one for every locale variant. Two, whatever the
+        // number of locales.
+        $this->assertSame(2, $queries);
+    }
+
+    #[Test]
+    public function the_count_does_not_grow_with_the_locales(): void
+    {
+        $this->unitWithTwoLocales();
+
+        $small = $this->countQueries(fn () => $this->readAllUnits());
+
+        // A second unit, wider than the first.
+        $other = ContentItem::factory()->locale('pt-PT')->create();
+        $other->addLocale('en', 'second-unit-en', 'Second unit');
+        $other->addLocale('es', 'second-unit-es', 'Second unit');
+
+        $large = $this->countQueries(fn () => $this->readAllUnits());
+
+        $this->assertSame($small, $large, 'Reading twice the locales took more queries — something is lazy.');
+    }
+
+    #[Test]
+    public function locale_variants_include_the_row_itself(): void
+    {
+        [$pt, $en] = $this->unitWithTwoLocales();
+
+        // "The unit in every language" is the useful question, and it is the
+        // same answer whichever locale row you ask it from.
+        $this->assertEqualsCanonicalizing(
+            [$pt->getKey(), $en->getKey()],
+            $pt->localeVariants()->pluck('id')->all(),
+        );
+        $this->assertEqualsCanonicalizing(
+            [$pt->getKey(), $en->getKey()],
+            $en->localeVariants()->pluck('id')->all(),
+        );
+    }
+
+    /**
+     * @return array{ContentItem, ContentItem}
+     */
+    private function unitWithTwoLocales(): array
+    {
+        $pt = ContentItem::factory()->locale('pt-PT')->create([
+            'title' => 'Como limpar janelas',
+            'slug' => 'como-limpar-janelas',
+        ]);
+
+        $en = $pt->addLocale('en', 'how-to-clean-windows', 'How to clean windows');
+
+        return [$pt, $en];
+    }
+
+    private function readAllUnits(): void
+    {
+        ContentItem::query()->withLocaleVariants()->get()->each(function (ContentItem $unit): void {
+            $unit->localeVariants->each(fn (ContentItem $item) => $item->locale);
+        });
+    }
+
+    /**
+     * The query log rather than DB::listen: a listener cannot be detached, so
+     * calling this twice in one test leaves the first one attached and counting
+     * into a variable nobody reads. That happens to be harmless here and stops
+     * being harmless the moment someone counts a second time and compares.
+     */
+    private function countQueries(callable $work): int
+    {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        try {
+            $work();
+
+            return count(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+}

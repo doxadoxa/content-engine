@@ -8,13 +8,11 @@ use App\Ai\Contracts\EmbeddingGateway;
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeEmbeddingGateway;
 use App\Ai\FakeModelGateway;
-use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\ContentPlanStatus;
 use App\Enums\PipelineRunStatus;
 use App\Enums\SearchIntent;
-use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\ContentPlan;
 use App\Models\PipelineRun;
@@ -159,7 +157,7 @@ final class PlanningPipelineTest extends TestCase
         $this->plan();
 
         $planned = ContentPlan::query()->firstOrFail()
-            ->contentItems()->roots()->where('locale', $this->project->default_locale)->get();
+            ->contentItems()->where('locale', $this->project->default_locale)->get();
 
         $byCluster = $planned->countBy('cluster');
 
@@ -189,7 +187,7 @@ final class PlanningPipelineTest extends TestCase
         $this->plan();
 
         $planned = ContentPlan::query()->firstOrFail()
-            ->contentItems()->roots()->where('locale', $this->project->default_locale)->count();
+            ->contentItems()->where('locale', $this->project->default_locale)->count();
 
         $this->assertGreaterThanOrEqual(10, $planned);
     }
@@ -250,21 +248,6 @@ final class PlanningPipelineTest extends TestCase
         // §4.3: generation will not ask for data nobody said was needed.
         $this->assertTrue($byQuery['window cleaning cost']->needs_original_data);
         $this->assertFalse($byQuery['how to clean windows']->needs_original_data);
-    }
-
-    #[Test]
-    public function the_plan_records_which_channels_a_unit_is_headed_for(): void
-    {
-        $this->idea('how to clean windows', 'howto');
-
-        $this->plan();
-
-        $unit = ContentPlan::query()->firstOrFail()
-            ->contentItems()->where('locale', $this->project->default_locale)->firstOrFail();
-
-        // Derivatives themselves are phase 8; the plan records that they are
-        // coming, which is what makes a month's cost estimable.
-        $this->assertSame(['linkedin', 'x'], $unit->planned_derivatives);
     }
 
     #[Test]
@@ -358,26 +341,6 @@ final class PlanningPipelineTest extends TestCase
     }
 
     #[Test]
-    public function derivatives_are_planned_for_the_channels_this_project_has(): void
-    {
-        // A global config default said "linkedin, x" for every project on the
-        // installation. A project that connected Telegram got posts planned for
-        // two channels it does not have, and none for the one it does.
-        Channel::factory()->create(['type' => ChannelType::Telegram, 'is_enabled' => true]);
-        Channel::factory()->create(['type' => ChannelType::X, 'is_enabled' => true]);
-        Channel::factory()->create(['type' => ChannelType::Webhook, 'is_enabled' => true]);
-
-        $this->idea('how to clean windows', 'windows', 900);
-
-        $this->plan();
-
-        $planned = ContentItem::query()->roots()->whereNotNull('content_plan_id')->firstOrFail();
-
-        // The website is where the article goes; it is not a derivative.
-        $this->assertEqualsCanonicalizing(['telegram', 'x'], $planned->planned_derivatives);
-    }
-
-    #[Test]
     public function a_topic_the_site_already_covers_is_not_planned_again(): void
     {
         // The real case: the site publishes "Limpeza De Carpetes Preco" and the
@@ -397,7 +360,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $queries = ContentItem::query()->roots()
+        $queries = ContentItem::query()
             ->whereNotNull('content_plan_id')
             ->pluck('target_query')
             ->all();
@@ -427,7 +390,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->assertContains(
             'carpet cleaning lisbon',
-            ContentItem::query()->roots()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
+            ContentItem::query()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
         );
     }
 
@@ -455,7 +418,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $queries = ContentItem::query()->roots()->whereNotNull('content_plan_id')->pluck('target_query')->all();
+        $queries = ContentItem::query()->whereNotNull('content_plan_id')->pluck('target_query')->all();
 
         $this->assertNotContains('home cleaning lisbon', $queries);
         $this->assertContains('how to clean marble floors', $queries);
@@ -479,7 +442,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $queries = ContentItem::query()->roots()
+        $queries = ContentItem::query()
             ->whereNotNull('content_plan_id')
             ->pluck('target_query')
             ->all();
@@ -513,7 +476,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->assertContains(
             'house cleaning lisbon',
-            ContentItem::query()->roots()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
+            ContentItem::query()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
         );
     }
 
@@ -536,7 +499,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->assertNotContains(
             'cleaning after building work',
-            ContentItem::query()->roots()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
+            ContentItem::query()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
         );
     }
 
@@ -561,7 +524,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->assertNotContains(
             'carpet cleaning lisbon',
-            ContentItem::query()->roots()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
+            ContentItem::query()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
         );
     }
 
@@ -588,7 +551,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->assertContains(
             'carpet cleaning lisbon',
-            ContentItem::query()->roots()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
+            ContentItem::query()->whereNotNull('content_plan_id')->pluck('target_query')->all(),
         );
     }
 
@@ -624,7 +587,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $types = ContentItem::query()->roots()
+        $types = ContentItem::query()
             ->where('locale', $this->project->default_locale)
             ->whereNotNull('content_plan_id')
             ->get()
@@ -650,7 +613,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $types = ContentItem::query()->roots()
+        $types = ContentItem::query()
             ->where('locale', $this->project->default_locale)
             ->whereNotNull('content_plan_id')
             ->pluck('type')
@@ -701,7 +664,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $variant = ContentItem::query()->roots()->where('locale', 'en')->firstOrFail();
+        $variant = ContentItem::query()->where('locale', 'en')->firstOrFail();
 
         $this->assertSame('Post-renovation cleaning in Lisbon', $variant->title);
         $this->assertSame('post renovation cleaning lisbon', $variant->target_query);
@@ -720,7 +683,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $source = ContentItem::query()->roots()->where('locale', 'pt-PT')->firstOrFail();
+        $source = ContentItem::query()->where('locale', 'pt-PT')->firstOrFail();
 
         // Only the copies are localised. Rewriting the researched unit would
         // throw away the keyword the whole month was planned from.
@@ -740,7 +703,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->assertSame(PipelineRunStatus::Completed, $run->refresh()->status);
 
-        $variant = ContentItem::query()->roots()->where('locale', 'en')->firstOrFail();
+        $variant = ContentItem::query()->where('locale', 'en')->firstOrFail();
 
         // Left saying what it already said, and the run records that it did.
         $this->assertSame('limpeza pós-obra', $variant->target_query);
@@ -756,7 +719,7 @@ final class PlanningPipelineTest extends TestCase
 
         $this->plan();
 
-        $variant = ContentItem::query()->roots()->where('locale', 'en')->firstOrFail();
+        $variant = ContentItem::query()->where('locale', 'en')->firstOrFail();
 
         // "limpeza pós-obra" in Portugal and "post renovation cleaning" in the
         // UK are the same unit and nowhere near the same search volume, so the
@@ -769,7 +732,7 @@ final class PlanningPipelineTest extends TestCase
         // The seasonal *shape* does travel, and still does: when in the year a
         // subject peaks is a fact about the subject, not about the market.
         $this->assertSame(
-            ContentItem::query()->roots()->where('locale', 'pt-PT')->firstOrFail()->monthly_volumes,
+            ContentItem::query()->where('locale', 'pt-PT')->firstOrFail()->monthly_volumes,
             $variant->monthly_volumes,
         );
     }
@@ -798,7 +761,7 @@ final class PlanningPipelineTest extends TestCase
         // land every line beginning `pt` on whichever locale came first: the
         // Brazilian answer would overwrite the European row and the Brazilian
         // one would keep the source title, counted as untranslated.
-        $brazil = ContentItem::query()->roots()->where('locale', 'pt-BR')->firstOrFail();
+        $brazil = ContentItem::query()->where('locale', 'pt-BR')->firstOrFail();
 
         $this->assertSame('Limpeza pós-obra no Rio', $brazil->title);
         $this->assertSame('limpeza pós obra rio', $brazil->target_query);

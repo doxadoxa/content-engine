@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Research;
 
-use App\Support\Seasonality\SeasonalCurve;
-
 /**
  * One keyword as the outside world reports it (§4.1).
  *
@@ -50,18 +48,5 @@ final readonly class KeywordIdea
     public function opportunity(): float
     {
         return $this->volume / ($this->difficulty + 10);
-    }
-
-    /**
-     * The demand curve as something that can answer questions (§5).
-     *
-     * The one method the spec asks for. It lives on {@see SeasonalCurve} rather
-     * than here because the same curve is asked the same things once it has
-     * been stored on a unit, and two copies of "which month is the peak" would
-     * drift the first time one of them learned about flat curves.
-     */
-    public function seasonality(): SeasonalCurve
-    {
-        return SeasonalCurve::fromArray($this->volumeByMonth);
     }
 }

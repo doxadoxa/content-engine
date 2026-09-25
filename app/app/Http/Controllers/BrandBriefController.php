@@ -54,11 +54,10 @@ class BrandBriefController extends Controller
 
         return Inertia::render('brief/edit', [
             'brief' => $active === null ? null : $this->toFormProps($active),
-            // Offered, never applied. A wrong fill is not a visible error — it
-            // silently becomes every carousel for a month — so the colours
-            // counted off the site sit beside the fields as something to click,
-            // and a person decides. Null where the site was analysed before
-            // there was a browser to photograph it with.
+            // Offered, never applied. A wrong fill is not a visible error, so
+            // the colours counted off the site sit beside the fields as
+            // something to click, and a person decides. Null where the site
+            // was analysed before there was a browser to photograph it with.
             'palette' => is_array($project->site_analysis['palette'] ?? null)
                 ? $project->site_analysis['palette']
                 : null,
@@ -71,11 +70,10 @@ class BrandBriefController extends Controller
             'paletteOutcome' => is_array($project->site_analysis['palette_outcome'] ?? null)
                 ? $project->site_analysis['palette_outcome']
                 : null,
-            // Everything the site declares, not just the three a panel uses. The
-            // brief has three slots because a renderer needs three; a brand has
-            // as many colours as it has, and the person choosing between them is
-            // the one who should see the rest rather than only our arithmetic on
-            // it.
+            // Everything the site declares, not just the three the brief has
+            // fields for. A brand has as many colours as it has, and the person
+            // choosing between them is the one who should see the rest rather
+            // than only our arithmetic on it.
             'paletteColours' => array_values(array_filter(
                 is_array($project->site_analysis['palette_colours'] ?? null)
                     ? $project->site_analysis['palette_colours']
@@ -85,9 +83,8 @@ class BrandBriefController extends Controller
             'siteFont' => is_string($project->site_analysis['brand_font'] ?? null)
                 ? $project->site_analysis['brand_font']
                 : null,
-            // What the renderer's image actually carries. Sent rather than
-            // hardcoded in the screen so the list has one home: adding a face
-            // is two woff2 files and a line in VisualStyle, not three edits.
+            // The faces the brief offers. Sent rather than hardcoded in the
+            // screen so the list has one home in VisualStyle.
             'typefaces' => $this->typefaces(),
             'versions' => $versions->map(fn (BrandBrief $brief): array => [
                 ...$this->toFormProps($brief),
@@ -140,8 +137,7 @@ class BrandBriefController extends Controller
      *
      * Still only a suggestion when it lands. It refreshes what the swatches
      * offer; applying them stays a click, for the reason
-     * {@see SitePalette} gives — a wrong fill is not a visible error, it
-     * quietly becomes every carousel for a month.
+     * {@see SitePalette} gives — a wrong fill is not a visible error.
      *
      * **Dispatched, not done here.** The work is a browser opening somebody
      * else's website, which {@see SiteScreenshot} allows two minutes for — see
@@ -220,12 +216,11 @@ class BrandBriefController extends Controller
     }
 
     /**
-     * The faces the renderer's image carries, for the screen to offer.
+     * The faces the brief offers, for the screen to show.
      *
-     * Sent rather than restated in the interface so the list has one home:
-     * adding a face is two woff2 files under `resources/fonts/<slug>/` and a
-     * line in {@see VisualStyle::TYPEFACES}, not a third edit here that somebody
-     * forgets and a select that then offers a font nothing can draw.
+     * Sent rather than restated in the interface so the list has one home in
+     * {@see VisualStyle::TYPEFACES}, not a second copy here that somebody
+     * forgets and a select that then offers a face the request refuses.
      *
      * @return list<array{slug: string, name: string}>
      */
@@ -254,7 +249,6 @@ class BrandBriefController extends Controller
             'brand_accent' => $brief->brand_accent,
             'brand_palette' => $brief->brand_palette,
             'brand_typeface' => $brief->brand_typeface,
-            'carousel_cover' => $brief->carousel_cover,
             'overlay_position' => $brief->overlay_position,
             'overlay_case' => $brief->overlay_case,
             'forbidden_topics' => $brief->forbidden_topics,

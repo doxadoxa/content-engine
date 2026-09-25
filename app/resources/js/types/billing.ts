@@ -3,7 +3,6 @@ export type BillingMetric =
     | 'ai_answers'
     | 'page_improvements'
     | 'articles'
-    | 'social_posts'
     | 'site_audits'
     | 'content_plans'
     | 'assistant_turns';
@@ -65,9 +64,9 @@ export type Billing = {
      * The quotas with nothing left in them.
      *
      * Separate from `refusal` because running out of articles is not a global
-     * refusal — the engine keeps cutting social posts — but it is still
-     * something the operator has to be told, and `may_generate` alone cannot
-     * say it.
+     * refusal — the engine keeps improving pages and running audits — but it
+     * is still something the operator has to be told, and `may_generate` alone
+     * cannot say it.
      */
     exhausted: BillingMetric[];
     trial_ends_at: string | null;

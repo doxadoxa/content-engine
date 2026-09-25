@@ -42,7 +42,6 @@ final class ContentItemProps
             'locales' => $item->relationLoaded('localeVariants')
                 ? $item->localeVariants->pluck('locale')->unique()->sort()->values()->all()
                 : [$item->locale],
-            'derivatives' => $item->relationLoaded('derivatives') ? $item->derivatives->count() : 0,
         ];
     }
 }

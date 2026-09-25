@@ -71,14 +71,12 @@ export default function Privacy({
                         <strong>
                             The material you put into your projects.
                         </strong>{' '}
-                        Your brand brief, your site content, your drafts, and
-                        the replies and mentions your connected social accounts
-                        receive. Here we are a <strong>processor</strong> acting
-                        on your instructions — you decide what goes in, and we
-                        handle it to run the Service for you. If that material
-                        contains other people's personal data, you are the
-                        controller of it and responsible for having a lawful
-                        basis to hold it.
+                        Your brand brief, your site content, and your drafts.
+                        Here we are a <strong>processor</strong> acting on your
+                        instructions — you decide what goes in, and we handle it
+                        to run the Service for you. If that material contains
+                        other people's personal data, you are the controller of
+                        it and responsible for having a lawful basis to hold it.
                     </li>
                 </ul>
             </Section>
@@ -134,14 +132,6 @@ export default function Privacy({
                         <strong>Performance data</strong> from Google Search
                         Console and Google Analytics for the property you grant
                         access to.
-                    </li>
-                    <li>
-                        <strong>Social interactions:</strong> where you connect
-                        a Threads account, the replies and mentions it receives
-                        — including the author's display name, handle, the text
-                        they wrote, and a link to the post. This is personal
-                        data about people who are not our users; we hold it as
-                        your processor so you can reply to them.
                     </li>
                 </ul>
 

@@ -70,9 +70,7 @@ export default function BillingPage({
             .join('');
 
     const exhausted = entitlement.exhausted.filter(
-        (metric) =>
-            metric !== 'social_posts' &&
-            (entitlement.usage[metric]?.limit ?? 1) !== 0,
+        (metric) => (entitlement.usage[metric]?.limit ?? 1) !== 0,
     );
 
     return (
@@ -232,7 +230,6 @@ function UsagePanel({
 }) {
     const rows = Object.entries(usage).filter(
         ([key, row]) =>
-            key !== 'social_posts' &&
             key !== 'articles' &&
             (key !== 'page_improvements' || billed || row.used > 0) &&
             (key !== 'ai_answers' || billed) &&

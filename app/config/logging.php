@@ -65,10 +65,10 @@ return [
          *
          * A handful of places in this application catch a failure, decide the
          * run cannot continue, and write `Log::error` — the pipeline runner
-         * abandoning a step, a Stripe webhook it could not make sense of, a
-         * reply the social sender gave up on. Those are the real "somebody
-         * should look at this" moments, and none of them reach the exception
-         * handler, so none of them would reach Sentry through it.
+         * abandoning a step, a Stripe webhook it could not make sense of.
+         * Those are the real "somebody should look at this" moments, and none
+         * of them reach the exception handler, so none of them would reach
+         * Sentry through it.
          *
          * `error` and above only, deliberately. This application logs at
          * `warning` freely and for ordinary conditions — a feed that returned

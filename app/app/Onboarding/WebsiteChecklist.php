@@ -28,10 +28,10 @@ final class WebsiteChecklist
         }
         $websiteTypes = array_map(
             static fn (ChannelType $type): string => $type->value,
-            array_filter(ChannelType::cases(), static fn (ChannelType $type): bool => ! $type->isSocial()),
+            ChannelType::cases(),
         );
-        $drafts = ContentItem::query()->roots()->inState(ContentItemState::Draft)->exists();
-        $reviewed = ContentItem::query()->roots()->whereIn('state', [
+        $drafts = ContentItem::query()->inState(ContentItemState::Draft)->exists();
+        $reviewed = ContentItem::query()->whereIn('state', [
             ContentItemState::Approved->value,
             ContentItemState::Published->value,
         ])->exists();

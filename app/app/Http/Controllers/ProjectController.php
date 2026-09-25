@@ -11,11 +11,9 @@ use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
 use App\Http\Requests\ProjectRequest;
 use App\Integrations\Google\GooglePanel;
-use App\Integrations\Threads\ThreadsPanel;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
-use App\Support\Duty\DutyHours;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\Pivot;
@@ -34,7 +32,6 @@ class ProjectController extends Controller
     public function __construct(
         private readonly ProjectManager $projects,
         private readonly GooglePanel $google,
-        private readonly ThreadsPanel $threads,
         private readonly BillingProvider $provider,
         private readonly Subscriptions $subscriptions,
     ) {}
@@ -60,21 +57,6 @@ class ProjectController extends Controller
             // render. An operator who came here to rename the project should
             // not notice this panel exists.
             'google' => Inertia::defer(fn (): array => $this->google->panelFor($project)),
-            // Not deferred, unlike Google's: this one reads a row and makes no
-            // outbound call, so there is nothing to wait for and a placeholder
-            // would flash for no reason.
-            //
-            // Absent, not `unavailable`, when the social presence is switched
-            // off (config/social.php). The panel's `unavailable` state means
-            // "this installation wants Threads and has not been given an app
-            // yet" and it says so with the two variable names to fill in; a
-            // deployment that has switched the feature off is not waiting for
-            // credentials, and telling it how to add some would be advice
-            // nobody asked for. The card is dropped on the client side, since
-            // an empty card is worse than either.
-            ...(config('social.enabled')
-                ? ['threads' => $this->threads->panelFor($project)]
-                : []),
         ]);
     }
 
@@ -83,17 +65,6 @@ class ProjectController extends Controller
         $this->authorizeMembership($request, $project);
 
         $data = $request->safe()->except('slug');
-
-        // Through the value object rather than straight from the form, so the
-        // column only ever holds the canonical shape: days in week order,
-        // hours zero-padded, touching windows merged, unusable ranges dropped.
-        // A half-typed entry that reached the database raw would read back as
-        // a different set of duty hours on every planning run.
-        if (array_key_exists('duty_hours', $data)) {
-            $submitted = $data['duty_hours'];
-
-            $data['duty_hours'] = DutyHours::fromArray(is_array($submitted) ? $submitted : null)->toArray();
-        }
 
         DB::transaction(function () use ($request, $project, $data): void {
             $locked = Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
@@ -293,8 +264,6 @@ class ProjectController extends Controller
             'timezone' => $project->timezone,
             'autopublish' => $project->autopublish,
             'article_scheduling_enabled' => is_string($project->onboarding['article_automation_started_at'] ?? null),
-            'duty_hours' => $project->dutyHours()->toArray(),
-            'feed_urls' => $project->feedUrls(),
             'default_locale' => $project->default_locale,
             'locales' => $project->locales,
             'market' => $project->market,

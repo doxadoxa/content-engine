@@ -8,7 +8,6 @@ use App\Billing\Entitlements;
 use App\Enums\LocaleMode;
 use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
-use App\Support\Duty\DutyHours;
 use App\Support\Tenancy\ProjectScope;
 use Database\Factories\ProjectFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -35,8 +34,6 @@ use Illuminate\Support\Carbon;
  * @property string $name
  * @property string $slug
  * @property string $timezone
- * @property array<string, list<array{string, string}>>|null $duty_hours
- * @property list<string>|null $feed_urls
  * @property string $default_locale
  * @property list<string> $locales
  * @property array<string, string>|null $locale_modes
@@ -69,8 +66,6 @@ class Project extends Model
         'name',
         'slug',
         'timezone',
-        'duty_hours',
-        'feed_urls',
         'default_locale',
         'locales',
         'locale_modes',
@@ -181,17 +176,6 @@ class Project extends Model
     }
 
     /**
-     * Pages discovered on the project's own site before the engine wrote them.
-     *
-     * @return HasMany<SitePage, $this>
-     */
-    public function sitePages(): HasMany
-    {
-        return $this->hasMany(SitePage::class)
-            ->withoutGlobalScope(ProjectScope::class);
-    }
-
-    /**
      * True when the project publishes in this locale. The default locale is
      * always included, so a project can never be configured into a state where
      * its own default is not publishable.
@@ -241,45 +225,12 @@ class Project extends Model
      * A counter stops a project dead on the 22nd of the month, which reads as a
      * broken engine; a clamped cadence makes the engine pace itself so the
      * month comes out even and the boundary is never felt. The article counter
-     * behind it is the backstop for the paths that bypass the tick — the
-     * Studio's buttons, an article somebody writes by hand.
+     * behind it is the backstop for the paths that bypass the tick, such as
+     * an article somebody asks for by hand.
      */
     public function weeklyTarget(): int
     {
         return app(Entitlements::class)->for($this)->weeklyTarget($this->weekly_target);
-    }
-
-    /**
-     * When somebody is around to answer (§4.3, §11.4).
-     *
-     * Returned as the value object rather than as the raw column so that every
-     * reader gets the same reading of a half-typed configuration — and, more to
-     * the point, the same reading of an empty one, which is "never on duty".
-     * A project that has not answered the onboarding question yet must not have
-     * posts scheduled into a silence nobody is watching.
-     */
-    public function dutyHours(): DutyHours
-    {
-        return DutyHours::fromArray($this->duty_hours);
-    }
-
-    /**
-     * The project's RSS whitelist (§4.1), as a plain list.
-     *
-     * Never null and never holding a blank, because the hourly listening run
-     * iterates it and a null in the middle of that loop is an outage in the one
-     * contour §4.1 says pays for itself on its own. The column is nullable
-     * because "not answered yet" and "no feeds" are the same thing to every
-     * reader; this is where that stops being the caller's problem.
-     *
-     * @return list<string>
-     */
-    public function feedUrls(): array
-    {
-        return array_values(array_filter(
-            array_map(trim(...), $this->feed_urls ?? []),
-            static fn (string $url): bool => $url !== '',
-        ));
     }
 
     public function supportsLocale(string $locale): bool
@@ -293,8 +244,6 @@ class Project extends Model
         return [
             'locales' => 'array',
             'locale_modes' => 'array',
-            'duty_hours' => 'array',
-            'feed_urls' => 'array',
             'status' => ProjectStatus::class,
             'weekly_target' => 'integer',
             'minimum_volume' => 'integer',

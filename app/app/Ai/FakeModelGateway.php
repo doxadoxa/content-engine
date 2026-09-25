@@ -39,10 +39,10 @@ class FakeModelGateway implements ModelGateway
      *
      * Neither {@see willAnswer()} nor {@see willAnswerRole()} survives a caller
      * that makes many calls in one role and needs different answers to them —
-     * which is what a candidate pool is. The Content Studio writes four drafts
-     * per channel for three channels in the `draft` role alone, so a positional
-     * queue means scripting twelve answers in the order a loop happens to take
-     * them, and a role map means all twelve are identical.
+     * which is what a candidate pool is. A step that writes several drafts in
+     * the `draft` role alone means a positional queue scripting every answer in
+     * the order a loop happens to take them, and a role map making them all
+     * identical.
      *
      * The closure receives the {@see ModelRequest} and may return null to fall
      * through to the role map, then the queue, then the echo — so a test can

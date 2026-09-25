@@ -10,10 +10,8 @@ use App\Ai\ConversationFailed;
 use App\Ai\ConversationRequest;
 use App\Ai\ConversationResponse;
 use App\Ai\FakeConversationGateway;
-use App\Enums\PostKind;
 use App\Models\AssistantMessage;
 use App\Models\AssistantThread;
-use App\Models\ContentIdea;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
@@ -72,7 +70,7 @@ final class AssistantTest extends TestCase
         $this->assertSame(AssistantMessage::ASSISTANT, $reply->role);
         $this->assertStringContainsString('search traffic', (string) $reply->body);
 
-        $this->assertSame(0, ContentItem::query()->roots()->count());
+        $this->assertSame(0, ContentItem::query()->count());
         $this->assertSame(0, PipelineRun::query()->count());
     }
 
@@ -87,7 +85,7 @@ final class AssistantTest extends TestCase
         app(Assistant::class)->reply($this->project, $this->thread(), 'write an explainer about cleaning wooden doors');
 
         app(CurrentProject::class)->run($this->project, function (): void {
-            $item = ContentItem::query()->roots()->firstOrFail();
+            $item = ContentItem::query()->firstOrFail();
 
             $this->assertSame('how to clean wooden doors', $item->target_query);
             $this->assertTrue(
@@ -98,62 +96,20 @@ final class AssistantTest extends TestCase
     }
 
     #[Test]
-    public function asking_for_a_post_really_starts_one(): void
-    {
-        $this->gateway->willReply(
-            "I'll draft that as an opinion — it goes to Threads and X.",
-            [[
-                'name' => 'write_post',
-                'arguments' => [
-                    'thesis' => 'Limescale needs contact time, so we never rush a bathroom.',
-                    'kind' => 'take',
-                ],
-            ]],
-        );
-
-        app(Assistant::class)->reply(
-            $this->project,
-            $this->thread(),
-            'write a post about why we never rush bathrooms',
-        );
-
-        app(CurrentProject::class)->run($this->project, function (): void {
-            $idea = ContentIdea::query()->firstOrFail();
-
-            $this->assertSame(PostKind::Take, $idea->kind);
-            // The kind decides the channels here exactly as it does in a
-            // proposal, so a post the assistant wrote cannot do the one thing
-            // every planned post is forbidden.
-            $this->assertSame(['threads', 'x'], $idea->channels);
-
-            // The run this pins: `content_studio` requires `content_plan_id`,
-            // which only the studio's operations service supplies. Started
-            // through the runner directly it failed validation every time, and
-            // the tool reported the failure to the model as a refusal — so the
-            // assistant would apologise for a post it had never tried to write.
-            $run = PipelineRun::query()->where('pipeline', 'content_studio')->firstOrFail();
-
-            $this->assertSame('generate_idea', $run->input['action']);
-            $this->assertArrayHasKey('content_plan_id', $run->input);
-            $this->assertSame((string) $idea->getKey(), $run->input['content_idea_id']);
-        });
-    }
-
-    #[Test]
     public function a_tool_that_could_not_start_says_so_rather_than_claiming_success(): void
     {
         $this->gateway->willReply(
             'Starting that now.',
-            [['name' => 'write_post', 'arguments' => ['thesis' => 'A point.', 'kind' => 'nonsense']]],
+            [['name' => 'write_article', 'arguments' => ['topic' => 'a']]],
         );
 
-        app(Assistant::class)->reply($this->project, $this->thread(), 'post something');
+        app(Assistant::class)->reply($this->project, $this->thread(), 'write something');
 
         app(CurrentProject::class)->run($this->project, function (): void {
             $tool = AssistantMessage::query()->where('role', AssistantMessage::TOOL)->firstOrFail();
 
             $this->assertFalse($tool->tool_result['ok']);
-            $this->assertSame(0, ContentIdea::query()->count());
+            $this->assertSame(0, ContentItem::query()->count());
         });
     }
 
@@ -247,17 +203,17 @@ final class AssistantTest extends TestCase
     #[Test]
     public function the_thread_is_carried_back_so_the_assistant_remembers(): void
     {
-        $this->gateway->willReply('Which channels do you want it on?');
+        $this->gateway->willReply('Which kind of door do you want it about?');
         app(Assistant::class)->reply($this->project, $this->thread(), 'I want to talk about door cleaning');
 
-        $this->gateway->willReply('Threads it is.');
-        app(Assistant::class)->reply($this->project, $this->thread(), 'threads');
+        $this->gateway->willReply('Wooden doors it is.');
+        app(Assistant::class)->reply($this->project, $this->thread(), 'wooden');
 
         $second = $this->gateway->requests[1];
 
-        $this->assertSame('threads', $second->message);
+        $this->assertSame('wooden', $second->message);
         $this->assertSame(
-            ['I want to talk about door cleaning', 'Which channels do you want it on?'],
+            ['I want to talk about door cleaning', 'Which kind of door do you want it about?'],
             array_column($second->history, 'content'),
         );
     }
@@ -278,7 +234,7 @@ final class AssistantTest extends TestCase
         app(Assistant::class)->reply($this->project, $this->thread(), 'write about doors');
 
         app(CurrentProject::class)->run($this->project, function (): void {
-            $item = ContentItem::query()->roots()->firstOrFail();
+            $item = ContentItem::query()->firstOrFail();
 
             $this->assertLessThanOrEqual(255, mb_strlen((string) $item->target_query));
             $this->assertLessThanOrEqual(255, mb_strlen($item->title));

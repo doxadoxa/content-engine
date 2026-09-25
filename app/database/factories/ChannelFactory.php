@@ -42,34 +42,6 @@ class ChannelFactory extends Factory
         ]);
     }
 
-    public function social(ChannelType $type = ChannelType::LinkedIn): static
-    {
-        return $this->state(fn (): array => [
-            'type' => $type,
-            'config' => ['handle' => '@'.fake()->userName()],
-        ]);
-    }
-
-    /**
-     * The Threads channel of §9: a target and toggles, and no credential.
-     *
-     * No secret, deliberately. §9 puts the token on `ProjectIntegration` — "
-     * `Channel` держит только цель и тумблеры" — so a Threads channel carrying
-     * one would be a second copy of a secret that is renewed elsewhere.
-     *
-     * The name is left to the definition's unique generator: channel names are
-     * unique per project, and a state that hardcodes "Threads" makes a second
-     * one in the same test a constraint violation rather than a second channel.
-     */
-    public function threads(): static
-    {
-        return $this->state(fn (): array => [
-            'type' => ChannelType::Threads,
-            'config' => ['handle' => '@'.fake()->userName()],
-            'secret' => null,
-        ]);
-    }
-
     /** A channel configured but not yet given a token. */
     public function withoutSecret(): static
     {

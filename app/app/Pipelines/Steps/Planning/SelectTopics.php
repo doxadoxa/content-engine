@@ -223,14 +223,6 @@ class SelectTopics extends AbstractStep
      * still an article about that subject, and planning its near-twin means
      * two of our own pages competing before either has been published.
      *
-     * Articles only — `roots()` guarantees that since §3 made a social unit
-     * parentless, and the guarantee is load-bearing here more than anywhere
-     * else in the engine. A post is not coverage of a subject: §1.3 says the
-     * reverse flow matters more than the forward one, so a Threads post asking
-     * a question is precisely the reason to plan the article that answers it.
-     * Counting the post as work already done would invert the most important
-     * claim in the spec, silently, one topic at a time.
-     *
      * Read off the stored embeddings, so this costs a query rather than a bill.
      *
      * @return list<array{query: string, vector: list<float>}>
@@ -238,7 +230,6 @@ class SelectTopics extends AbstractStep
     private function vectorsOfExistingWork(): array
     {
         $written = ContentItem::query()
-            ->roots()
             ->where('state', '<>', ContentItemState::Idea->value)
             ->get();
 
@@ -387,11 +378,6 @@ class SelectTopics extends AbstractStep
      * `isLive()` rather than `Published`, so a unit currently being refreshed
      * still counts as covered — it is on the site while it is rewritten.
      *
-     * Articles only, for the reason given on {@see vectorsOfExistingWork()}: a
-     * published post carries a `target_query` too, and counting one here would
-     * make asking a question on Threads the thing that stops the article
-     * answering it from ever being planned.
-     *
      * @return array<string, true>
      */
     private function publishedTopics(): array
@@ -399,7 +385,6 @@ class SelectTopics extends AbstractStep
         $topics = [];
 
         $live = ContentItem::query()
-            ->roots()
             ->whereIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value])
             ->whereNotNull('target_query')
             ->pluck('target_query');

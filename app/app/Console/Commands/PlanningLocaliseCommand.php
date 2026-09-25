@@ -161,7 +161,6 @@ class PlanningLocaliseCommand extends Command
     private function untranslated(?Carbon $from): array
     {
         $groups = ContentItem::query()
-            ->roots()
             ->inState(ContentItemState::Idea)
             ->whereNotNull('target_query')
             ->when($from !== null, fn ($q) => $q->where('scheduled_for', '>=', $from->toDateString()))

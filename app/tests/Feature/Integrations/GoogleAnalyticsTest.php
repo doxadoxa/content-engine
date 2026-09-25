@@ -193,53 +193,6 @@ final class GoogleAnalyticsTest extends TestCase
         $this->assertNull($this->integrationFor($project)?->failure_reason);
     }
 
-    #[Test]
-    public function the_channel_split_folds_both_social_groups_and_totals_everything(): void
-    {
-        $project = $this->connected();
-
-        Http::fake([
-            'analyticsdata.googleapis.com/*' => Http::response([
-                'rows' => [
-                    $this->channel('Direct', 220, 180, 9000, 4),
-                    $this->channel('Referral', 130, 90, 4000, 2),
-                    $this->channel('Organic Social', 150, 110, 5000, 3),
-                    // A boosted post is still the account's audience arriving.
-                    $this->channel('Paid Social', 50, 40, 1500, 1),
-                    // Not named by §6, and still part of the denominator.
-                    $this->channel('Organic Search', 450, 300, 20000, 7),
-                ],
-            ]),
-        ]);
-
-        $audience = $this->analytics()->audience($project, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-01'));
-
-        $this->assertNotNull($audience);
-        $this->assertSame(1000, $audience->totalSessions);
-        $this->assertSame(220, $audience->directSessions);
-        $this->assertSame(130, $audience->referralSessions);
-        $this->assertSame(200, $audience->socialSessions);
-        $this->assertSame(150, $audience->socialEngagedSessions);
-        $this->assertSame(6500, $audience->socialEngagementSeconds);
-        $this->assertSame(17, $audience->conversions);
-    }
-
-    #[Test]
-    public function a_refused_channel_read_is_null_rather_than_an_audience_that_left(): void
-    {
-        $project = $this->connected();
-
-        Http::fake(['analyticsdata.googleapis.com/*' => Http::response(['error' => ['message' => 'nope']], 401)]);
-
-        $this->assertNull(
-            $this->analytics()->audience($project, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-01'))
-        );
-
-        // 401 is still 401: the grant is gone and the settings screen has to
-        // say so, exactly as it does for the per-unit read.
-        $this->assertNotNull($this->integrationFor($project)?->failure_reason);
-    }
-
     /**
      * @return array<string, mixed>
      */
@@ -251,22 +204,6 @@ final class GoogleAnalyticsTest extends TestCase
                 ['value' => (string) $sessions],
                 ['value' => (string) $engaged],
                 ['value' => (string) $seconds],
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function channel(string $group, int $sessions, int $engaged, int $seconds, int $keyEvents): array
-    {
-        return [
-            'dimensionValues' => [['value' => $group]],
-            'metricValues' => [
-                ['value' => (string) $sessions],
-                ['value' => (string) $engaged],
-                ['value' => (string) $seconds],
-                ['value' => (string) $keyEvents],
             ],
         ];
     }

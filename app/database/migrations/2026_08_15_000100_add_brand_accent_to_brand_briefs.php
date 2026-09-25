@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Schema;
  * emphasise anything is to use the ink again, so the emphasis disappears.
  *
  * **Empty means "use the ink", not "no colour".** That is the behaviour every
- * existing brief already has, because {@see CarouselPanels} has been passing the
+ * existing brief already has, because `CarouselPanels` has been passing the
  * ink as the accent since panels existed. Defaulting to a concrete hue would
  * change the look of every carousel on every deployment the moment this
  * migration ran, which is not a thing a schema change may do.

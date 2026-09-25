@@ -6,7 +6,7 @@ namespace Tests\Feature\Publishing;
 
 use App\Billing\Entitlements;
 use App\Billing\Metric;
-use App\Content\UnitScore;
+use App\Content\ArticleScore;
 use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
@@ -50,7 +50,6 @@ final class ArticleScheduleTest extends TestCase
     {
         parent::setUp();
         $this->travelTo(CarbonImmutable::parse('2026-09-15T08:00:00Z'));
-        config(['social.enabled' => false]);
         Queue::fake();
         $this->project = Project::factory()->create();
         app(CurrentProject::class)->set($this->project);
@@ -60,7 +59,7 @@ final class ArticleScheduleTest extends TestCase
             'config' => ['endpoint' => 'https://receiver.test/articles'], 'is_enabled' => true,
             'verified_at' => now(), 'autopublish' => true]);
         $this->item = ContentItem::factory()->draft()->create(['body_html' => '<p>A useful article.</p>', 'factcheck' => ['passed' => true]]);
-        $this->mock(UnitScore::class, function (MockInterface $mock): void {
+        $this->mock(ArticleScore::class, function (MockInterface $mock): void {
             /** @var Expectation $expectation */
             $expectation = $mock->shouldReceive('for');
             $expectation->andReturn(['score' => 100, 'publishable' => true, 'blocking' => [], 'checks' => []]);
@@ -95,6 +94,28 @@ final class ArticleScheduleTest extends TestCase
         $this->assertStringContainsString('Review', ArticleSchedule::query()->firstOrFail()->blocked_reason);
         app(ArticleApproval::class)->approve($this->item);
         $this->assertCount(1, app(ArticleSchedules::class)->dispatch($this->item));
+    }
+
+    #[Test]
+    public function approval_without_a_schedule_waits_for_an_explicit_publish_even_on_an_automatic_channel(): void
+    {
+        Http::fake();
+
+        $this->actingAs($this->owner)->post("/content/{$this->item->id}/approve")->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertSame(ContentItemState::Approved, $this->item->fresh()->state);
+        $this->assertDatabaseCount('webhook_deliveries', 0);
+        Queue::assertNothingPushed();
+
+        /** @var PendingCommand $command */
+        $command = $this->artisan('publish:approved', ['project' => $this->project->slug]);
+        $command->assertSuccessful()->run();
+        $this->assertDatabaseCount('webhook_deliveries', 0);
+        Queue::assertNothingPushed();
+
+        $this->actingAs($this->owner)->post("/content/{$this->item->id}/publish")->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertDatabaseCount('webhook_deliveries', 1);
+        Queue::assertPushed(DeliverWebhookJob::class, 1);
+        Http::assertNothingSent();
     }
 
     #[Test]
@@ -134,7 +155,7 @@ final class ArticleScheduleTest extends TestCase
     #[Test]
     public function real_quality_checks_block_an_unfinished_article_without_charging(): void
     {
-        $this->app->forgetInstance(UnitScore::class);
+        $this->app->forgetInstance(ArticleScore::class);
         $this->schedule();
         $this->travelTo(CarbonImmutable::parse('2026-09-15T09:00:00Z'));
         $this->assertSame([], app(ArticleSchedules::class)->dispatch($this->item));

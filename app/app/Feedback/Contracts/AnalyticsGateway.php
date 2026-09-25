@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Feedback\Contracts;
 
 use App\Feedback\Measurements\ReadResult;
-use App\Feedback\ProjectAudience;
 use App\Feedback\UnitEngagement;
 use App\Models\Project;
 use Illuminate\Support\Carbon;
@@ -33,19 +32,4 @@ interface AnalyticsGateway
      * @return list<UnitEngagement>
      */
     public function engagement(Project $project, array $urls, Carbon $from, Carbon $to): array;
-
-    /**
-     * Who arrived, by channel, and what they did (§6).
-     *
-     * The per-project sibling of {@see engagement()}. "They came without asking
-     * Google" is a fact about the project and cannot be assembled from
-     * per-URL rows: a session lands on one page and the channel that brought it
-     * belongs to the session, not to the page.
-     *
-     * Null rather than a zeroed value when the property is not connected or the
-     * read did not complete, for the reason
-     * {@see SearchConsoleGateway::brandDemand()} spells out — the daily row has
-     * one column per figure and no room to say "this zero is a guess".
-     */
-    public function audience(Project $project, Carbon $from, Carbon $to): ?ProjectAudience;
 }

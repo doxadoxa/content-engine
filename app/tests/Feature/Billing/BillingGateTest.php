@@ -11,7 +11,6 @@ use App\Enums\OnboardingStatus;
 use App\Enums\ProjectStatus;
 use App\Models\Channel;
 use App\Models\ContentItem;
-use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
@@ -268,22 +267,6 @@ final class BillingGateTest extends TestCase
         }
 
         $this->assertSame(3, $entitlements->for($this->project)->used(Metric::Articles));
-    }
-
-    #[Test]
-    public function accepting_a_month_is_refused_once_the_plans_are_used_up(): void
-    {
-        ProjectSubscription::factory()->forProject($this->project)->plan('starter')->create();
-        app(Entitlements::class)->record($this->project, Metric::ContentPlans, 1);
-
-        $plan = ContentPlan::factory()->create();
-
-        // Accepting is where a plan is spent. Proposing was gated and accepting
-        // was not, so a project could propose a month at a time all year and
-        // then commit every one of them.
-        $this->actingAs($this->owner)
-            ->postJson(route('studio.accept', $plan), ['version' => 1])
-            ->assertStatus(409);
     }
 
     #[Test]

@@ -3,7 +3,6 @@ import {
     CircleDollarSign,
     Coins,
     Gauge,
-    Layers,
     ListTree,
     MessagesSquare,
     TrendingUp,
@@ -42,40 +41,6 @@ type StepRow = {
     latency_ms: number;
 };
 
-/** One of §8's four separate lines. */
-type CostLine = {
-    key: string;
-    label: string;
-    note: string;
-    cost_micros: number;
-    units: number;
-    unit_label: string;
-    per_unit_micros: number | null;
-    /** Set for listening only: a standing cost is per day, never per post. */
-    per_day_micros: number | null;
-    per_post_micros: number | null;
-    standing: boolean;
-    answered?: number;
-};
-
-type SocialCost = {
-    window_days: number;
-    post: {
-        published: number;
-        cost_micros: number;
-        average_micros: number | null;
-        candidates: number;
-        candidates_per_post: number | null;
-        per_generation_micros: number | null;
-    };
-    article: {
-        published: number;
-        cost_micros: number;
-        average_micros: number | null;
-    };
-    lines: CostLine[];
-};
-
 type Props = {
     days: number;
     by_step: StepRow[];
@@ -100,7 +65,6 @@ type Props = {
         assistant_micros: number;
         total_micros: number;
     } | null;
-    social: SocialCost | null;
 };
 
 const money = (micros: number): string => `$${(micros / 1_000_000).toFixed(4)}`;
@@ -114,7 +78,6 @@ export default function Metering({
     per_unit,
     assistant,
     spend,
-    social,
 }: Props) {
     const peak = Math.max(1, ...trend.map((point) => point.cost_micros));
 
@@ -186,8 +149,6 @@ export default function Metering({
                         hint="distinct step keys"
                     />
                 </div>
-
-                {social && <PublishedPost social={social} />}
 
                 <Card
                     className={`${workspacePanelClass} gap-0 overflow-hidden p-0`}
@@ -313,142 +274,6 @@ export default function Metering({
                 )}
             </WorkspacePage>
         </>
-    );
-}
-
-/**
- * §8 — the unit is a published post, not a generated one.
- *
- * The two headline figures sit next to each other on purpose: §12's sixth exit
- * criterion asks for the cost of a post to be *known and separated from* the
- * cost of an article, and separation you have to open a second screen to see is
- * not the useful kind.
- *
- * The four lines under them are §8's own list — listening, candidates, images,
- * replies. Listening reports a cost per day rather than a cost per post,
- * because it is hourly and constant: divide a fixed sweep by a fortnight that
- * published nothing and the per-post figure runs away to infinity while the
- * bill stays exactly the same.
- */
-function PublishedPost({ social }: { social: SocialCost }) {
-    const { post, article, lines } = social;
-
-    return (
-        <Card className={`${workspacePanelClass} gap-0 overflow-hidden p-0`}>
-            <CardHeader className="border-b px-5 py-5 sm:px-6">
-                <div className="flex items-start gap-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-300">
-                        <Layers className="size-4" aria-hidden="true" />
-                    </span>
-                    <div>
-                        <CardTitle className="text-base">
-                            What a published post costs
-                        </CardTitle>
-                        <CardDescription className="mt-1">
-                            Costs are grouped by the post that was published,
-                            including unused candidates and empty publishing
-                            slots. Counting model calls alone would miss that
-                            selection cost.
-                        </CardDescription>
-                    </div>
-                </div>
-            </CardHeader>
-
-            <div className="grid gap-px border-b bg-border sm:grid-cols-2">
-                <div className="bg-card px-5 py-5 sm:px-6">
-                    <p className="text-xs tracking-wide text-muted-foreground uppercase">
-                        Per published post
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold tabular-nums">
-                        {post.average_micros === null
-                            ? '—'
-                            : money(post.average_micros)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {post.published === 0
-                            ? 'Nothing published in this window, so there is nothing to divide by.'
-                            : `${money(post.cost_micros)} over ${post.published} post${post.published === 1 ? '' : 's'}`}
-                    </p>
-                    {post.per_generation_micros !== null && (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                            One generation cost{' '}
-                            {money(post.per_generation_micros)}
-                            {post.candidates_per_post !== null &&
-                                ` — ${post.candidates_per_post} were written for every post that went out.`}
-                        </p>
-                    )}
-                </div>
-
-                <div className="bg-card px-5 py-5 sm:px-6">
-                    <p className="text-xs tracking-wide text-muted-foreground uppercase">
-                        Per published article
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold tabular-nums">
-                        {article.average_micros === null
-                            ? '—'
-                            : money(article.average_micros)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {article.published === 0
-                            ? 'Nothing published in this window, so there is nothing to divide by.'
-                            : `${money(article.cost_micros)} over ${article.published} article${article.published === 1 ? '' : 's'}`}
-                    </p>
-                </div>
-            </div>
-
-            <div className="overflow-x-auto">
-                <Table className="min-w-[680px]">
-                    <TableHeader>
-                        <TableRow className="bg-muted/20 text-xs tracking-wide uppercase">
-                            <TableHead>Line</TableHead>
-                            <TableHead>Units</TableHead>
-                            <TableHead>Per unit</TableHead>
-                            <TableHead>Per post</TableHead>
-                            <TableHead>Cost</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {lines.map((line) => (
-                            <TableRow key={line.key}>
-                                <TableCell className="max-w-[22rem] align-top">
-                                    <span className="font-medium">
-                                        {line.label}
-                                    </span>
-                                    <span className="mt-1 block text-xs leading-relaxed text-wrap text-muted-foreground">
-                                        {line.note}
-                                    </span>
-                                </TableCell>
-                                <TableCell className="align-top text-muted-foreground">
-                                    {line.units.toLocaleString()}{' '}
-                                    {line.unit_label}
-                                </TableCell>
-                                <TableCell className="align-top text-muted-foreground">
-                                    {line.per_unit_micros === null
-                                        ? '—'
-                                        : money(line.per_unit_micros)}
-                                </TableCell>
-                                <TableCell className="align-top text-muted-foreground">
-                                    {line.standing ? (
-                                        <span title="Hourly and constant, so it is priced per day rather than per post.">
-                                            {line.per_day_micros === null
-                                                ? '—'
-                                                : `${money(line.per_day_micros)}/day`}
-                                        </span>
-                                    ) : line.per_post_micros === null ? (
-                                        '—'
-                                    ) : (
-                                        money(line.per_post_micros)
-                                    )}
-                                </TableCell>
-                                <TableCell className="align-top font-medium">
-                                    {money(line.cost_micros)}
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-            </div>
-        </Card>
     );
 }
 

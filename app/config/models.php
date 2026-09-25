@@ -100,39 +100,6 @@ return [
             'provider' => env('MODEL_FACTCHECK_PROVIDER', 'openai'),
             'model' => env('MODEL_FACTCHECK', 'gpt-5'),
         ],
-
-        /*
-         * The pool of post candidates of §4.3, and the most expensive tier
-         * that has a price under the current list.
-         *
-         * > `draft_candidates` генерирует 5–10 кандидатов и оставляет один.
-         * > Токены дешевле охвата: цена плохого поста — просевшее окно показа
-         * > на недели вперёд. Это единственное место, где сознательно тратится
-         * > дорогая модель.
-         *
-         * Its own role rather than `draft` for two reasons, and the second is
-         * the one that made it a role. The first is that the sentence above is
-         * a decision about this step alone: a project that wants the good model
-         * writing eight posts and the cheap one writing replies says so in two
-         * lines here and changes no code (§9).
-         *
-         * The second is §8. The unit that gets costed is the *published* post,
-         * and at one in eight the post costs eight generations — "отчёт,
-         * считающий вызовы, соврёт в разы". `pipeline:cost` groups by role, so
-         * folding the pool into `draft` would bury the price of selection
-         * inside the price of writing, and the one number §12's sixth exit
-         * criterion asks for — what a published post costs — would be
-         * unrecoverable from the report. A separate role makes selection a line
-         * of its own.
-         *
-         * `gpt-5.6-sol` and not `terra`: this is where the expense is meant to
-         * be, and it is priced in version 2 below, so the report shows real
-         * micro-USD rather than the $0.0000 that an unpriced model produces.
-         */
-        'social_candidates' => [
-            'provider' => env('MODEL_SOCIAL_CANDIDATES_PROVIDER', 'openai'),
-            'model' => env('MODEL_SOCIAL_CANDIDATES', 'gpt-5.6-sol'),
-        ],
     ],
 
     /*

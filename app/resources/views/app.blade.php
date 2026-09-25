@@ -11,17 +11,17 @@
              re-asks everybody rather than carrying old consent forward onto a
              list they never saw. --}}
         <meta name="consent-version" content="{{ config('legal.consent_version') }}">
-        <meta name="description" content="Avyo turns brand strategy into search content, social posts, and measurable organic growth.">
+        <meta name="description" content="Avyo turns brand strategy into search content and measurable organic growth.">
         <meta property="og:site_name" content="Avyo">
         <meta property="og:type" content="website">
         <meta property="og:title" content="Avyo — One engine for staying visible">
-        <meta property="og:description" content="Turn brand strategy into search content, social posts, and measurable organic growth.">
+        <meta property="og:description" content="Turn brand strategy into search content and measurable organic growth.">
         <meta property="og:image" content="{{ url('/og.png') }}">
         <meta property="og:image:width" content="1731">
         <meta property="og:image:height" content="909">
         <meta name="twitter:card" content="summary_large_image">
         <meta name="twitter:title" content="Avyo — One engine for staying visible">
-        <meta name="twitter:description" content="Turn brand strategy into search content, social posts, and measurable organic growth.">
+        <meta name="twitter:description" content="Turn brand strategy into search content and measurable organic growth.">
         <meta name="twitter:image" content="{{ url('/og.png') }}">
 
         {{-- Inline script to detect system dark mode preference and apply it immediately --}}

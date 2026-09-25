@@ -2,9 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Enums\ReplyAttemptOutcome;
-use App\Social\ReplyClearance;
-use App\Social\ReplyGuardVerdict;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -49,7 +46,7 @@ return new class extends Migration
 
             // ReplyRoute: whether this engine made the call or the operator did.
             $table->string('route');
-            $table->string('outcome')->default(ReplyAttemptOutcome::InFlight->value);
+            $table->string('outcome')->default('in_flight');
 
             // What the operator was actually looking at. Not a copy of
             // `draft_reply`: the row is closed on `draft_reply` only when the
@@ -61,10 +58,10 @@ return new class extends Migration
             // operator gave for a reply they posted themselves.
             $table->string('reply_external_id')->nullable();
 
-            /** @see ReplyClearance::ACKNOWLEDGEABLE */
+            // Values from ReplyClearance::ACKNOWLEDGEABLE.
             $table->jsonb('acknowledged')->default('[]');
 
-            /** @see ReplyGuardVerdict::toArray() */
+            // Shaped by ReplyGuardVerdict::toArray().
             $table->jsonb('findings')->nullable();
 
             // Why it ended the way it did, in the words the operator was given.

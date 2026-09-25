@@ -8,13 +8,9 @@ use App\Enums\AssetRole;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
 use App\Enums\SearchIntent;
-use App\Enums\SocialBand;
 use App\Media\HeroImage;
 use App\Models\Concerns\BelongsToProject;
-use App\Research\KeywordIdea;
 use App\Support\Content\InvalidStateTransition;
-use App\Support\Seasonality\SeasonalCurve;
-use Carbon\CarbonInterface;
 use Database\Factories\ContentItemFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -30,9 +26,8 @@ use Illuminate\Support\Str;
  * A content unit (§2) — deliberately not called an article.
  *
  * One row is one locale of one thing. The unit as a whole is the set of rows
- * sharing a `locale_group_id`; its social posts are rows pointing at it through
- * `parent_id`. A LinkedIn post about the Portuguese version of a guide is a
- * row, the guide in English is a row, and they are the same unit.
+ * sharing a `locale_group_id`. The guide in Portuguese is a row, the guide in
+ * English is a row, and they are the same unit.
  *
  * State changes only ever go through {@see transitionTo()} and the named
  * methods over it. Assigning `$item->state` directly is possible in PHP and is
@@ -42,10 +37,7 @@ use Illuminate\Support\Str;
  * @property string $id
  * @property string $project_id
  * @property string|null $content_plan_id
- * @property string|null $content_idea_id
  * @property string|null $brand_brief_id
- * @property string|null $parent_id
- * @property string|null $signal_id
  * @property string $locale_group_id
  * @property string $locale
  * @property ContentItemState $state
@@ -61,9 +53,7 @@ use Illuminate\Support\Str;
  * @property SearchIntent|null $intent
  * @property string|null $cluster
  * @property Carbon|null $scheduled_for
- * @property Carbon|null $slot_at
  * @property bool $needs_original_data
- * @property list<string> $planned_derivatives
  * @property list<string> $outline
  * @property string|null $body_markdown
  * @property string|null $body_html
@@ -72,7 +62,6 @@ use Illuminate\Support\Str;
  * @property array<string, mixed> $faq_json_ld
  * @property list<string> $quotable_blocks
  * @property array<string, bool> $entity_coverage
- * @property array{entity: string, signals: int, interactions: int, captured_on: string}|null $coverage_gap
  * @property array<string, mixed> $factcheck
  * @property array<string, mixed> $author
  * @property list<string> $image_anchors
@@ -82,10 +71,6 @@ use Illuminate\Support\Str;
  * @property string|null $refresh_reason
  * @property list<array<string, string>> $internal_links
  * @property list<array{url: string, title: string}>|null $offered_sources
- * @property string|null $channel_type
- * @property array<string, mixed>|null $channel_payload
- * @property SocialBand|null $social_band
- * @property Carbon|null $expires_at
  * @property array<string, mixed> $review
  * @property Carbon|null $reviewed_at
  * @property string|null $public_url
@@ -106,10 +91,7 @@ class ContentItem extends Model
         'content_plan_id',
         'article_planning_period_id',
         'planned_publication_at',
-        'content_idea_id',
         'brand_brief_id',
-        'parent_id',
-        'signal_id',
         'locale_group_id',
         'locale',
         'type',
@@ -124,9 +106,7 @@ class ContentItem extends Model
         'intent',
         'cluster',
         'scheduled_for',
-        'slot_at',
         'needs_original_data',
-        'planned_derivatives',
         'outline',
         'body_markdown',
         'body_html',
@@ -135,7 +115,6 @@ class ContentItem extends Model
         'faq_json_ld',
         'quotable_blocks',
         'entity_coverage',
-        'coverage_gap',
         'factcheck',
         'author',
         'image_anchors',
@@ -144,10 +123,6 @@ class ContentItem extends Model
         'reviewed_at',
         'internal_links',
         'offered_sources',
-        'channel_type',
-        'channel_payload',
-        'social_band',
-        'expires_at',
         'citations',
         'citations_checked_at',
         'refresh_due_at',
@@ -170,7 +145,6 @@ class ContentItem extends Model
     protected $attributes = [
         'state' => ContentItemState::Idea->value,
         'entities' => '[]',
-        'planned_derivatives' => '[]',
         'outline' => '[]',
         'json_ld' => '{}',
         'faq_json_ld' => '{}',
@@ -315,62 +289,6 @@ class ContentItem extends Model
         return $this->state->canTransitionTo($next);
     }
 
-    // -------------------------------------------------------------- social
-
-    /**
-     * True when this row is a post rather than a page (§3).
-     *
-     * Asked of the type, never of `parent_id`. §3 makes the parent optional for
-     * a social unit — a native post answering a question nobody wrote an
-     * article about has no parent and is still a post — so the two questions
-     * came apart the moment the type existed. {@see isDerivative()} is the
-     * other one, and it now means only what it says.
-     */
-    public function isSocial(): bool
-    {
-        return $this->type === ContentItemType::SocialPost;
-    }
-
-    /**
-     * Past the window it was written for (§5).
-     *
-     * The TTL rides on the unit and not only on its signal because a reactive
-     * draft that misses its window is killed rather than published late, and
-     * the thing being killed is the draft. A null `expires_at` never expires:
-     * only the reactive band sets one.
-     */
-    public function hasExpired(?CarbonInterface $at = null): bool
-    {
-        return $this->expires_at !== null
-            && $this->expires_at->lessThanOrEqualTo($at ?? now());
-    }
-
-    // ------------------------------------------------------------ the tree
-
-    /** True when this row hangs off another unit rather than standing alone. */
-    public function isDerivative(): bool
-    {
-        return $this->parent_id !== null;
-    }
-
-    /**
-     * @return BelongsTo<self, $this>
-     */
-    public function parent(): BelongsTo
-    {
-        return $this->belongsTo(self::class, 'parent_id');
-    }
-
-    /**
-     * The social posts derived from this unit (§2, репурпоз-дерево).
-     *
-     * @return HasMany<self, $this>
-     */
-    public function derivatives(): HasMany
-    {
-        return $this->hasMany(self::class, 'parent_id');
-    }
-
     /**
      * Every locale of this unit, including this row.
      *
@@ -382,19 +300,6 @@ class ContentItem extends Model
     public function localeVariants(): HasMany
     {
         return $this->hasMany(self::class, 'locale_group_id', 'locale_group_id');
-    }
-
-    /**
-     * When in the year this subject peaks, and what to do about it (§5).
-     *
-     * The curve arrives from whichever keyword vendor is bound and is stored on
-     * the unit by research; this is the only way anything should read it, so
-     * that "which month is the peak" has one definition shared with
-     * {@see KeywordIdea::seasonality()}.
-     */
-    public function seasonality(): SeasonalCurve
-    {
-        return SeasonalCurve::fromArray($this->monthly_volumes);
     }
 
     /**
@@ -432,16 +337,6 @@ class ContentItem extends Model
     }
 
     /**
-     * The channel-independent thought this draft expresses.
-     *
-     * @return BelongsTo<ContentIdea, $this>
-     */
-    public function contentIdea(): BelongsTo
-    {
-        return $this->belongsTo(ContentIdea::class);
-    }
-
-    /**
      * The brief version this was written from.
      *
      * @return BelongsTo<BrandBrief, $this>
@@ -449,20 +344,6 @@ class ContentItem extends Model
     public function brandBrief(): BelongsTo
     {
         return $this->belongsTo(BrandBrief::class);
-    }
-
-    /**
-     * Why this unit exists (§3).
-     *
-     * The half of the feedback loop that learns by source rather than by
-     * format: a month of these makes "does the news contour pay for itself" a
-     * group by instead of an argument.
-     *
-     * @return BelongsTo<Signal, $this>
-     */
-    public function signal(): BelongsTo
-    {
-        return $this->belongsTo(Signal::class);
     }
 
     /**
@@ -529,74 +410,19 @@ class ContentItem extends Model
     // -------------------------------------------------------------- scopes
 
     /**
-     * Load the whole unit — every locale and every derivative — in a fixed
-     * number of queries.
+     * Load the whole unit — every locale — in a fixed number of queries.
      *
      * Exists as a scope rather than as advice in a comment because the shape
      * this guards against is the default one: iterating units and touching
-     * `->derivatives` inside the loop is both the obvious way to write the
+     * `->localeVariants` inside the loop is both the obvious way to write the
      * dashboard and a query per row.
      *
      * @param  Builder<self>  $query
      * @return Builder<self>
      */
-    public function scopeWithTree(Builder $query): Builder
+    public function scopeWithLocaleVariants(Builder $query): Builder
     {
-        return $query->with(['localeVariants', 'derivatives']);
-    }
-
-    /**
-     * Articles — the pages this project writes, and nothing else.
-     *
-     * The definition changed with §3 of the social spec and the name did not,
-     * so read this before restoring the old one. "Root" used to be a fact about
-     * the tree: `parent_id is null`, meaning "not a derivative", which at the
-     * time was the same sentence as "an article" because the only parentless
-     * rows were articles and the only social rows hung off one.
-     *
-     * §3 makes the parent optional for a social unit — a native post answering
-     * a question nobody wrote an article about has no parent — so "parentless"
-     * and "article" came apart, and every caller of this scope meant the second
-     * one. Left as it was, a 300-character post would be served to a static
-     * site as an article, auto-approved by the project's `autopublish` flag
-     * with no reference to {@see SocialBand::canEverAutopublish()}, handed to
-     * the article generation pipeline, counted against the calendar, and — the
-     * worst of them — treated by planning as a subject already covered, which
-     * inverts §1.3: the reverse flow matters more than the forward one, and a
-     * post asking a question is a reason to write the article, not a reason
-     * not to.
-     *
-     * So this now guarantees two things, not one: no derivative, and no social
-     * post of any kind. A caller that genuinely wants every unit whatever its
-     * type must say so by not calling this. {@see scopeSocial()} is the other
-     * half.
-     *
-     * @param  Builder<self>  $query
-     * @return Builder<self>
-     */
-    public function scopeRoots(Builder $query): Builder
-    {
-        return $query
-            ->whereNull('parent_id')
-            ->where('type', '<>', ContentItemType::SocialPost->value);
-    }
-
-    /**
-     * Posts — the other half of {@see scopeRoots()}.
-     *
-     * Asked of the type and not of the tree, for the same reason
-     * {@see isSocial()} is: both a native post (no parent, §3) and one cut out
-     * of an article (a parent, §5's Derivative band) are posts, and the
-     * governor budgets them by band rather than by where they came from. The
-     * two scopes partition the table, which is what makes "is this an article
-     * or a post" answerable in SQL rather than per row in PHP.
-     *
-     * @param  Builder<self>  $query
-     * @return Builder<self>
-     */
-    public function scopeSocial(Builder $query): Builder
-    {
-        return $query->where('type', ContentItemType::SocialPost->value);
+        return $query->with(['localeVariants']);
     }
 
     /**
@@ -639,28 +465,18 @@ class ContentItem extends Model
             'intent' => SearchIntent::class,
             'scheduled_for' => 'date',
             'planned_publication_at' => 'datetime',
-            // The instant, next to the article calendar's date. A social slot
-            // stands inside a 60–90 minute duty window (§4.3), which a date
-            // cannot express; the two are written together and the date is
-            // derived from the instant, so they cannot disagree.
-            'slot_at' => 'datetime',
             'needs_original_data' => 'boolean',
-            'planned_derivatives' => 'array',
             'outline' => 'array',
             'json_ld' => 'array',
             'faq_json_ld' => 'array',
             'quotable_blocks' => 'array',
             'entity_coverage' => 'array',
-            'coverage_gap' => 'array',
             'factcheck' => 'array',
             'author' => 'array',
             'image_anchors' => 'array',
             'internal_links' => 'array',
             'offered_sources' => 'array',
             'monthly_volumes' => 'array',
-            'channel_payload' => 'array',
-            'social_band' => SocialBand::class,
-            'expires_at' => 'datetime',
             'citations' => 'array',
             'citations_checked_at' => 'datetime',
             'refresh_due_at' => 'datetime',

@@ -4,14 +4,10 @@ declare(strict_types=1);
 
 namespace App\Ai\Assistant;
 
-use App\ContentStudio\ContentStudioAction;
-use App\ContentStudio\ContentStudioOperations;
 use App\Enums\ContentItemState;
 use App\Enums\ContentItemType;
-use App\Enums\PostKind;
 use App\Models\BrandBrief;
 use App\Models\ContentItem;
-use App\Models\ContentPlan;
 use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Pipelines\Core\PipelineRunner;
@@ -19,7 +15,6 @@ use App\Support\Engine\ArticleWorkflow;
 use App\Support\Engine\MonthPlanner;
 use App\Support\Tenancy\CurrentProject;
 use App\Visibility\VisibilityReport;
-use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -55,7 +50,6 @@ final class MarketingTools
     public function __construct(
         private readonly CurrentProject $current,
         private readonly PipelineRunner $runner,
-        private readonly ContentStudioOperations $operations,
         private readonly MonthPlanner $planner,
     ) {}
 
@@ -68,7 +62,6 @@ final class MarketingTools
             $this->readVisibility(),
             $this->readContentState(),
             $this->readBrandBrief(),
-            ...(config('social.enabled') ? [$this->writePost()] : []),
             $this->writeArticle(),
             $this->planMonth(),
         ];
@@ -108,13 +101,8 @@ final class MarketingTools
             .'Counts by state, plus the most recent titles. Use before proposing new work, so the advice '
             .'accounts for what is already written and waiting.',
         )->setCallback(function (): array {
-            $articles = ContentItem::query()->roots();
-            $social = ContentItem::query()->social();
+            $articles = ContentItem::query();
 
-            // Typed to the model rather than to `Builder`, because `inState()`
-            // is a local scope and static analysis cannot see it on the generic
-            // builder — the same reason the scopes exist at all is that "is
-            // this an article or a post" should be answerable in SQL.
             $count = static fn (Builder $query, ContentItemState $state): int => (clone $query)
                 ->where('state', $state->value)->count();
 
@@ -130,14 +118,6 @@ final class MarketingTools
                         ->where('pipeline', 'planning')
                         ->latest('created_at')->value('created_at')?->toDateString(),
                 ],
-                ...(config('social.enabled') ? ['social' => [
-                    'planned' => $count($social, ContentItemState::Idea),
-                    'drafted' => $count($social, ContentItemState::Draft),
-                    'approved_not_published' => $count($social, ContentItemState::Approved),
-                    'published' => $count($social, ContentItemState::Published),
-                    'recent_titles' => (clone $social)->latest()->limit(10)
-                        ->pluck('title')->all(),
-                ]] : []),
             ];
         });
     }
@@ -168,78 +148,6 @@ final class MarketingTools
     }
 
     // -------------------------------------------------------------- making
-
-    private function writePost(): Tool
-    {
-        $kinds = implode(', ', array_column(PostKind::cases(), 'value'));
-
-        $tool = Tool::create(
-            'write_post',
-            'Write one social post now. The kind decides which channels it goes to, so it is a real choice: '
-            ."one of {$kinds}. Produces drafts and their pictures; it does not publish, and a person still "
-            .'approves it. Ask what the point of the post is before calling this if it is not clear.',
-        );
-
-        $tool->addProperty('thesis', 'string', 'The one thing a reader should take away. A sentence, not a title.');
-        $tool->addProperty('kind', 'string', 'Which shape of post this is.', array_column(PostKind::cases(), 'value'));
-        $tool->setRequiredProps(['thesis', 'kind']);
-
-        return $tool->setCallback(function (string $thesis, string $kind): array {
-            if (! config('social.enabled')) {
-                return ['ok' => false, 'error' => 'Social publishing is retired.'];
-            }
-
-            $project = $this->project();
-            $postKind = PostKind::tryFrom($kind);
-
-            if ($postKind === null) {
-                return ['ok' => false, 'error' => "There is no post kind called {$kind}."];
-            }
-
-            $date = CarbonImmutable::now($project->timezone)->startOfDay();
-            $plan = ContentPlan::query()->firstOrCreate(['month' => $date->startOfMonth()->toDateString()]);
-            $title = Str::limit(trim(Str::before($thesis, "\n")), 80, '', preserveWords: true);
-
-            $idea = $plan->contentIdeas()->create([
-                'proposal_version' => $plan->assistant_version,
-                'idea_key' => Str::slug($title).'-'.Str::lower(Str::random(4)),
-                'title' => $title,
-                'kind' => $postKind,
-                'pillar' => 'Operator',
-                'thesis' => trim($thesis),
-                'evidence' => [],
-                'goal' => 'operator',
-                'audience' => (string) ($project->site_analysis['audience'] ?? ''),
-                'angle' => null,
-                'channels' => array_map(
-                    static fn ($channel): string => $channel->value,
-                    $postKind->channels(),
-                ),
-                'scheduled_for' => $date,
-            ]);
-
-            // Through the studio's own operations service and not the runner:
-            // it supplies `content_plan_id`, which the pipeline requires, and
-            // it holds the per-idea lock that stops one idea being drafted
-            // twice. Calling the runner directly failed validation every time
-            // and reported it to the model as though the engine had refused.
-            return $this->started(
-                fn () => $this->operations->start(
-                    $project,
-                    $plan,
-                    ContentStudioAction::GenerateIdea,
-                    ['content_idea_id' => (string) $idea->getKey()],
-                ),
-                [
-                    'ok' => true,
-                    'wrote' => 'post',
-                    'title' => $title,
-                    'channels' => $idea->channels,
-                    'note' => 'Drafting now. It lands on the social board and waits for a person.',
-                ],
-            );
-        });
-    }
 
     private function writeArticle(): Tool
     {

@@ -62,11 +62,6 @@ class Asset extends Model
         return $this->belongsTo(ContentItem::class);
     }
 
-    public function isHero(): bool
-    {
-        return $this->role === AssetRole::Hero;
-    }
-
     /** The address the publish payload carries. */
     public function url(): string
     {

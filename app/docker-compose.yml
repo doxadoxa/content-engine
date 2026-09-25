@@ -78,7 +78,7 @@ services:
       LOG_STACK: stderr,sentry
 
       # Inside the compose network. Absent in production until the service is
-      # deployed there, and PanelRenderer treats absent as "not configured"
+      # deployed there, and SiteScreenshot treats absent as "not configured"
       # rather than as an error.
       RENDERER_URL: "${RENDERER_URL:-http://renderer:3020}"
 
@@ -173,14 +173,13 @@ services:
       retries: 12
       start_period: 60s
 
-  # Draws the panels a teaching carousel is made of, and the seam video will
-  # arrive through. Not published to the host: it is an unauthenticated browser
-  # that renders whatever HTML it is handed, and it is safe only because nothing
-  # outside this network can reach it.
+  # Photographs a project's website during onboarding and brief analysis. Not
+  # published to the host: it is an unauthenticated browser that visits
+  # whatever address it is handed, and it is safe only because nothing outside
+  # this network can reach it.
   renderer:
     build:
-      # The app root, so the image can take the brand's typeface from
-      # resources/fonts rather than keeping a second copy of it.
+      # The app root, which is where the Dockerfile's COPY paths start.
       context: .
       dockerfile: docker/renderer/Dockerfile
     image: content-engine-renderer:dev
@@ -192,8 +191,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-      # Bundling happens once at boot and takes a while on a cold image.
-      start_period: 120s
+      start_period: 30s
 
   # Every mail the stack sends, held and displayed instead of delivered.
   #

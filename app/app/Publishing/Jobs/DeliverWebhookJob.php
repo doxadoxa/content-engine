@@ -6,7 +6,6 @@ namespace App\Publishing\Jobs;
 
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
-use App\Publishing\RetiredSocialDelivery;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -52,7 +51,7 @@ class DeliverWebhookJob implements ShouldQueue
             /** @var WebhookDelivery|null $fresh */
             $fresh = WebhookDelivery::query()->with('channel')->whereKey($delivery->getKey())->first();
 
-            if ($fresh !== null && ! RetiredSocialDelivery::stop($fresh)) {
+            if ($fresh !== null) {
                 // The row says where it is going; the registry says who takes
                 // it there. Nothing in the queued payload had to know.
                 $publishers->forDelivery($fresh)->attempt($fresh);

@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Social\ReplyGuardVerdict;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -21,7 +20,7 @@ use Illuminate\Support\Facades\Schema;
  * A json document rather than a boolean and a string, because the screen shows
  * every finding and the send path reads the blocking ones. The shape is
  * `{"findings": [{"code": …, "detail": …, "blocking": bool}], "checked_at": …}`
- * and it is written by {@see ReplyGuardVerdict::toArray()}.
+ * and it is written by `ReplyGuardVerdict::toArray()`.
  *
  * Nullable, and null means "no draft has been guarded yet" rather than "it
  * passed" — a conversation still in `new` has nothing to say here, and reading

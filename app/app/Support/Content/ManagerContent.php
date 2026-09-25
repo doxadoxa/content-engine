@@ -44,7 +44,7 @@ final class ManagerContent
     /** @return Builder<ContentItem> */
     public static function query(string $view = 'all'): Builder
     {
-        $query = ContentItem::query()->roots();
+        $query = ContentItem::query();
 
         return match ($view) {
             'writing' => $query->where(fn (Builder $items) => $items->whereIn('state', ['queued', 'generating'])
