@@ -197,7 +197,7 @@ class OnboardingController extends Controller
         // clicks can arrive before either response returns; only the request
         // that sees Draft while holding this lock may create the brief,
         // channels, and research run.
-        $started = DB::transaction(function () use ($project): ?bool {
+        $started = DB::transaction(function () use ($project, $plan): ?bool {
             $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
 
             if ($locked->onboarding_status !== OnboardingStatus::Draft) {
@@ -211,9 +211,9 @@ class OnboardingController extends Controller
                 return null;
             }
 
-            $this->current->run($locked, function () use ($locked): void {
+            $this->current->run($locked, function () use ($locked, $plan): void {
                 $this->writeBrief($locked);
-                $this->connectChannels($locked);
+                $this->connectChannels($locked, $plan);
             });
 
             // Marked as launching, and nothing started.
@@ -598,7 +598,7 @@ class OnboardingController extends Controller
      * The site the project publishes to, connected from the wizard's answers so
      * the first article has somewhere to go.
      */
-    private function connectChannels(Project $project): void
+    private function connectChannels(Project $project, Plan $plan): void
     {
         /** @var array<string, mixed> $answers */
         $answers = $project->onboarding['channels'] ?? [];
@@ -610,7 +610,15 @@ class OnboardingController extends Controller
             ? (string) ($answers['webhook_endpoint'] ?? '')
             : '';
 
-        if ($endpoint !== '') {
+        // The plan's channel limit, checked here as well as in
+        // `ChannelController::store`, the other place a channel is made. A
+        // site that does not fit is not connected, and the launch goes ahead
+        // anyway: the channels page is where one channel is swapped for another.
+        $limit = $plan->limit('channels');
+        $fits = $limit === null
+            || Channel::query()->where('name', '!=', 'Website')->count() < $limit;
+
+        if ($endpoint !== '' && $fits) {
             $website = Channel::query()->updateOrCreate(
                 ['name' => 'Website'],
                 [
