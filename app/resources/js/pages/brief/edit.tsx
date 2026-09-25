@@ -42,10 +42,7 @@ type BriefContent = {
     brand_ink: string;
     /** Empty where the brand has no accent, which means "use the ink". */
     brand_accent: string;
-    /**
-     * The brand's other colours, heaviest first. Never drawn with directly —
-     * what the engine reaches into when the accent cannot carry type.
-     */
+    /** The brand's other colours, heaviest first. */
     brand_palette: string[];
     brand_typeface: string;
     overlay_position: string;
@@ -85,14 +82,14 @@ type Props = {
      */
     paletteOutcome: PaletteOutcome | null;
     /**
-     * Every colour the site declares, heaviest first — not just the three a
-     * panel has slots for. Read off the stylesheet, so these are the brand's own
-     * values rather than the nearest sixteenth of a screenshot.
+     * Every colour the site declares, heaviest first — not just the three the
+     * brief has fields for. Read off the stylesheet, so these are the brand's
+     * own values rather than the nearest sixteenth of a screenshot.
      */
     paletteColours: string[];
     /** The typeface the site sets, where it names one. */
     siteFont: string | null;
-    /** The faces the renderer's image carries, as slug and family name. */
+    /** The faces the brief offers, as slug and family name. */
     typefaces: { slug: string; name: string }[];
 };
 
@@ -289,12 +286,11 @@ export default function BrandBriefEdit({
                                 <CardHeader>
                                     <CardTitle>Look</CardTitle>
                                     <CardDescription>
-                                        The part something draws with rather
-                                        than reads. Visual language above tells
-                                        an image model what to make; these tell
-                                        Avyo what colour to fill, what to
-                                        emphasise with, and where to put the
-                                        words when it lays out a panel itself.
+                                        Your brand's exact colours, typeface and
+                                        way of setting words, kept with the
+                                        brief as a record. The pictures Avyo
+                                        makes are shaped by the visual language
+                                        above, not by these.
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -310,14 +306,10 @@ export default function BrandBriefEdit({
                                     />
 
                                     {/*
-                                     * Which of the faces the renderer carries
-                                     * this brand is set in. A select rather
-                                     * than a text field because the list is
-                                     * what the container has files for — a
-                                     * family it does not have draws in
-                                     * whatever Chromium falls back to, and it
-                                     * would look right to anyone reviewing on
-                                     * a machine that has the font installed.
+                                     * Which of a short list of faces this
+                                     * brand is set in. A select rather than a
+                                     * text field so the stored value is always
+                                     * one the server recognises.
                                      */}
                                     <div className="grid gap-2">
                                         <Label htmlFor="brand_typeface">
@@ -344,14 +336,14 @@ export default function BrandBriefEdit({
                                         </select>
                                         <p className="text-xs text-muted-foreground">
                                             {siteFont === null
-                                                ? 'What panels are set in.'
+                                                ? 'The face your brand is set in.'
                                                 : typefaces.some(
                                                         (face) =>
                                                             face.name.toLowerCase() ===
                                                             siteFont.toLowerCase(),
                                                     )
                                                   ? `Your site sets its type in ${siteFont}, which is on this list.`
-                                                  : `Your site sets its type in ${siteFont}, which the renderer does not carry yet.`}
+                                                  : `Your site sets its type in ${siteFont}, which is not on this list.`}
                                         </p>
                                         <InputError
                                             message={errors.brand_typeface}
@@ -663,7 +655,7 @@ function VersionEntry({
 }
 
 /**
- * The three colours a renderer draws with, and the site's own suggestion.
+ * The brand's three colours, and the site's own suggestion.
  *
  * Controlled rather than `defaultValue`, which is the whole reason this is a
  * component: an uncontrolled input cannot be filled in from outside, and the
@@ -671,10 +663,9 @@ function VersionEntry({
  * the fields.
  *
  * **Suggested, never applied.** The palette arrives from site analysis as three
- * values nobody has agreed to, and a wrong fill is not a visible error — it
- * quietly becomes every panel for a month. So it sits beside the fields as
- * something to click, the same way the assistant's goal is approved rather than
- * written straight into the month.
+ * values nobody has agreed to, and a wrong colour saved into the brand's record
+ * is not a visible error. So it sits beside the fields as something to click
+ * rather than being written straight into them.
  */
 function Colours({
     brief,
@@ -763,11 +754,8 @@ function Colours({
             />
 
             {/*
-             * The rest of the brand, submitted with the form and never drawn
-             * with directly. It is what the engine looks through when the accent
-             * cannot carry type on the fill — until this existed the answer was
-             * the ink, and the emphasis on a statistic quietly became the same
-             * colour as the words around it.
+             * The rest of the brand, submitted with the form beside the three
+             * colours above.
              *
              * Hidden inputs rather than a control per colour: the row above is
              * where colours are chosen, this is only where they are held, and
@@ -776,16 +764,12 @@ function Colours({
             <div className="sm:col-span-2">
                 <Label className="text-sm">Rest of the palette</Label>
                 <p className="mt-1 text-xs text-muted-foreground">
-                    Not drawn with directly. Avyo borrows from these when the
-                    accent is too close to the brand colour to be read.
+                    The brand's other colours, beyond the three above.
                 </p>
 
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                     {brandPalette.length === 0 && (
-                        <p className="text-xs text-muted-foreground">
-                            Empty — Avyo falls back to the text colour, as it
-                            always has.
-                        </p>
+                        <p className="text-xs text-muted-foreground">Empty.</p>
                     )}
 
                     {brandPalette.map((hex) => (
@@ -918,10 +902,10 @@ function Colours({
                  *
                  * Which is why each swatch asks where rather than acting on a
                  * click. A colour that silently overwrote a field would be the
-                 * "wrong fill quietly becomes every panel" failure with one
-                 * extra click in front of it, and the field it should land in is
-                 * genuinely ambiguous — that ambiguity is what kept these
-                 * read-only until there was a menu to resolve it.
+                 * "wrong colour quietly saved" failure with one extra click in
+                 * front of it, and the field it should land in is genuinely
+                 * ambiguous — that ambiguity is what kept these read-only until
+                 * there was a menu to resolve it.
                  */}
                 {(paletteColours.length > 0 || siteFont !== null) && (
                     <div className="mt-3 flex flex-col gap-2 border-t pt-3 sm:col-span-2">
@@ -962,10 +946,9 @@ function Colours({
                         )}
                         {siteFont !== null && (
                             <p className="text-xs text-muted-foreground">
-                                Your site sets its type in {siteFont}. Avyo
-                                draws generated panels in its own typeface —
-                                this is here so the brief and the site can be
-                                compared, not because anything reads it yet.
+                                Your site sets its type in {siteFont}. This is
+                                here so the brief and the site can be compared,
+                                not because anything reads it yet.
                             </p>
                         )}
                     </div>
@@ -1046,11 +1029,9 @@ function Swatch({ colour }: { colour: string }) {
  *
  * `<input type="color">` always has a value, so it has no way to express "this
  * brand has not got an accent" — and that state has to be expressible, because
- * it is the one every brief starts in and the one that keeps panels looking
- * exactly as they did before the field existed. A swatch alone would force every
- * brand to have a third colour, and the ones that picked whatever the input
- * happened to open on would be the worst off: a wrong accent is not a visible
- * error, it just quietly ships on every panel.
+ * it is the one every brief starts in. A swatch alone would force every brand
+ * to have a third colour, and the ones that picked whatever the input happened
+ * to open on would be recorded with an accent nobody chose.
  *
  * So the checkbox owns the decision and the swatch owns the value, and a hidden
  * field posts the empty string the server reads as "use the ink". The swatch
@@ -1122,8 +1103,7 @@ function AccentField({
                 Same as the text colour
             </label>
             <p className="text-xs text-muted-foreground">
-                What a panel emphasises with — the figure on a statistic, the
-                half of a comparison that matters.
+                The colour your brand emphasises with.
             </p>
             <InputError message={error} />
         </div>

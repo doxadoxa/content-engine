@@ -86,10 +86,9 @@ class StoreIdeas extends AbstractStep
                 'topic_difficulty' => $idea->difficulty,
                 'topic_volume' => $idea->volume,
                 // The monthly curve, stored beside the single figure it is the
-                // shape of. §5 plans the seasonal band four to six weeks ahead
-                // of a peak, and research is the only place that ever sees it —
+                // shape of. Research is the only place that ever sees it, and
                 // asking the vendor again in November to find out that November
-                // was the peak is the integration the spec says this is not.
+                // was the peak is the integration §5 says this is not.
                 'monthly_volumes' => $idea->volumeByMonth,
                 'intent' => $intent->value,
                 'cluster' => $pool->clusters[$idea->keyword] ?? $idea->keyword,

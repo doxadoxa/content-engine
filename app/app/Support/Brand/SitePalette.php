@@ -16,14 +16,13 @@ use GdImage;
  * {@see VisualStyle} docblock already objects to: "a brand whose colour is
  * decided by a model is a brand with a different colour every Tuesday."
  *
- * Three colours come out because three is what the renderers need: a fill, an
- * ink that reads on it, and an accent for the one thing on a panel that should
+ * Three colours come out because three is what the brief has fields for: a
+ * fill, an ink that reads on it, and an accent for the one thing that should
  * be looked at first.
  *
  * **Every one of them is a suggestion.** Nothing here writes to a Brand Brief.
- * A wrong fill is not a visible error — it silently becomes every branded
- * picture for a month — so the operator confirms it in the form rather than
- * finding it already applied.
+ * A wrong fill is not a visible error, so the operator confirms it in the form
+ * rather than finding it already applied.
  */
 final readonly class SitePalette
 {
@@ -77,7 +76,7 @@ final readonly class SitePalette
      *
      * WCAG's floor for large text and graphical objects, which is what an accent
      * is — a figure on a statistic, a rule, a tag. Below this the emphasis is
-     * there in the markup and invisible on the panel.
+     * there in the markup and invisible on the fill.
      */
     private const float ACCENT_CONTRAST = 3.0;
 
@@ -123,8 +122,8 @@ final readonly class SitePalette
      * Null for an unreadable image and — deliberately — for a site that is
      * simply white with black text. That is most of the web, and proposing
      * `#ffffff` as a brand's fill is worse than proposing nothing: it looks like
-     * an answer, and the operator who accepts it gets pictures the colour of a
-     * blank page.
+     * an answer, and the operator who accepts it records a brand the colour of
+     * a blank page.
      */
     public static function fromPng(string $bytes): ?self
     {
@@ -163,8 +162,8 @@ final readonly class SitePalette
      * The three are chosen on different tests, because they are different jobs:
      *
      * - **fill** is the heaviest chromatic *background*. Still backgrounds only,
-     *   and still by area, because a fill is the thing a panel is painted with
-     *   and a page's own answer to that is what it paints itself with.
+     *   and still by area, because a fill is a surface colour and a page's own
+     *   answer to that is what it paints itself with.
      * - **ink** comes from the site's own neutrals, exactly as before.
      * - **accent** is the heaviest colour vivid enough to be a decision that
      *   also stands apart from the fill. Contrast rather than the hue distance
@@ -224,7 +223,7 @@ final readonly class SitePalette
 
             // And separate from the fill it will be drawn on. This is what stops
             // a lighter shade of the brand colour becoming its own accent —
-            // vivid enough to pass the test above, invisible against the panel.
+            // vivid enough to pass the test above, invisible against the fill.
             if ($style->contrast($colour['hex'], $fill['hex']) < self::ACCENT_CONTRAST) {
                 continue;
             }
@@ -547,7 +546,7 @@ final readonly class SitePalette
 
         // The heaviest colour that is actually a painted surface. Not simply the
         // heaviest: on a photo-led page that is the photograph, and a fill is
-        // the thing a panel is filled *with*.
+        // a surface colour.
         $fill = null;
 
         foreach ($chromatic as $candidate) {

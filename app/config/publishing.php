@@ -41,8 +41,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | How long a delivery may sit at `pending` before `publish:sweep-stranded`
-    | presumes the worker that had it will never come back. The default clears
-    | the Redis connection's `retry_after` with room to spare — see
+    | presumes the worker that had it will never come back. The default was
+    | chosen to clear the Redis connection's `retry_after` when that was
+    | 1 200 s; it is 2 700 s now, which the default does not clear. See
     | App\Publishing\StrandedDeliveries, which explains the arithmetic and
     | refuses to go below ten minutes whatever is configured here.
     |

@@ -12,7 +12,7 @@ use Tests\TestCase;
 final class VisualStyleTest extends TestCase
 {
     #[Test]
-    public function a_brand_that_has_never_opened_the_form_still_renders(): void
+    public function a_brand_that_has_never_opened_the_form_still_has_a_style(): void
     {
         $style = VisualStyle::fromBrief(null);
 
@@ -24,12 +24,11 @@ final class VisualStyleTest extends TestCase
     }
 
     /**
-     * An unset accent is the ink, which is what every renderer already drew.
+     * An unset accent is the ink.
      *
-     * The load-bearing case of the whole field. The renderers passed the ink as
-     * the accent from the day they existed, so a default that resolved to
-     * anything else would have restyled every brand's pictures the moment the
-     * migration ran — a schema change quietly changing what published.
+     * The load-bearing case of the whole field. A brand that has not named an
+     * accent has not got one, and the colour it already emphasises with is its
+     * ink — not a hue this engine picked on its behalf.
      */
     #[Test]
     public function a_brand_that_has_not_named_an_accent_emphasises_in_its_own_ink(): void
@@ -46,7 +45,7 @@ final class VisualStyleTest extends TestCase
     }
 
     #[Test]
-    public function an_accent_the_brand_did_name_is_the_one_that_is_drawn(): void
+    public function an_accent_the_brand_did_name_is_the_one_that_is_kept(): void
     {
         $style = VisualStyle::fromBrief(new BrandBrief([
             'brand_ink' => '#f3efe6',
@@ -65,7 +64,7 @@ final class VisualStyleTest extends TestCase
         ]));
 
         // Three digits is shorthand and expands. Anything shorter is somebody
-        // mid-keystroke, and the panel it would draw is worse than no accent.
+        // mid-keystroke, and a colour guessed from it is worse than no accent.
         $this->assertSame('#dd6655', $style->accent);
 
         $this->assertSame(
@@ -78,11 +77,10 @@ final class VisualStyleTest extends TestCase
     }
 
     #[Test]
-    public function a_half_typed_colour_falls_back_rather_than_drawing_a_black_box(): void
+    public function a_half_typed_colour_falls_back_to_the_house_colour(): void
     {
-        // The normal state of a form field somebody is still typing into. A
-        // renderer handed this either throws in a worker or paints black, and
-        // both are worse than a panel in the house colour.
+        // The normal state of a form field somebody is still typing into, and
+        // not a colour anything can use.
         $style = VisualStyle::fromBrief(new BrandBrief(['brand_colour' => '#12']));
 
         $this->assertSame(VisualStyle::DEFAULT_COLOUR, $style->colour);
@@ -123,13 +121,12 @@ final class VisualStyleTest extends TestCase
     }
 
     /**
-     * Type is never drawn below the legibility floor, whatever the brand picked.
+     * Type is never answered below the legibility floor, whatever the brand
+     * picked.
      *
-     * Both failures were real and both shipped on the first accented render.
-     * Cleaning Point's forest on its terracotta is 2.22:1, which made the CTA —
-     * the one slide asking for the follow — the least readable of the seven; and
-     * its terracotta on its forest is also 2.22:1, so the 300px figure that
-     * exists to be believed was the most washed-out thing on the panel.
+     * Cleaning Point's forest on its terracotta is 2.22:1, and its terracotta
+     * on its forest is also 2.22:1 — so neither of the brand's obvious answers
+     * can carry type on the other.
      */
     #[Test]
     public function type_on_the_accent_is_whichever_colour_can_actually_be_read(): void
@@ -143,7 +140,7 @@ final class VisualStyleTest extends TestCase
         $this->assertEqualsWithDelta(2.22, $style->contrast('#2f4f43', '#d6533c'), 0.01);
         $this->assertEqualsWithDelta(3.55, $style->contrast('#f3efe6', '#d6533c'), 0.01);
 
-        // The cream, not the forest the layout would otherwise have inverted to.
+        // The cream, not the forest that would otherwise be the obvious answer.
         $this->assertSame('#f3efe6', $style->readableOn($style->accent));
     }
 
@@ -156,11 +153,11 @@ final class VisualStyleTest extends TestCase
             'brand_accent' => '#d6533c',
         ]));
 
-        // Still the accent everywhere contrast is not a legibility question —
-        // the rule, the ticks, the filled half of a comparison.
+        // Still the accent wherever contrast is not a legibility question —
+        // rules, ticks, fills.
         $this->assertSame('#d6533c', $style->accent);
 
-        // But not as a 300px figure on the brand's own fill.
+        // But not as type on the brand's own fill.
         $this->assertSame('#f3efe6', $style->accentType($style->colour));
     }
 
@@ -185,12 +182,12 @@ final class VisualStyleTest extends TestCase
      * The palette is the "lighter accent" the docblock used to ask a human for.
      *
      * Same brand as the two tests above — forest, cream, terracotta — where the
-     * accent reads 2.22:1 on the fill and the 300px figure therefore falls back
-     * to the cream. Give the brief the rest of the brand's colours and the
-     * figure gets to be a colour again, without anybody retyping a field.
+     * accent reads 2.22:1 on the fill and type in it therefore falls back to
+     * the cream. Give the brief the rest of the brand's colours and that type
+     * gets to be a colour again, without anybody retyping a field.
      */
     #[Test]
-    public function a_stat_reaches_into_the_palette_before_giving_up_on_colour(): void
+    public function accent_type_reaches_into_the_palette_before_giving_up_on_colour(): void
     {
         $style = VisualStyle::fromBrief(new BrandBrief([
             'brand_colour' => '#2f4f43',
@@ -199,11 +196,11 @@ final class VisualStyleTest extends TestCase
             'brand_palette' => ['#df7866'],
         ]));
 
-        // The accent itself is untouched: it still fills the rules and the ticks.
+        // The accent itself is untouched.
         $this->assertSame('#d6533c', $style->accent);
 
-        // But the figure is now the brand's own lighter terracotta rather than
-        // the cream every other word on the panel is already set in.
+        // But type in it is now the brand's own lighter terracotta rather than
+        // the cream the rest of the words are set in.
         $this->assertSame('#df7866', $style->accentType($style->colour));
     }
 
@@ -211,8 +208,7 @@ final class VisualStyleTest extends TestCase
      * And with nothing to reach for, it degrades exactly as it always did.
      *
      * The regression guard for every brief written before the column existed:
-     * an empty palette must leave the old path bit for bit, or adding a column
-     * would have changed the look of work already published.
+     * an empty palette must leave the old path bit for bit.
      */
     #[Test]
     public function an_empty_palette_degrades_to_the_ink_exactly_as_before(): void
@@ -231,9 +227,8 @@ final class VisualStyleTest extends TestCase
     /**
      * A brand whose accent already reads never consults the palette at all.
      *
-     * The property that makes this safe to add to briefs that are drawing work
-     * today: the list is only ever reached after the existing answer has failed
-     * the floor, so a palette cannot change a panel that was already correct.
+     * The list is only ever reached after the existing answer has failed the
+     * floor, so a palette cannot change an answer that was already correct.
      */
     #[Test]
     public function an_accent_that_reads_is_kept_over_anything_in_the_palette(): void
@@ -253,8 +248,8 @@ final class VisualStyleTest extends TestCase
      * The palette is read the way every other colour here is read.
      *
      * It is a column an operator edits and a seeder writes, so anything that is
-     * not a hex is dropped rather than repaired — a bad value in this list would
-     * otherwise reach a renderer as a fill nobody chose.
+     * not a hex is dropped rather than repaired — a repaired value in this list
+     * would be a colour nobody chose.
      */
     #[Test]
     public function the_palette_drops_anything_that_is_not_a_colour(): void
@@ -272,15 +267,10 @@ final class VisualStyleTest extends TestCase
     }
 
     /**
-     * A face the renderer's image does not carry is refused, not passed through.
-     *
-     * The failure this prevents is the quiet one: Chromium falls back to
-     * whatever it has rather than erroring, so a panel set in a missing family
-     * renders in the wrong typeface and nothing reports it. Worse, it would look
-     * right to whoever reviewed it on a machine with the font installed.
+     * A face that is not on the list is refused, not passed through.
      */
     #[Test]
-    public function a_typeface_the_renderer_does_not_carry_falls_back_to_the_house_face(): void
+    public function a_typeface_not_on_the_list_falls_back_to_the_house_face(): void
     {
         $style = VisualStyle::fromBrief(new BrandBrief([
             'brand_typeface' => 'comic-sans',
@@ -291,7 +281,7 @@ final class VisualStyleTest extends TestCase
     }
 
     #[Test]
-    public function a_bundled_typeface_is_the_one_the_panels_are_set_in(): void
+    public function a_bundled_typeface_is_the_one_kept(): void
     {
         $style = VisualStyle::fromBrief(new BrandBrief(['brand_typeface' => 'poppins']));
 
@@ -300,29 +290,27 @@ final class VisualStyleTest extends TestCase
     }
 
     /**
-     * Every bundled face has the two weights the layouts actually set.
+     * Every bundled face has its regular and semibold weights.
      *
-     * The list and the files are declared in different places — a constant here,
-     * a directory the Dockerfile copies wholesale — so nothing but a test
-     * connects them. A face on the list with no files draws as a fallback and
-     * reports success, which is the same silent failure as the case above
-     * arrived at from the other end.
+     * The list and the files are declared in different places — a constant
+     * here, a directory under `resources/fonts` — so nothing but a test
+     * connects them.
      */
     #[Test]
-    public function every_offered_typeface_has_files_to_draw_with(): void
+    public function every_offered_typeface_has_its_files(): void
     {
         foreach (array_keys(VisualStyle::TYPEFACES) as $slug) {
             foreach ([400, 600] as $weight) {
                 $this->assertFileExists(
                     resource_path("fonts/{$slug}/{$slug}-latin-{$weight}-normal.woff2"),
-                    "{$slug} is offered but has no {$weight} weight to draw with.",
+                    "{$slug} is offered but has no {$weight} weight.",
                 );
             }
         }
     }
 
     #[Test]
-    public function a_colour_comes_apart_into_channels_a_renderer_can_use(): void
+    public function a_colour_comes_apart_into_channels(): void
     {
         $style = VisualStyle::fallback();
 
@@ -335,13 +323,12 @@ final class VisualStyleTest extends TestCase
     {
         // Blanking a colour in a form means "undo my choice", not "no colour".
         // Every other cleared field in this table becomes an empty string, and
-        // an empty string is not something a renderer can fill with.
+        // an empty string is not a colour.
         $this->assertContains('brand_colour', BrandBrief::VISUAL_FIELDS);
         $this->assertContains('brand_colour', BrandBrief::CONTENT_FIELDS);
 
         // The accent among them, so changing it makes a new brief version like
-        // any other edit — which is what lets a post published last month say
-        // what colour it was emphasised in.
+        // any other edit.
         $this->assertContains('brand_accent', BrandBrief::VISUAL_FIELDS);
         $this->assertContains('brand_accent', BrandBrief::CONTENT_FIELDS);
     }

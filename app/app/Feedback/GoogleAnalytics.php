@@ -116,101 +116,6 @@ class GoogleAnalytics implements AnalyticsGateway
     }
 
     /**
-     * Sessions by channel and conversions (§6).
-     *
-     * One report over `sessionDefaultChannelGroup`, which is GA4's own
-     * classification rather than ours. Re-deriving channels from source and
-     * medium is the classic way to end up with a number nobody can reconcile
-     * against the GA4 screen the operator will open the moment it looks odd.
-     *
-     * Unpaged, alone among the reads in this class. The dimension has about a
-     * dozen values in total, so one request is the whole answer and a truncated
-     * page would need a site with more channel groups than GA4 defines.
-     *
-     * `keyEvents` and not `conversions`: GA4 renamed the metric in 2025 and the
-     * old name is being retired. The rename is a rename — same counter, same
-     * definition of what the property owner marked as mattering.
-     */
-    public function audience(Project $project, Carbon $from, Carbon $to): ?ProjectAudience
-    {
-        $integration = $this->connection->for($project);
-        $property = $integration?->analyticsProperty();
-
-        if ($integration === null || $property === null) {
-            return null;
-        }
-
-        $token = $this->connection->accessToken($integration);
-
-        if ($token === null) {
-            return null;
-        }
-
-        $rows = $this->runReport($token, $property, $integration, [
-            'dateRanges' => [[
-                'startDate' => $from->toDateString(),
-                'endDate' => $to->toDateString(),
-            ]],
-            'dimensions' => [['name' => 'sessionDefaultChannelGroup']],
-            'metrics' => [
-                ['name' => 'sessions'],
-                ['name' => 'keyEvents'],
-            ],
-            'limit' => 100,
-            'keepEmptyRows' => false,
-        ]);
-
-        if ($rows === null) {
-            return null;
-        }
-
-        $total = 0;
-        $direct = 0;
-        $referral = 0;
-        $conversions = 0;
-
-        foreach ($rows as $row) {
-            $dimensions = $row['dimensionValues'] ?? null;
-            $metrics = $row['metricValues'] ?? null;
-
-            if (! is_array($dimensions) || ! is_array($metrics) || $dimensions === []) {
-                continue;
-            }
-
-            $group = (string) ($dimensions[0]['value'] ?? '');
-
-            $value = static fn (int $index): int => (int) round(
-                (float) ($metrics[$index]['value'] ?? 0)
-            );
-
-            $sessions = $value(0);
-
-            // Everything, including the groups §6 does not name. This is the
-            // denominator, and a denominator that only counts the channels we
-            // are proud of is not one.
-            $total += $sessions;
-            $conversions += $value(1);
-
-            if ($group === 'Direct') {
-                $direct += $sessions;
-            }
-
-            if ($group === 'Referral') {
-                $referral += $sessions;
-            }
-        }
-
-        $integration->forceFill(['last_synced_at' => now()])->save();
-
-        return new ProjectAudience(
-            totalSessions: $total,
-            directSessions: $direct,
-            referralSessions: $referral,
-            conversions: $conversions,
-        );
-    }
-
-    /**
      * @param  array<string, mixed>  $row
      * @param  array<string, string>  $wanted
      */
@@ -289,9 +194,7 @@ class GoogleAnalytics implements AnalyticsGateway
      * One report, with the failure taxonomy every caller here shares.
      *
      * 401 ends the connection, 403 is this account losing sight of this
-     * property, anything else that failed is transient and thrown. Extracted
-     * because {@see audience()} asks a different question of the same API and
-     * a second copy of these four branches is a second place for them to drift.
+     * property, anything else that failed is transient and thrown.
      *
      * @param  array<string, mixed>  $body
      * @return list<array<string, mixed>>|null

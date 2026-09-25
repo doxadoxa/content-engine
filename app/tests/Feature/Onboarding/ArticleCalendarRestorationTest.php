@@ -145,7 +145,7 @@ final class ArticleCalendarRestorationTest extends TestCase
         $this->assertSame(ContentItemState::Idea, $item->refresh()->state);
     }
 
-    public function test_settings_allow_automatic_or_review_first_but_never_social(): void
+    public function test_settings_allow_automatic_or_review_first(): void
     {
         $project = $this->project();
         $owner = User::factory()->create();
@@ -163,9 +163,6 @@ final class ArticleCalendarRestorationTest extends TestCase
             'step' => 'settings', 'answers' => ['autopublish' => true],
         ])->assertOk();
         $this->assertFalse($project->refresh()->autopublish);
-        $this->actingAs($owner)->postJson('/onboarding/'.$project->id.'/save', [
-            'step' => 'channels', 'answers' => ['social' => ['threads']],
-        ])->assertUnprocessable();
     }
 
     public function test_pending_manual_drafts_reserve_available_preparation_capacity(): void

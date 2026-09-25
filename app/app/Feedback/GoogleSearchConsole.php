@@ -10,7 +10,6 @@ use App\Integrations\Exceptions\GoogleUnavailable;
 use App\Integrations\Google\GoogleConnection;
 use App\Models\Project;
 use App\Models\ProjectIntegration;
-use App\Visibility\BrandPresence;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
@@ -38,17 +37,6 @@ class GoogleSearchConsole implements SearchConsoleGateway
 
     /** Enough for 250,000 rows. Past that, something is wrong with the query. */
     private const int MAX_PAGES = 10;
-
-    /**
-     * How many matched brand queries one snapshot keeps.
-     *
-     * §6 wants the words and not only the number, and it wants them in a jsonb
-     * column that is written every day forever. Ranked by impressions and cut
-     * here, because the tail of a brand's query set is misspellings and
-     * one-off long tails: the fiftieth is not what an operator acts on, and an
-     * uncapped list makes the row grow with the account.
-     */
-    private const int MAX_BRAND_QUERIES = 50;
 
     public function __construct(private readonly GoogleConnection $connection) {}
 
@@ -146,99 +134,6 @@ class GoogleSearchConsole implements SearchConsoleGateway
     }
 
     /**
-     * Brand demand for the window, sliced by query (§6).
-     *
-     * Matched here rather than in the request, for the same reason
-     * {@see performance()} matches pages here: the API takes one filter group,
-     * and "the brand name" is not one expression. A brand is written
-     * "Cleaning Point", "cleaningpoint" and "cleaning-point" by the same person
-     * in the same week, and a `contains` filter on any one spelling silently
-     * drops the other two — which reads on the dashboard as brand demand
-     * falling. {@see BrandPresence::namesBrand()} already handles the spacing,
-     * the accents and the word boundary, and is the same matcher the LLM
-     * visibility sweep scores on. Two definitions of "did they name us" would
-     * be two different answers on one screen.
-     */
-    public function brandDemand(Project $project, Carbon $from, Carbon $to): ?BrandDemand
-    {
-        $integration = $this->connection->for($project);
-        $site = $integration?->searchConsoleSite();
-
-        if ($integration === null || $site === null) {
-            return null;
-        }
-
-        $token = $this->connection->accessToken($integration);
-
-        if ($token === null) {
-            return null;
-        }
-
-        $impressions = 0;
-        $clicks = 0;
-        $queries = [];
-        $complete = false;
-
-        for ($page = 0; $page < self::MAX_PAGES; $page++) {
-            $batch = $this->query($token, $site, $from, $to, $page * self::PAGE_SIZE, $integration, ['query']);
-
-            if ($batch === null) {
-                // Refused. Not "nobody searched for us" — see the contract.
-                return null;
-            }
-
-            foreach ($batch as $row) {
-                $keys = $row['keys'] ?? null;
-
-                if (! is_array($keys) || $keys === []) {
-                    continue;
-                }
-
-                $term = (string) $keys[0];
-
-                if (! BrandPresence::namesBrand($term, $project->name)) {
-                    continue;
-                }
-
-                $seen = (int) ($row['impressions'] ?? 0);
-
-                $impressions += $seen;
-                $clicks += (int) ($row['clicks'] ?? 0);
-                $queries[$term] = ($queries[$term] ?? 0) + $seen;
-            }
-
-            if (count($batch) < self::PAGE_SIZE) {
-                $complete = true;
-
-                break;
-            }
-        }
-
-        if (! $complete) {
-            // A truncated read understates brand demand, and understated brand
-            // demand is indistinguishable from a brand people stopped
-            // searching for. Refused rather than reported low: null already
-            // means "not measured" in every column this feeds.
-            Log::warning('Brand demand was truncated at the page limit', [
-                'site' => $site,
-                'pages' => self::MAX_PAGES,
-            ]);
-
-            return null;
-        }
-
-        arsort($queries);
-
-        $integration->forceFill(['last_synced_at' => now()])->save();
-
-        return new BrandDemand(
-            impressions: $impressions,
-            clicks: $clicks,
-            queries: array_slice($queries, 0, self::MAX_BRAND_QUERIES, preserve_keys: true),
-        );
-    }
-
-    /**
      * @param  array<string, mixed>  $row
      * @param  array<string, string>  $wanted
      */
@@ -273,7 +168,7 @@ class GoogleSearchConsole implements SearchConsoleGateway
      * A page of rows, or null when Google refused — which is not the same as a
      * page with nothing on it.
      *
-     * @param  list<string>  $dimensions  `[date, page]` per unit, `[query]` for brand demand
+     * @param  list<string>  $dimensions  `[date, page]` per unit
      * @return list<array<string, mixed>>|null
      */
     private function query(

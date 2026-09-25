@@ -50,10 +50,11 @@ class AhrefsKeywordSource implements KeywordSource
             'keywords' => $seed,
             'country' => strtolower($market),
             'limit' => $limit,
-            // `volume_history` is the monthly curve §5 plans the seasonal band
-            // from, and on Ahrefs it has to be *asked for*: unlike DataForSEO,
-            // which sends `monthly_searches` unbidden inside every row, this
-            // endpoint returns exactly the fields named here and nothing else.
+            // `volume_history` is the monthly curve research stores on a
+            // unit's `monthly_volumes`, and on Ahrefs it has to be *asked
+            // for*: unlike DataForSEO, which sends `monthly_searches` unbidden
+            // inside every row, this endpoint returns exactly the fields named
+            // here and nothing else.
             // A `select` without it makes {@see monthlyCurve()} return `[]`
             // every time — no error, no empty response, just a pool of keywords
             // that all look aseasonal. See {@see measure()}, where that is
@@ -123,11 +124,9 @@ class AhrefsKeywordSource implements KeywordSource
                 // `volume_history` for the same reason {@see matchingTerms()}
                 // asks for it, and it was missing here. Every keyword that
                 // entered the pool through this method — which is the whole
-                // measured half of research — arrived with an empty curve, so
-                // `GatherCandidates::seasonal()`'s `whereNotNull` never matched
-                // and §5's Season band reported "nothing worth a slot" week
-                // after week on any project running Ahrefs. Nothing failed; a
-                // band of the plan simply never fired.
+                // measured half of research — arrived with an empty curve, and
+                // was stored on its unit's `monthly_volumes` that way. Nothing
+                // failed; the curve was simply never there.
                 'select' => 'keyword,volume,difficulty,volume_history',
             ]);
 

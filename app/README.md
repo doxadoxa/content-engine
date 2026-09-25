@@ -89,8 +89,8 @@ generation skip when they are not configured.
 
 - `engine:tick` hourly to start bounded research, planning, generation, and
   feedback work that is due.
-- `publish:approved` every 30 minutes to send approved content to verified
-  automatic webhook destinations.
+- `publish:approved` every 30 minutes to dispatch approved articles whose
+  schedule's `publish_at` has passed to their verified automatic destinations.
 - `audit:sweep` daily, which starts a site audit only for projects whose last
   reading has gone stale (`AUDIT_REFRESH_AFTER_DAYS`, a week by default). The
   audit is deliberately outside `engine:tick`'s contour: it feeds none of the
@@ -175,13 +175,13 @@ is no card and links to the same checkout.
 
 There are **two layers of limit**, and they fail differently:
 
-- The **unit quota** — articles, audits, plans, assistant turns —
-  is what the customer agreed to, and it is what a refusal names. It is
-  *reserved* rather than checked and then counted: the guard lives inside the
-  write, because two approvals racing for one remaining unit lock different
-  rows and would otherwise both win. It is
-  consumed on *approval*, not on generation: charging for drafts that were
-  discarded would make the number on the screen meaningless.
+- The **unit quota** — articles, audits, plans, assistant turns — is what the
+  customer agreed to, and it is what a refusal names. It is *reserved* rather
+  than checked and then counted: the guard lives inside the write, because two
+  approvals racing for one remaining unit lock different rows and would
+  otherwise both win. It is consumed on *approval*, not on generation: charging
+  for drafts that were discarded would make the number on the screen
+  meaningless.
 - The **cost ceiling** is a `cost_micros` fuse at roughly three times measured
   cost of goods. It is invisible to the customer and exists for the retry storm
   and the mispriced model, not for legitimate use. Discarded drafts land here.
@@ -436,8 +436,9 @@ tests/                           Postgres-backed unit and feature coverage
 - The provider adapters are fully faked in the suite. Exercise model, keyword,
   image, Google, and receiver integrations in a staging environment before
   production rollout.
-- Delivery goes through a verified webhook receiver. There is no direct
-  WordPress API client in this repository.
+- Delivery goes through a verified webhook receiver, or, for a WordPress
+  channel, through `WordPressPublisher`: its own transport, which posts to the
+  plugin's receiver with basic auth.
 - Browser smoke checks currently remain a release procedure rather than a
   committed Playwright/axe suite. The PHP suite covers rendered props and
   authorization, while ESLint/TypeScript cannot replace responsive and

@@ -19,12 +19,11 @@ import { isPrivateDestination } from './private-destination.mjs';
 const PORT = Number(process.env.RENDERER_PORT ?? 3020);
 
 /**
- * The distribution's Chromium, not the one Remotion would fetch.
+ * A Chromium to use instead of the one Remotion fetched.
  *
- * This image is Alpine, so its libc is musl; the Chrome Headless Shell Remotion
- * downloads is linked against glibc and fails at the first render rather than
- * at install. Undefined falls back to Remotion's own, which is what a
- * glibc-based image would want.
+ * Unset in this image, which is glibc-based (bookworm) and fetches Chrome
+ * Headless Shell at build; undefined falls back to that. Set it only to point
+ * at a different executable, such as a distribution's own Chromium.
  */
 const BROWSER = process.env.REMOTION_BROWSER || undefined;
 

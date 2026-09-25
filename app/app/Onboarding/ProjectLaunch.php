@@ -67,10 +67,9 @@ class ProjectLaunch
      * written. The operator would be looking at a spinner for a job whose
      * result appears on a different screen.
      *
-     * The same shape and the same reasoning as
-     * {@see EngineTickCommand::CONTOUR}: a list, because
-     * it is a rule about which work feeds which, and a derived set would grow
-     * silently the day another pipeline is started from here.
+     * The same shape and the same reasoning as {@see EngineTickCommand::CONTOUR}:
+     * a list, because it is a rule about which work feeds which, and a derived
+     * set would grow silently the day another pipeline is started from here.
      *
      * @var list<string>
      */

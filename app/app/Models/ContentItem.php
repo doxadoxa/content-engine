@@ -10,9 +10,7 @@ use App\Enums\ContentItemType;
 use App\Enums\SearchIntent;
 use App\Media\HeroImage;
 use App\Models\Concerns\BelongsToProject;
-use App\Research\KeywordIdea;
 use App\Support\Content\InvalidStateTransition;
-use App\Support\Seasonality\SeasonalCurve;
 use Database\Factories\ContentItemFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -305,19 +303,6 @@ class ContentItem extends Model
     }
 
     /**
-     * When in the year this subject peaks, and what to do about it (§5).
-     *
-     * The curve arrives from whichever keyword vendor is bound and is stored on
-     * the unit by research; this is the only way anything should read it, so
-     * that "which month is the peak" has one definition shared with
-     * {@see KeywordIdea::seasonality()}.
-     */
-    public function seasonality(): SeasonalCurve
-    {
-        return SeasonalCurve::fromArray($this->monthly_volumes);
-    }
-
-    /**
      * Create the same unit in another locale, joined to this one's group.
      *
      * `topic_difficulty` and `topic_volume` are deliberately not carried over.
@@ -435,7 +420,7 @@ class ContentItem extends Model
      * @param  Builder<self>  $query
      * @return Builder<self>
      */
-    public function scopeWithTree(Builder $query): Builder
+    public function scopeWithLocaleVariants(Builder $query): Builder
     {
         return $query->with(['localeVariants']);
     }

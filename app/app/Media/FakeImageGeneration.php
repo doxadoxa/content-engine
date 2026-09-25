@@ -26,10 +26,9 @@ class FakeImageGeneration implements ImageGenerationProvider
     /**
      * Everything each call was given, not only its prompt.
      *
-     * The size and the reference list are decisions the callers make per
-     * channel, and a suite that could only see the prompt could not tell a
-     * 1080×1350 Instagram picture from the 1200×630 Open Graph card that used
-     * to be sent for every post.
+     * The size and the reference list are decisions the callers make, and a
+     * suite that could only see the prompt could not tell a hero from an
+     * inline image asked for at a different size.
      *
      * @var list<array{prompt: string, references: list<string>, options: array<string, mixed>}>
      */

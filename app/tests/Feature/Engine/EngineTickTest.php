@@ -312,6 +312,36 @@ final class EngineTickTest extends TestCase
     }
 
     #[Test]
+    public function publishing_without_review_drafts_due_work_but_leaves_an_unscheduled_draft_alone(): void
+    {
+        $project = $this->project(['autopublish' => true, 'weekly_target' => 7]);
+
+        [$idea, $draft] = $this->inProject($project, function () use ($project): array {
+            $plan = $project->contentPlans()->create(['month' => now()->startOfMonth()]);
+
+            return [
+                ContentItem::factory()->create([
+                    'state' => ContentItemState::Idea,
+                    'content_plan_id' => $plan->getKey(),
+                    'scheduled_for' => now(),
+                ]),
+                // Autopublish approves what is scheduled to go out, not every
+                // draft that happens to exist.
+                ContentItem::factory()->create(['state' => ContentItemState::Draft]),
+            ];
+        });
+
+        /** @var PendingCommand $command */
+        $command = $this->artisan('engine:tick', ['--project' => $project->slug]);
+        $command->assertSuccessful()->run();
+
+        $this->assertSame(ContentItemState::Idea, $idea->refresh()->state);
+        $this->assertSame(ContentItemState::Draft, $draft->refresh()->state);
+        $this->assertSame(['generation'], PipelineRun::acrossProjects()->pluck('pipeline')->all());
+        $this->assertSame(1, PipelineRun::acrossProjects()->where('pipeline', 'generation')->where('content_item_id', $idea->id)->count());
+    }
+
+    #[Test]
     public function nothing_starts_while_something_is_still_running(): void
     {
         $project = $this->project();

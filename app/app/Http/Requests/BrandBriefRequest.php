@@ -39,21 +39,19 @@ class BrandBriefRequest extends FormRequest
 
             // Validated here as well as in VisualStyle, and the two are not
             // redundant. This one tells an operator that what they typed is
-            // not a colour, at the moment they typed it; that one keeps a
-            // renderer running when a bad value reaches it anyway — from a
-            // seeder, the console, or a row written before this rule existed.
+            // not a colour, at the moment they typed it; that one keeps a bad
+            // value that reaches the row anyway — from a seeder, the console,
+            // or a row written before this rule existed — from being read.
             'brand_colour' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'brand_ink' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
             'brand_accent' => ['nullable', 'string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
-            // The brand's other colours, kept for the fallbacks to reach into.
-            // Eight, because that is what a site read hands back — see
+            // The brand's other colours, beyond the three above. Eight, because that is what a site read hands back — see
             // {@see \App\Onboarding\SiteInspection::swatches()} — and a cap the
             // interface can actually show in one row.
             'brand_palette' => ['nullable', 'array', 'max:8'],
             'brand_palette.*' => ['string', 'regex:/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
-            // Restricted to what is bundled: a family the renderer's image does
-            // not carry draws in whatever Chromium falls back to, and it would
-            // look right in review on a machine that has the font installed.
+            // Restricted to the faces the brief offers, so the stored value is
+            // always one the rest of the code recognises.
             'brand_typeface' => ['nullable', 'string', Rule::in(array_keys(VisualStyle::TYPEFACES))],
             'overlay_position' => ['nullable', 'string', 'in:top,centre,bottom'],
             'overlay_case' => ['nullable', 'string', 'in:sentence,upper'],

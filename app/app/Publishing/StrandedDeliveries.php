@@ -41,14 +41,14 @@ final class StrandedDeliveries
      * How long a `pending` row is given before it is presumed abandoned, in
      * seconds.
      *
-     * Long enough that nothing healthy is ever swept, which means it has to
-     * clear the queue's own `retry_after`, 1 200 s on the Redis connection this
-     * engine runs. Until it elapses the job may still be reserved by a worker
-     * that is merely slow, and a sweep before then would dispatch a second copy
-     * of a delivery that is still running — which is how an article gets
-     * published twice. A worker that picks the job up at the last moment then
-     * still needs time to make its request, so 1 800 s is `retry_after` plus a
-     * generous margin, rounded to half an hour.
+     * Meant to be long enough that nothing healthy is ever swept, which means
+     * clearing the queue's own `retry_after`. Until that elapses the job may
+     * still be reserved by a worker that is merely slow, and a sweep before
+     * then would dispatch a second copy of a delivery that is still running —
+     * which is how an article gets published twice. 1 800 s was `retry_after`
+     * plus a generous margin, rounded to half an hour, when `retry_after` on
+     * the Redis connection was 1 200 s. It is 2 700 s now (see
+     * `config/queue.php`), so this no longer clears it.
      *
      * Half an hour is also short enough to matter: an article scheduled for a
      * morning that is recovered in the afternoon has missed the slot somebody

@@ -176,17 +176,6 @@ class Project extends Model
     }
 
     /**
-     * Pages discovered on the project's own site before the engine wrote them.
-     *
-     * @return HasMany<SitePage, $this>
-     */
-    public function sitePages(): HasMany
-    {
-        return $this->hasMany(SitePage::class)
-            ->withoutGlobalScope(ProjectScope::class);
-    }
-
-    /**
      * True when the project publishes in this locale. The default locale is
      * always included, so a project can never be configured into a state where
      * its own default is not publishable.
@@ -236,8 +225,8 @@ class Project extends Model
      * A counter stops a project dead on the 22nd of the month, which reads as a
      * broken engine; a clamped cadence makes the engine pace itself so the
      * month comes out even and the boundary is never felt. The article counter
-     * behind it is the backstop for the paths that bypass the tick — the
-     * Studio's buttons, an article somebody writes by hand.
+     * behind it is the backstop for the paths that bypass the tick, such as
+     * an article somebody asks for by hand.
      */
     public function weeklyTarget(): int
     {

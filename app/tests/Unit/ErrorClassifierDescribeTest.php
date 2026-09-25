@@ -16,9 +16,9 @@ use Tests\TestCase;
 /**
  * The two halves of what a failed run leaves behind.
  *
- * `describe()` is read by the customer — the dashboard's failure card is built
- * from it — so it stops at the step's own sentence. `causes()` is read by whoever has to fix it, goes to the log, and
- * carries the vendor's words.
+ * `describe()` is read by the customer — the failure card on Home is built
+ * from it — so it stops at the step's own sentence. `causes()` is read by
+ * whoever has to fix it, goes to the log, and carries the vendor's words.
  *
  * Both existed as one method that did the first job only, which is how five
  * runs came to record "the drafting provider is temporarily unavailable" —

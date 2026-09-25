@@ -89,10 +89,6 @@ class OnboardingController extends Controller
             'selectedPlan' => $this->selection->selected($request, $draft)->toArray(),
             'plans' => array_map(static fn (Plan $plan): array => $plan->toArray(), $this->plans->selfServe()),
             'trialDays' => $this->plans->trialDays(),
-            'channelTypes' => array_map(static fn (ChannelType $type): array => [
-                'value' => $type->value,
-                'label' => $type->label(),
-            ], ChannelType::cases()),
         ]);
     }
 

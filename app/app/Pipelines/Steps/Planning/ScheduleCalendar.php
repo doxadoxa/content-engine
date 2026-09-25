@@ -199,9 +199,8 @@ class ScheduleCalendar extends AbstractStep
                         // subject is a fact about a market; *when* in the year
                         // they search it is mostly a fact about the subject —
                         // window cleaning peaks in spring whichever language
-                        // the question is asked in. Without this the seasonal
-                        // band of §5 would only ever fire for one locale of a
-                        // multilingual unit.
+                        // the question is asked in, so every locale of a unit
+                        // carries the same curve.
                         'monthly_volumes' => $unit->monthly_volumes,
                     ])->save();
 

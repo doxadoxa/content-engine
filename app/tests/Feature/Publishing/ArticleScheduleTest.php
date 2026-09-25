@@ -97,6 +97,28 @@ final class ArticleScheduleTest extends TestCase
     }
 
     #[Test]
+    public function approval_without_a_schedule_waits_for_an_explicit_publish_even_on_an_automatic_channel(): void
+    {
+        Http::fake();
+
+        $this->actingAs($this->owner)->post("/content/{$this->item->id}/approve")->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertSame(ContentItemState::Approved, $this->item->fresh()->state);
+        $this->assertDatabaseCount('webhook_deliveries', 0);
+        Queue::assertNothingPushed();
+
+        /** @var PendingCommand $command */
+        $command = $this->artisan('publish:approved', ['project' => $this->project->slug]);
+        $command->assertSuccessful()->run();
+        $this->assertDatabaseCount('webhook_deliveries', 0);
+        Queue::assertNothingPushed();
+
+        $this->actingAs($this->owner)->post("/content/{$this->item->id}/publish")->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertDatabaseCount('webhook_deliveries', 1);
+        Queue::assertPushed(DeliverWebhookJob::class, 1);
+        Http::assertNothingSent();
+    }
+
+    #[Test]
     public function revisions_and_repeated_approval_consume_one_article_in_total(): void
     {
         app(ArticleApproval::class)->approve($this->item);

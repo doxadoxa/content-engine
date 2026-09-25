@@ -268,7 +268,7 @@ return [
             // that is this one the step's timeout is not a setting, it is a
             // promise with nobody to keep it.
             //
-            // It had drifted below two steps at once. AskAssistants asks for
+            // It had drifted below the longest of them. AskAssistants asks for
             // 1800 and its docblock explains that a shorter deadline kills a
             // paid sweep half way and pays for it twice — which is exactly what
             // 900 was doing to it.

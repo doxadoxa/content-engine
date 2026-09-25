@@ -31,10 +31,10 @@ use Throwable;
  *
  * Every pipeline in this application was startable by hand and started by
  * nothing. A project could be onboarded, planned and left: the calendar filled
- * up with dates nobody would ever write, and nothing was published. "Set it up and it runs" was true of every part except the
- * part that runs it.
+ * up with dates nobody would ever write, and nothing was published. "Set it up
+ * and it runs" was true of every part except the part that runs it.
  *
- * One command rather than six schedule entries, because the decisions are
+ * One command rather than a schedule entry per pipeline, because the decisions are
  * conditional on each other — there is no point planning a month from an empty
  * idea pool, or drafting a unit whose plan was never approved — and a crontab
  * cannot express that.

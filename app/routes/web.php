@@ -106,9 +106,8 @@ Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
 
 Route::middleware(['auth'])->group(function (): void {
     // Where somebody starts, and now the only place they can: a box to type
-    // into, what needs a person, and what the engine is doing. See
-    // HomeController for why this absorbed the other two rather than sitting
-    // beside them.
+    // into, what needs a person, and what the engine is doing. It absorbed
+    // Today and the dashboard, which is why `dashboard` below is a redirect.
     Route::get('home', HomeController::class)->name('home.index');
 
     // Conversations with the engine (see `AssistantController`). Each one has

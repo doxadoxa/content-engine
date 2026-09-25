@@ -405,13 +405,21 @@ final class OnboardingWizardTest extends TestCase
 
         $this->subscriptionCreated($project);
 
-        // The engine started itself. Nobody has to press a second button.
-        Queue::assertPushed(RunStepJob::class);
-
         $runs = PipelineRun::acrossProjects()
             ->where('project_id', $id)
             ->orderBy('pipeline')
             ->get();
+
+        // The engine started itself. Nobody has to press a second button: the
+        // research run's first step is already queued.
+        $research = $runs->firstWhere('pipeline', 'research');
+        $this->assertNotNull($research);
+        Queue::assertPushed(
+            RunStepJob::class,
+            static fn (RunStepJob $job): bool => $job->runId === $research->getKey()
+                && $job->stepKey === 'fetch_keywords'
+                && $job->queue === 'pipeline-expensive',
+        );
 
         // Two independent contours, not a chain: the SEO research the month is
         // planned from, and a reading of the website the operator has just

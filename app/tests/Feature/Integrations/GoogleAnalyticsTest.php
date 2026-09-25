@@ -193,49 +193,6 @@ final class GoogleAnalyticsTest extends TestCase
         $this->assertNull($this->integrationFor($project)?->failure_reason);
     }
 
-    #[Test]
-    public function the_channel_split_totals_everything(): void
-    {
-        $project = $this->connected();
-
-        Http::fake([
-            'analyticsdata.googleapis.com/*' => Http::response([
-                'rows' => [
-                    $this->channel('Direct', 220, 4),
-                    $this->channel('Referral', 130, 2),
-                    $this->channel('Organic Social', 150, 3),
-                    $this->channel('Paid Social', 50, 1),
-                    // Not split out, and still part of the denominator.
-                    $this->channel('Organic Search', 450, 7),
-                ],
-            ]),
-        ]);
-
-        $audience = $this->analytics()->audience($project, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-01'));
-
-        $this->assertNotNull($audience);
-        $this->assertSame(1000, $audience->totalSessions);
-        $this->assertSame(220, $audience->directSessions);
-        $this->assertSame(130, $audience->referralSessions);
-        $this->assertSame(17, $audience->conversions);
-    }
-
-    #[Test]
-    public function a_refused_channel_read_is_null_rather_than_an_audience_that_left(): void
-    {
-        $project = $this->connected();
-
-        Http::fake(['analyticsdata.googleapis.com/*' => Http::response(['error' => ['message' => 'nope']], 401)]);
-
-        $this->assertNull(
-            $this->analytics()->audience($project, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-01'))
-        );
-
-        // 401 is still 401: the grant is gone and the settings screen has to
-        // say so, exactly as it does for the per-unit read.
-        $this->assertNotNull($this->integrationFor($project)?->failure_reason);
-    }
-
     /**
      * @return array<string, mixed>
      */
@@ -247,20 +204,6 @@ final class GoogleAnalyticsTest extends TestCase
                 ['value' => (string) $sessions],
                 ['value' => (string) $engaged],
                 ['value' => (string) $seconds],
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function channel(string $group, int $sessions, int $keyEvents): array
-    {
-        return [
-            'dimensionValues' => [['value' => $group]],
-            'metricValues' => [
-                ['value' => (string) $sessions],
-                ['value' => (string) $keyEvents],
             ],
         ];
     }

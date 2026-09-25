@@ -57,8 +57,8 @@ return [
      * date means nothing.
      */
     'updated' => [
-        'terms' => env('LEGAL_TERMS_UPDATED', '2026-08-27'),
-        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-09-24'),
+        'terms' => env('LEGAL_TERMS_UPDATED', '2026-09-25'),
+        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-09-25'),
         'cookies' => env('LEGAL_COOKIES_UPDATED', '2026-08-28'),
     ],
 

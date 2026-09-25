@@ -24,8 +24,8 @@ use Inertia\Response;
  * replaces it with the calendar and the approvals queue.
  *
  * One row is a *unit*, not a row of the table. A bilingual guide is two rows in
- * `content_items`, so listing rows directly would print it twice — which is precisely the "юнит ≠ статья" mistake §2 is written
- * to prevent.
+ * `content_items`, so listing rows directly would print it twice — which is
+ * precisely the "юнит ≠ статья" mistake §2 is written to prevent.
  */
 class ContentItemController extends Controller
 {
@@ -65,11 +65,11 @@ class ContentItemController extends Controller
             ->get()
             ->groupBy('locale_group_id');
 
-        // Only the groups on this page get their trees. Loading everything and
+        // Only the groups on this page get their locales. Loading everything and
         // grouping in PHP made response size grow with the entire project.
         $roots = ContentItem::query()
             ->whereIn('locale_group_id', $groupIds)
-            ->withTree()
+            ->withLocaleVariants()
             ->with(['contentPlan', 'articleSchedule.delivery', 'project.channels'])
             ->get()
             ->groupBy('locale_group_id');

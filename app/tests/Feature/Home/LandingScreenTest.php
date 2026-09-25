@@ -207,8 +207,7 @@ final class LandingScreenTest extends TestCase
             ->assertOk()
             ->assertJsonPath('props.halves.articles.planned', 3)
             ->assertJsonPath('props.halves.articles.approved', 2)
-            ->assertJsonPath('props.halves.articles.published', 0)
-            ->assertJsonMissingPath('props.halves.social');
+            ->assertJsonPath('props.halves.articles.published', 0);
     }
 
     #[Test]

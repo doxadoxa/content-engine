@@ -84,8 +84,8 @@ class ErrorClassifier
      *
      * Deliberately *not* the causes. A step that wraps a provider error in a
      * sentence of its own is choosing what the customer reads, and this array
-     * is what the customer reads — the studio operation payload and the
-     * dashboard's failure card are both built from it. The cause goes to the
+     * is what the customer reads — the failure card on Home and the site
+     * audit's are both built from it. The cause goes to the
      * log instead; see {@see causes()}.
      *
      * @return array<string, mixed>

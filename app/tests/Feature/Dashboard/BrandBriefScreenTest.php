@@ -292,7 +292,6 @@ final class BrandBriefScreenTest extends TestCase
                 ->has('items.data', 1)
                 ->where('items.data.0.title', 'Como limpar janelas')
                 ->where('items.data.0.locales', ['en', 'pt-PT'])
-                ->missing('items.data.0.derivatives')
             );
     }
 

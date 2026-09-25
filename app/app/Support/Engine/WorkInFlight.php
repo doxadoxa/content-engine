@@ -94,10 +94,6 @@ final class WorkInFlight
             'active' => $active->map(static fn (PipelineRun $run): array => [
                 'id' => $run->getKey(),
                 'pipeline' => $run->pipeline,
-                // What the run is actually doing, for a pipeline whose input
-                // names one job among several. Without it every run of such a
-                // pipeline reads as the same thing.
-                'action' => self::actionOf($run),
                 'status' => $run->status->value,
                 'subject' => $run->contentItem?->title,
                 // The route into the thing being made. Without it the panel can
@@ -119,7 +115,6 @@ final class WorkInFlight
             'failed' => $recentlyFailed->map(static fn (PipelineRun $run): array => [
                 'id' => $run->getKey(),
                 'pipeline' => $run->pipeline,
-                'action' => self::actionOf($run),
                 'subject' => $run->contentItem?->title,
                 'step' => $run->failed_step_key,
                 'message' => is_string($run->error['message'] ?? null)
@@ -127,12 +122,5 @@ final class WorkInFlight
                     : null,
             ])->values()->all(),
         ];
-    }
-
-    private static function actionOf(PipelineRun $run): ?string
-    {
-        $action = $run->input['action'] ?? null;
-
-        return is_string($action) && $action !== '' ? $action : null;
     }
 }

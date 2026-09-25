@@ -84,7 +84,7 @@ final class DataForSeoKeywordSourceTest extends TestCase
     {
         // `monthly_searches` arrives unasked for inside every `keyword_info`
         // block and used to be dropped on the floor — §5 calls picking it up
-        // "одно поле и один метод, не интеграция", and this is the field half.
+        // "одно поле и один метод, не интеграция", and this is the field.
         $this->fakeWith('keyword_suggestions', [[
             'items' => [[
                 'keyword' => 'christmas cleaning',
@@ -107,7 +107,6 @@ final class DataForSeoKeywordSourceTest extends TestCase
         // Averaged rather than summed: a summed December would read as twice
         // the season it is, purely because of when the question was asked.
         $this->assertSame([1 => 120, 12 => 800], $idea->volumeByMonth);
-        $this->assertSame(12, $idea->seasonality()->peakMonth());
     }
 
     #[Test]
@@ -123,10 +122,9 @@ final class DataForSeoKeywordSourceTest extends TestCase
 
         $idea = $this->source()->matchingTerms('house cleaning lisbon', 'PT', 50, 'en')[0];
 
-        // A missing curve is not an error and not a flat year — it is silence,
-        // and the seasonal band of §5 must simply not fire on it.
+        // A missing curve is not an error and not a flat year — it is
+        // silence, and is stored as an empty curve rather than an even one.
         $this->assertSame([], $idea->volumeByMonth);
-        $this->assertNull($idea->seasonality()->peakMonth());
     }
 
     #[Test]

@@ -18,10 +18,10 @@ use Tests\TestCase;
  *
  * The count is asserted exactly rather than as "small". A bound like `< 10`
  * passes just as happily when a relation quietly starts lazy-loading and the
- * tree happens to be short, which is the shape the dashboard will have in
- * phase 7 — one row on screen during a test, forty in front of an operator.
+ * list happens to be short — one row on screen during a test, forty in front
+ * of an operator.
  */
-final class ContentItemTreeTest extends TestCase
+final class ContentItemLocaleVariantsTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -48,12 +48,12 @@ final class ContentItemTreeTest extends TestCase
     }
 
     #[Test]
-    public function the_whole_tree_is_read_in_a_fixed_number_of_queries(): void
+    public function every_locale_is_read_in_a_fixed_number_of_queries(): void
     {
         $this->unitWithTwoLocales();
 
         $queries = $this->countQueries(function (): void {
-            $units = ContentItem::query()->withTree()->get();
+            $units = ContentItem::query()->withLocaleVariants()->get();
 
             // Touch everything the dashboard would touch. If any of it were
             // lazy, the count below would move with the number of rows.
@@ -63,25 +63,25 @@ final class ContentItemTreeTest extends TestCase
         });
 
         // One for the units, one for every locale variant. Two, whatever the
-        // tree's size.
+        // number of locales.
         $this->assertSame(2, $queries);
     }
 
     #[Test]
-    public function the_count_does_not_grow_with_the_tree(): void
+    public function the_count_does_not_grow_with_the_locales(): void
     {
         $this->unitWithTwoLocales();
 
-        $small = $this->countQueries(fn () => $this->readAllTrees());
+        $small = $this->countQueries(fn () => $this->readAllUnits());
 
         // A second unit, wider than the first.
         $other = ContentItem::factory()->locale('pt-PT')->create();
         $other->addLocale('en', 'second-unit-en', 'Second unit');
         $other->addLocale('es', 'second-unit-es', 'Second unit');
 
-        $large = $this->countQueries(fn () => $this->readAllTrees());
+        $large = $this->countQueries(fn () => $this->readAllUnits());
 
-        $this->assertSame($small, $large, 'Reading twice the tree took more queries — something is lazy.');
+        $this->assertSame($small, $large, 'Reading twice the locales took more queries — something is lazy.');
     }
 
     #[Test]
@@ -116,9 +116,9 @@ final class ContentItemTreeTest extends TestCase
         return [$pt, $en];
     }
 
-    private function readAllTrees(): void
+    private function readAllUnits(): void
     {
-        ContentItem::query()->withTree()->get()->each(function (ContentItem $unit): void {
+        ContentItem::query()->withLocaleVariants()->get()->each(function (ContentItem $unit): void {
             $unit->localeVariants->each(fn (ContentItem $item) => $item->locale);
         });
     }

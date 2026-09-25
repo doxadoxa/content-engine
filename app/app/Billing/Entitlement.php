@@ -80,7 +80,7 @@ final readonly class Entitlement
      * May the engine spend money for this project?
      *
      * The single question this whole subsystem exists to answer. Everything
-     * gated — the tick, the studio's buttons, the assistant — asks exactly
+     * gated — the tick, the on-demand buttons, the assistant — asks exactly
      * this, so there is one place a mistake can be and one place to fix it.
      */
     public function mayGenerate(): bool

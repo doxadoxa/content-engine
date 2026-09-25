@@ -79,7 +79,7 @@ class PipelineRunner
     {
         $workItemId = $contentItemId ?? ($input['content_item_id'] ?? null);
 
-        if (($reason = $this->retirementReason($pipelineKey, is_string($workItemId) ? $workItemId : null, (string) $project->getKey())) !== null) {
+        if (($reason = $this->entitlementRefusal($pipelineKey, is_string($workItemId) ? $workItemId : null, (string) $project->getKey())) !== null) {
             throw ValidationException::withMessages(['pipeline' => $reason]);
         }
 
@@ -192,7 +192,7 @@ class PipelineRunner
 
     private function dispatchReadyUnderTenant(PipelineRun $run): void
     {
-        if ($this->cancelRetiredRun($run)) {
+        if ($this->cancelRefusedRun($run)) {
             return;
         }
 
@@ -249,7 +249,7 @@ class PipelineRunner
 
     private function executeWhileLocked(PipelineRun $run, string $stepKey): ?PendingStepRetry
     {
-        if ($this->cancelRetiredRun($run)) {
+        if ($this->cancelRefusedRun($run)) {
             return null;
         }
 
@@ -320,7 +320,7 @@ class PipelineRunner
 
     private function abandonUnderTenant(PipelineRun $run, string $stepKey, Throwable $e): void
     {
-        if ($this->cancelRetiredRun($run)) {
+        if ($this->cancelRefusedRun($run)) {
             return;
         }
 
@@ -440,7 +440,7 @@ class PipelineRunner
 
     private function resumeUnderTenant(PipelineRun $run): void
     {
-        if ($this->cancelRetiredRun($run)) {
+        if ($this->cancelRefusedRun($run)) {
             return;
         }
 
@@ -942,7 +942,18 @@ class PipelineRunner
         return $status === null ? null : PipelineRunStatus::tryFrom((string) $status);
     }
 
-    private function retirementReason(string $key, ?string $itemId, string $projectId): ?string
+    /**
+     * Why the subscription will not pay for this article work, or null if it
+     * will.
+     *
+     * Only research, planning and generation are asked about: they are the
+     * pipelines that make articles, and every other pipeline answers to its own
+     * gate. The entitlements are forgotten first because a worker's cached copy
+     * can predate a plan change, and a refusal is a question about now. A unit
+     * that has already been counted against the article quota is not counted
+     * again, and planning never is — it makes a calendar, not an article.
+     */
+    private function entitlementRefusal(string $key, ?string $itemId, string $projectId): ?string
     {
         if (! in_array($key, ['research', 'planning', 'generation'], true)) {
             return null;
@@ -971,11 +982,19 @@ class PipelineRunner
         return $entitlements->for($project)->refusal($metric)?->message;
     }
 
-    /** Stop queued or recoverable retired work without erasing completed steps or costs. */
-    private function cancelRetiredRun(PipelineRun $run): bool
+    /**
+     * Cancel a run the subscription no longer pays for, and say whether it did.
+     *
+     * Asked before every dispatch, not only at the start, because a run can
+     * outlive the entitlement that admitted it: a plan downgraded mid-month or
+     * a billing period that rolled over while planning was queued. Cancelled
+     * rather than failed, and only from a live or recoverable status, so the
+     * steps that already ran and what they cost stay on the record.
+     */
+    private function cancelRefusedRun(PipelineRun $run): bool
     {
         $workItemId = $run->content_item_id ?? ($run->input['content_item_id'] ?? null);
-        $reason = $this->retirementReason($run->pipeline, is_string($workItemId) ? $workItemId : null, $run->project_id);
+        $reason = $this->entitlementRefusal($run->pipeline, is_string($workItemId) ? $workItemId : null, $run->project_id);
         $period = $run->input['article_period_started_at'] ?? $run->context['article_plan_period'] ?? null;
         if ($reason === null && is_string($period) && in_array($run->pipeline, ['planning', 'research'], true)) {
             try {

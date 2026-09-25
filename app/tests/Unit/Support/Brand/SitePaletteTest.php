@@ -70,7 +70,7 @@ final class SitePaletteTest extends TestCase
      *
      * The failure the census path spends forty degrees of hue on, caught here by
      * asking the question it was actually reaching for: an accent that does not
-     * stand off the panel it is drawn on is an accent nobody can see.
+     * stand off the fill it sits on is an accent nobody can see.
      */
     #[Test]
     public function a_lighter_shade_of_the_fill_is_not_the_accent(): void

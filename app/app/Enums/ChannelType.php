@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
+use App\Publishing\ChannelPublisherRegistry;
+
 /**
  * Where a project publishes.
  *
- * Phase 2 only records the configuration; the adapters that act on it arrive in
- * phase 6 (webhook) and phase 8 (the rest). The cases are all listed now
- * because the enum is what the `type` column is validated against, and adding a
- * case later is a migration on every row that already stored a string.
+ * Webhook and WordPress channels are pushed to by the publishers registered in
+ * {@see ChannelPublisherRegistry}. The pull API has none, because its readers
+ * come to the engine instead. The enum is what the `type` column is validated
+ * against.
  */
 enum ChannelType: string
 {

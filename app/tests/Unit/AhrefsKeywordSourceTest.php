@@ -14,8 +14,8 @@ use Tests\TestCase;
  * The Ahrefs adapter's response mapping, and one thing about its requests.
  *
  * The suite binds a fake behind the keyword port, so without this the adapter
- * ships unexercised — which is how §5's Season band came to be half dead on
- * this vendor with every test passing. Ahrefs returns exactly the fields a
+ * ships unexercised — which is how the monthly curve went missing on this
+ * vendor with every test passing. Ahrefs returns exactly the fields a
  * request's `select` names, so a curve that is not asked for is a curve that
  * does not exist, and {@see AhrefsKeywordSource::monthlyCurve()} answers `[]`
  * for a row that never carried one. There is no error and no empty response to
@@ -70,7 +70,6 @@ final class AhrefsKeywordSourceTest extends TestCase
         // it: a summed December reads as twice the season it is, purely because
         // of when the question was asked.
         $this->assertSame([1 => 120, 12 => 800], $idea->volumeByMonth);
-        $this->assertSame(12, $idea->seasonality()->peakMonth());
     }
 
     // ------------------------------------------------------------- measure
@@ -85,8 +84,8 @@ final class AhrefsKeywordSourceTest extends TestCase
         // The bug this file exists for. `measure()` is the measured half of
         // research — every keyword the engine scores enters the pool through
         // it — and its select named only keyword, volume and difficulty. The
-        // curve was then parsed out of a row that never had one, so
-        // `GatherCandidates::seasonal()` found nothing to plan from, every week.
+        // curve was then parsed out of a row that never had one, and every
+        // unit it researched was stored with an empty `monthly_volumes`.
         $this->assertSelectIncludes('volume_history');
     }
 
@@ -107,7 +106,6 @@ final class AhrefsKeywordSourceTest extends TestCase
         $idea = $this->source()->measure(['christmas cleaning'], 'PT')[0];
 
         $this->assertSame([1 => 120, 12 => 800], $idea->volumeByMonth);
-        $this->assertSame(12, $idea->seasonality()->peakMonth());
     }
 
     #[Test]
@@ -121,10 +119,9 @@ final class AhrefsKeywordSourceTest extends TestCase
 
         $idea = $this->source()->measure(['house cleaning lisbon'], 'PT')[0];
 
-        // Silence rather than a flat year. §5's Season band must not fire on a
-        // keyword nobody measured a curve for.
+        // Silence rather than a flat year: a keyword nobody measured a curve
+        // for must not be stored as one that is searched evenly all year.
         $this->assertSame([], $idea->volumeByMonth);
-        $this->assertNull($idea->seasonality()->peakMonth());
     }
 
     #[Test]

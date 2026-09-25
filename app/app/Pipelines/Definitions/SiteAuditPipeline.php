@@ -40,7 +40,7 @@ use App\Pipelines\Steps\Audit\VerifyLinks;
  * gets a third pool rather than being squeezed into whichever of the two fits
  * least badly.
  *
- * **Its own contour, too.** `EngineTickCommand::CONTOUR` lists the six
+ * **Its own contour, too.** `EngineTickCommand::CONTOUR` lists the five
  * pipelines that feed each other, and this is deliberately not among them: an
  * audit produces nothing the planner reads, so a project halfway through one
  * has exactly as much reason to draft an article as an idle one, and a

@@ -78,9 +78,8 @@ class CalendarController extends Controller
             ],
             // One card per topic, not one per language. Every locale is a row
             // of its own, so a project publishing in three languages showed
-            // every article three times.
-            // The card already carries a "3 langs" badge; it was being drawn on
-            // each of the three.
+            // every article three times — and the card's "3 langs" badge was
+            // drawn on each of the three.
             'units' => $this->oneCardPerTopic($units, $timezone),
             'unscheduled' => ContentItem::query()
                 ->where(fn ($query) => $query->where(fn ($unscheduled) => $unscheduled->whereDoesntHave('articleSchedule')->whereNull('scheduled_for'))->orWhereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'canceled')))

@@ -160,10 +160,10 @@ class AppServiceProvider extends ServiceProvider
         // place that assumed webhook is the whole point of the registry.
         //
         // A type with no entry — the pull API — is not a delivery that fails:
-        // {@see \App\Publishing\PublishToChannels} selects channels by `publishableTypes()`, so
-        // it is a destination that was never selected, and `manualTargets()`
-        // reads through the same filter so the unit card counts what the
-        // publish button will actually do.
+        // {@see \App\Publishing\PublishToChannels} selects channels by
+        // `publishableTypes()`, so it is a destination that was never
+        // selected, and `manualTargets()` reads through the same filter so the
+        // unit card counts what the publish button will actually do.
         $this->app->singleton(ChannelPublisherRegistry::class, fn (): ChannelPublisherRegistry => (new ChannelPublisherRegistry($this->app))
             ->register(ChannelType::Webhook, WebhookPublisher::class)
             ->register(ChannelType::WordPress, WordPressPublisher::class));

@@ -68,6 +68,28 @@ final class ProjectLaunchTest extends TestCase
     }
 
     #[Test]
+    public function research_that_found_nothing_settles_the_launch_without_writing_anything(): void
+    {
+        Queue::fake();
+
+        $project = Project::factory()->onboarding()->create();
+        $run = app(ProjectLaunch::class)->begin($project);
+
+        $this->assertNotNull($run);
+        $this->assertSame('research', $run->pipeline);
+
+        // Finishing research is not permission to plan or draft on its own: an
+        // empty idea pool leaves nothing to plan, and the launch settles
+        // rather than waiting on work that will never start.
+        $run->forceFill(['status' => PipelineRunStatus::Completed, 'finished_at' => now()])->save();
+        PipelineRunFinished::dispatch($run);
+
+        $this->assertSame(OnboardingStatus::Active, $project->refresh()->onboarding_status);
+        $this->assertFalse(PipelineRun::acrossProjects()->whereIn('pipeline', ['planning', 'generation'])->exists());
+        $this->assertSame(0, ContentItem::acrossProjects()->count());
+    }
+
+    #[Test]
     public function planning_starts_when_research_finishes(): void
     {
         Queue::fake();

@@ -118,11 +118,9 @@ final class WebhookPayload
         // are live rows until one is promoted, so without this every rejected
         // candidate went out in the payload and a receiver rendering `images`
         // attached the drafts nobody picked.
-        $roles = [AssetRole::Hero, AssetRole::Inline];
-
         /** @var list<array<string, mixed>> $images */
         $images = $unit->assets()
-            ->whereIn('role', $roles)
+            ->whereIn('role', [AssetRole::Hero, AssetRole::Inline])
             ->orderBy('role')
             ->get()
             ->map(static fn (Asset $asset): array => [
