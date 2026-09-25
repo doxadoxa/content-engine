@@ -78,7 +78,7 @@ final class StrandedDeliveryTest extends TestCase
     {
         Queue::fake();
 
-        $delivery = $this->pending(minutesAgo: 45);
+        $delivery = $this->pending(minutesAgo: 75);
 
         $this->sweep();
 
@@ -97,7 +97,7 @@ final class StrandedDeliveryTest extends TestCase
     {
         Queue::fake();
 
-        $delivery = $this->pending(minutesAgo: 45);
+        $delivery = $this->pending(minutesAgo: 75);
 
         $this->sweep();
 
@@ -113,11 +113,12 @@ final class StrandedDeliveryTest extends TestCase
     {
         Queue::fake();
 
-        // Twenty minutes is inside the queue's own `retry_after`, so a worker
+        // Forty minutes is inside the queue's own `retry_after`, so a worker
         // may simply be slow. Sweeping here would dispatch a second copy of a
         // delivery that is still running, which is an article published twice
-        // — the failure §9 exists to prevent.
-        $delivery = $this->pending(minutesAgo: 20);
+        // — the failure §9 exists to prevent. The old half-hour threshold
+        // swept exactly this row.
+        $delivery = $this->pending(minutesAgo: 40);
 
         $this->sweep();
 
@@ -130,7 +131,7 @@ final class StrandedDeliveryTest extends TestCase
     {
         Queue::fake();
 
-        $delivery = $this->pending(minutesAgo: 45, attributes: [
+        $delivery = $this->pending(minutesAgo: 75, attributes: [
             'deferrals' => StrandedDeliveries::MAX_SWEEPS,
         ]);
 
@@ -161,7 +162,7 @@ final class StrandedDeliveryTest extends TestCase
     {
         Queue::fake();
 
-        $mine = $this->pending(minutesAgo: 45);
+        $mine = $this->pending(minutesAgo: 75);
 
         $other = Project::factory()->create();
         $theirs = app(CurrentProject::class)->run($other, function (): WebhookDelivery {
@@ -171,7 +172,7 @@ final class StrandedDeliveryTest extends TestCase
                 'secret' => 'other-secret',
             ]);
 
-            return $this->pending(minutesAgo: 45);
+            return $this->pending(minutesAgo: 75);
         });
 
         // A scheduled sweep has no operator and no tenant in context. The row
@@ -190,7 +191,7 @@ final class StrandedDeliveryTest extends TestCase
     #[Test]
     public function the_delivery_log_flags_a_stranded_row(): void
     {
-        $this->pending(minutesAgo: 45);
+        $this->pending(minutesAgo: 75);
 
         $this->actingAs($this->operator)
             ->get(route('deliveries.index'))
@@ -219,7 +220,7 @@ final class StrandedDeliveryTest extends TestCase
     #[Test]
     public function a_stranded_row_sorts_with_the_dead_letters(): void
     {
-        $stranded = $this->pending(minutesAgo: 45);
+        $stranded = $this->pending(minutesAgo: 75);
         $this->pending(minutesAgo: 1, attributes: ['status' => DeliveryStatus::Delivered]);
         $this->pending(minutesAgo: 0, attributes: ['status' => DeliveryStatus::Delivered]);
 
@@ -237,7 +238,7 @@ final class StrandedDeliveryTest extends TestCase
     #[Test]
     public function a_pending_delivery_cannot_be_replayed(): void
     {
-        $delivery = $this->pending(minutesAgo: 45);
+        $delivery = $this->pending(minutesAgo: 75);
 
         // The screen offers the button only on a dead letter, and the screen is
         // not the guard. Replaying an in-flight delivery is how the same post
@@ -252,7 +253,7 @@ final class StrandedDeliveryTest extends TestCase
     #[Test]
     public function a_retrying_delivery_cannot_be_replayed_either(): void
     {
-        $delivery = $this->pending(minutesAgo: 45, attributes: [
+        $delivery = $this->pending(minutesAgo: 75, attributes: [
             'status' => DeliveryStatus::Retrying,
             'next_attempt_at' => now()->addMinutes(5),
         ]);
@@ -267,7 +268,7 @@ final class StrandedDeliveryTest extends TestCase
     #[Test]
     public function a_dead_letter_is_still_replayable(): void
     {
-        $delivery = $this->pending(minutesAgo: 45, attributes: [
+        $delivery = $this->pending(minutesAgo: 75, attributes: [
             'status' => DeliveryStatus::DeadLetter,
             'error' => 'The receiver refused it five times.',
         ]);

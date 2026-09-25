@@ -97,7 +97,7 @@ Schedule::command('publish:approved')
 // is ever re-dispatched, and `dispatch_key` stops a second row being made — so
 // a worker killed mid-flight leaves a delivery at `pending` with nothing left
 // that would ever touch it again. Every ten minutes rather than hourly: the
-// threshold is already half an hour of waiting (§9, and
+// threshold is already an hour of waiting (§9, and
 // App\Publishing\StrandedDeliveries).
 Schedule::command('publish:sweep-stranded')
     ->everyTenMinutes()
