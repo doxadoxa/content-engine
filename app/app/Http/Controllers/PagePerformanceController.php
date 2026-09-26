@@ -61,15 +61,21 @@ final class PagePerformanceController extends Controller
         ]);
     }
 
-    public function read(CurrentProject $current): RedirectResponse
+    public function read(CurrentProject $current, GooglePanel $google): RedirectResponse
     {
         $project = $current->get();
         abort_if($project === null, 404);
         abort_unless($project->status === ProjectStatus::Active, 422, 'Activate this project before reading measurements.');
-        // The whole property is always worth reading; tracked pages are an
-        // addition to it, no longer a prerequisite.
-        SyncSiteSearchJob::request($project);
-        if (SitePage::query()->tracked()->exists()) {
+        // The whole property whenever there is one to read; tracked pages are
+        // an addition to it, no longer a prerequisite. With neither, there is
+        // nothing to queue, and "queued" would be a promise nothing keeps.
+        $site = $google->connectionState($project)['search_console'];
+        $pages = SitePage::query()->tracked()->exists();
+        abort_unless($site || $pages, 422, 'Connect Google Search Console and choose a property, or track a page, before reading measurements.');
+        if ($site) {
+            SyncSiteSearchJob::request($project);
+        }
+        if ($pages) {
             SyncPageMeasurementsJob::dispatch($project->id);
         }
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Measurement queued. This page updates as the reports arrive.']);
@@ -105,7 +111,7 @@ final class PagePerformanceController extends Controller
         try {
             // A plan-limit refusal is already keyed to `url` and propagates
             // with its own message.
-            $pages->track($project, $data['url'], $this->locale($project, $data['url']), 'other');
+            $pages->track($project, $data['url'], $this->locale($project, $data['url']), 'other', preferDeclaredLocale: true);
         } catch (UnsafePublicUrl|ConnectionException|InvalidArgumentException $e) {
             throw ValidationException::withMessages(['url' => 'The page could not be safely read: '.$e->getMessage()]);
         } catch (ValidationException $e) {

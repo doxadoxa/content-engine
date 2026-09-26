@@ -67,14 +67,14 @@ final class ManagerResults
             'scope' => 'tracked_pages',
             'reason' => null,
         ];
-        $site = $this->siteSearch->forProject($project);
+        $site = $this->siteSearch->forCard($project);
         $search['state'] = $site['state'];
         // Once Search Console is connected the card is about the site — what
         // Google sends to all of it — in every state, including the ones with
         // no numbers yet, so it can say why. Tracked pages remain only for a
         // project with no usable Search Console connection.
         if ($site['state'] !== 'not_connected') {
-            $search = $this->siteCard($project, $site, $search);
+            $search = $this->siteCard($site, $search);
         }
         $source = PurchaseSource::query()->where('is_primary', true)->first();
         $purchaseEnd = CarbonImmutable::now('UTC')->addDay()->startOfDay();
@@ -105,7 +105,7 @@ final class ManagerResults
      * @param  array<string, mixed>  $fallback
      * @return array<string, mixed>
      */
-    private function siteCard(Project $project, array $site, array $fallback): array
+    private function siteCard(array $site, array $fallback): array
     {
         /** @var list<array{day: string, clicks: int, impressions: int}> $days */
         $days = $site['daily'];
@@ -121,7 +121,6 @@ final class ManagerResults
             $series[] = ['day' => $day->toDateString(), 'clicks' => $row['clicks'] ?? null,
                 'impressions' => $row['impressions'] ?? null, 'observed_pages' => $row === null ? 0 : 1];
         }
-        $status = $this->siteSearch->dailyStatus($project);
 
         return [
             ...$fallback,
@@ -129,10 +128,10 @@ final class ManagerResults
             'impressions' => $ready ? ($site['current']['impressions'] ?? null) : null,
             'previous_clicks' => $ready ? ($site['previous']['clicks'] ?? null) : null,
             'previous_impressions' => $ready ? ($site['previous']['impressions'] ?? null) : null,
-            'observed_pages' => $ready ? count($site['top_pages']) : 0,
+            'observed_pages' => $ready ? $site['top_pages_count'] : 0,
             'from' => $site['windows']['current']['from'], 'to' => $site['windows']['current']['to'],
-            'stale' => $status['stale'],
-            'status' => $status['status'],
+            'stale' => $site['stale'],
+            'status' => $site['latest']['status'] ?? 'not_read',
             'updated_at' => $site['updated_at'],
             'daily' => $series,
             'scope' => 'site',

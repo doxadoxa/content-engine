@@ -228,6 +228,9 @@ final class SiteSearchTest extends TestCase
         $this->assertSame(4, $report['top_queries'][1]['previous']['clicks']);
         $this->assertEqualsWithDelta(6.0, $report['top_queries'][1]['previous']['position'], 0.0001);
         $this->assertSame('https://example.com/services/', $report['top_pages'][0]['url']);
+        $this->assertSame(['queries' => ['from' => self::CURRENT_FROM, 'to' => '2026-09-12'], 'pages' => ['from' => self::CURRENT_FROM, 'to' => '2026-09-12']], $report['top_windows']);
+        $this->assertFalse($report['stale']);
+        $this->assertSame('complete', $report['latest']['status']);
         $this->assertFalse($report['top_pages'][0]['tracked']);
         $this->assertNull($report['top_pages'][0]['page_id']);
     }
@@ -397,10 +400,115 @@ final class SiteSearchTest extends TestCase
 
         $this->assertSame(['from' => self::CURRENT_FROM, 'to' => '2026-09-12', 'days' => 28], $report['windows']['current']);
         $this->assertSame(28, $report['current']['clicks']);
+        // Two days behind is the ordinary lag of a daily read, not staleness.
+        $this->assertFalse($report['stale']);
+        $this->assertSame(['status' => 'complete', 'reason' => null, 'finished_at' => $read->finished_at?->toIso8601String()], $report['latest']);
         $search = app(ManagerResults::class)->for($project)['search'];
         $this->assertSame('2026-09-12', $search['to']);
         $this->assertSame(28, array_sum(array_column($search['daily'], 'observed_pages')));
-        $this->assertTrue($search['stale']);
+        $this->assertFalse($search['stale']);
+
+        $this->travel(1)->day();
+        $this->assertTrue(app(SiteSearchReport::class)->forProject($project)['stale']);
+        $this->assertTrue(app(ManagerResults::class)->for($project)['search']['stale']);
+        $this->assertSame('2026-09-12', app(SiteSearchReport::class)->forProject($project)['windows']['current']['to']);
+    }
+
+    #[Test]
+    public function a_failed_attempt_is_stale_but_a_read_in_flight_is_not(): void
+    {
+        [, $project] = $this->owner();
+        $this->connect($project);
+        $this->scriptSite();
+        app(SynchronizeSiteSearch::class)->sync($project);
+        $fresh = app(SiteSearchReport::class)->forProject($project);
+        $this->assertFalse($fresh['stale']);
+
+        $reading = $this->read(ReadStatus::Reading);
+        $inFlight = app(SiteSearchReport::class)->forProject($project);
+        $this->assertFalse($inFlight['stale']);
+        $this->assertSame('reading', $inFlight['latest']['status']);
+        $this->assertFalse(app(ManagerResults::class)->for($project)['search']['stale']);
+        $this->assertSame('reading', app(ManagerResults::class)->for($project)['search']['status']);
+
+        $reading->update(['status' => ReadStatus::Failed, 'reason' => 'Search Console answered 500.', 'finished_at' => now()]);
+        $failed = app(SiteSearchReport::class)->forProject($project);
+        $this->assertSame('ready', $failed['state']);
+        $this->assertTrue($failed['stale']);
+        $this->assertSame('failed', $failed['latest']['status']);
+        $this->assertSame('Search Console answered 500.', $failed['latest']['reason']);
+        $this->assertTrue(app(ManagerResults::class)->for($project)['search']['stale']);
+    }
+
+    #[Test]
+    public function a_retry_after_a_failure_reads_as_reading_until_it_answers(): void
+    {
+        Queue::fake();
+        [$owner, $project] = $this->owner();
+        $this->connect($project);
+        $this->read(ReadStatus::Failed)->update(['reason' => 'Search Console answered 500.']);
+        $this->actingAs($owner)->get('/performance')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('site_search.state', 'failed')->where('site_search.reason', 'Search Console answered 500.'));
+
+        $this->travel(1)->minute();
+        $this->post('/performance/read')->assertRedirect('/performance');
+
+        $this->get('/performance')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('site_search.state', 'reading')
+            ->where('site_search.latest.status', 'failed'));
+
+        // The retry answered, and failed again: that is the news now.
+        $this->travel(1)->minute();
+        $this->read(ReadStatus::Failed)->update(['reason' => 'Search Console answered 503.']);
+        $this->get('/performance')->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('site_search.state', 'failed')->where('site_search.reason', 'Search Console answered 503.'));
+    }
+
+    #[Test]
+    public function switching_property_through_the_settings_during_a_read_leaves_nothing_behind(): void
+    {
+        Queue::fake();
+        [$owner, $project] = $this->owner();
+        $this->connect($project);
+        Http::fake([
+            'www.googleapis.com/webmasters/v3/sites' => Http::response(['siteEntry' => [
+                ['siteUrl' => 'sc-domain:example.com', 'permissionLevel' => 'siteOwner'],
+                ['siteUrl' => 'https://example.com/', 'permissionLevel' => 'siteOwner'],
+            ]]),
+            'analyticsadmin.googleapis.com/*' => Http::response(['accountSummaries' => []]),
+        ]);
+        $gateway = new class extends FakeSearchConsole
+        {
+            public ?\Closure $during = null;
+
+            public function siteReport(Project $project, Carbon $from, Carbon $to, string $dimension, ?int $rowLimit = null, ?string $property = null): ReadResult
+            {
+                if ($this->during !== null) {
+                    ($this->during)();
+                    $this->during = null;
+                }
+
+                return parent::siteReport($project, $from, $to, $dimension, $rowLimit, $property);
+            }
+        };
+        $gateway->willReadSite('date', new ReadResult(ReadStatus::Complete, [new SiteSearchRow('2026-09-01', null, 100, 10, 5.0)]));
+        $gateway->during = fn () => $this->actingAs($owner)->patch("/projects/{$project->id}/google", ['search_console_site' => 'https://example.com/'])->assertRedirect();
+        $this->app->instance(SearchConsoleGateway::class, $gateway);
+
+        $reads = app(SynchronizeSiteSearch::class)->sync($project);
+
+        $this->assertSame([], $reads);
+        // One request to Google, then it stopped: nothing left behind for the
+        // old property, and nothing stored under the new one.
+        $this->assertCount(1, $gateway->siteCalls);
+        $this->assertSame(0, MeasurementRead::query()->count());
+        $this->assertSame(0, SiteSearchDay::query()->count());
+        $this->get('/performance')->assertOk()->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('site_search.property', 'https://example.com/')
+            ->where('site_search.state', 'reading')
+            ->where('site_search.reason', null)
+            ->where('site_search.latest', null));
+        Queue::assertPushed(SyncSiteSearchJob::class);
     }
 
     #[Test]
@@ -495,6 +603,9 @@ final class SiteSearchTest extends TestCase
             ->where('site_search.daily', [])
             ->has('site_search.top_queries', 0)
             ->has('site_search.top_pages', 0)
+            ->where('site_search.top_windows', ['queries' => null, 'pages' => null])
+            ->where('site_search.latest', null)
+            ->where('site_search.stale', false)
             ->has('site_search.history_from')
             ->has('site_search.updated_at'));
         Queue::assertPushed(SyncSiteSearchJob::class, fn (SyncSiteSearchJob $job): bool => $job->projectId === $project->id);
@@ -679,6 +790,44 @@ final class SiteSearchTest extends TestCase
     }
 
     #[Test]
+    public function a_page_with_no_language_in_its_path_takes_the_language_it_declares(): void
+    {
+        Queue::fake();
+        [$owner, $project] = $this->owner();
+        $project->update(['default_locale' => 'en', 'locales' => ['en', 'pt-PT']]);
+        $this->connect($project);
+        $this->search()->willReadSite('page', new ReadResult(ReadStatus::Complete, [
+            new SiteSearchRow(null, 'https://example.com/servicos/', 40, 3, 4.0),
+        ]), self::CURRENT_FROM);
+        app(SynchronizeSiteSearch::class)->sync($project);
+        $this->fakePublicPage('https://example.com/servicos/', 'pt-PT');
+
+        $this->actingAs($owner)->post('/performance/monitor', ['url' => 'https://example.com/servicos/'])
+            ->assertSessionHasNoErrors()->assertRedirect('/performance');
+
+        $this->assertSame('pt-PT', SitePage::query()->tracked()->sole()->locale);
+    }
+
+    #[Test]
+    public function a_path_language_shared_by_two_locales_is_settled_by_the_declared_one(): void
+    {
+        Queue::fake();
+        [$owner, $project] = $this->owner();
+        $project->update(['default_locale' => 'en', 'locales' => ['en', 'pt-PT', 'pt-BR']]);
+        $this->connect($project);
+        $this->search()->willReadSite('page', new ReadResult(ReadStatus::Complete, [
+            new SiteSearchRow(null, 'https://example.com/pt/servicos/', 40, 3, 4.0),
+        ]), self::CURRENT_FROM);
+        app(SynchronizeSiteSearch::class)->sync($project);
+        $this->fakePublicPage('https://example.com/pt/servicos/', 'pt-BR');
+
+        $this->actingAs($owner)->post('/performance/monitor', ['url' => 'https://example.com/pt/servicos/'])
+            ->assertSessionHasNoErrors()->assertRedirect('/performance');
+
+        $this->assertSame('pt-BR', SitePage::query()->tracked()->sole()->locale);
+    }
+
+    #[Test]
     public function every_monitoring_refusal_is_reported_on_the_url_field(): void
     {
         Queue::fake();
@@ -723,6 +872,7 @@ final class SiteSearchTest extends TestCase
         $this->assertSame(5, $search['previous_clicks']);
         $this->assertSame(50, $search['previous_impressions']);
         $this->assertSame(1, $search['tracked_pages']);
+        $this->assertSame(2, $search['observed_pages']);
         $this->assertSame('complete', $search['status']);
         $this->assertFalse($search['stale']);
         $this->assertTrue($search['connected']);

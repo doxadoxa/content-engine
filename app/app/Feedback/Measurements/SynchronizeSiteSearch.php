@@ -103,12 +103,21 @@ final class SynchronizeSiteSearch
                     : $read();
                 $status = $this->worst($results);
                 DB::transaction(function () use ($project, $site, $record, $results, $status, $source, $windows, $historyFrom, $periods, &$switched): void {
+                    // Locked, so a switch or a disconnect deleting this read
+                    // waits for the store to finish or has already happened.
+                    // Gone means exactly that: the owner moved on.
+                    $locked = MeasurementRead::query()->whereKey($record->id)->lockForUpdate()->first();
+                    if ($locked === null) {
+                        $switched = true;
+
+                        return;
+                    }
                     // The owner may have chosen another property while Google
                     // was answering. Storing these rows would put one site's
                     // numbers under the other's name.
                     if ($site !== null && $this->currentSite($project) !== $site) {
                         $switched = true;
-                        $record->update(['status' => ReadStatus::Failed, 'reason' => 'The property changed during the read.', 'finished_at' => now()]);
+                        $locked->update(['status' => ReadStatus::Failed, 'reason' => 'The property changed during the read.', 'finished_at' => now()]);
 
                         return;
                     }
@@ -134,6 +143,11 @@ final class SynchronizeSiteSearch
             $fresh = $record->fresh();
             if ($fresh !== null) {
                 $reads[$source] = $fresh;
+            }
+            if ($switched) {
+                // Nothing further is about the property the owner chose: no
+                // more requests to Google, no more reads left behind for it.
+                break;
             }
         }
         if ($switched) {

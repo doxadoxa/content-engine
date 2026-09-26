@@ -31,103 +31,167 @@ final class SiteSearchReport
     /** A read, or a request for one, still unanswered after this long is treated as failed, like {@see PagePerformance}. */
     public const int STALLED_AFTER_MINUTES = 35;
 
+    /** How far behind today's window the stored days may fall before they are called stale. */
+    private const int STALE_AFTER_DAYS = 2;
+
     private const array SOURCES = [SynchronizeSiteSearch::DAILY, SynchronizeSiteSearch::QUERIES, SynchronizeSiteSearch::PAGES];
 
     public function __construct(private readonly CurrentProject $current, private readonly GoogleConnection $connection) {}
 
-    /** @return array<string, mixed> */
+    /**
+     * Everything the performance page shows.
+     *
+     * @return array<string, mixed>
+     */
     public function forProject(Project $project): array
     {
         $integration = $this->connection->for($project);
 
-        return $this->current->run($project, fn (): array => $this->report($project, $integration));
-    }
-
-    /**
-     * The daily read's status for a compact card: `not_read`, a ReadStatus
-     * value (stalled reads reported as `failed`), and whether the stored days
-     * are behind today's window.
-     *
-     * @return array{status: string, stale: bool}
-     */
-    public function dailyStatus(Project $project): array
-    {
-        $property = $this->property($this->connection->for($project));
-
-        return $this->current->run($project, function () use ($property): array {
-            $latest = $this->latest(SynchronizeSiteSearch::DAILY, $property);
-            $complete = $this->latestComplete(SynchronizeSiteSearch::DAILY, $property);
+        return $this->current->run($project, function () use ($project, $integration): array {
+            $status = $this->status($project, $integration);
+            $property = $status['property'];
+            $windows = $status['windows'];
+            $days = SiteSearchDay::query()->whereIn('measurement_read_id', $this->reads($property)->select('id'))->orderBy('measured_on')->get();
 
             return [
-                'status' => $latest === null ? 'not_read' : ($this->stalled($latest) ? ReadStatus::Failed->value : $latest->status->value),
-                'stale' => $complete === null || $latest?->status !== ReadStatus::Complete
-                    || $complete->window_to->toDateString() < (new Windows)->to->toDateString(),
+                ...$this->summary($status, $days),
+                'history_from' => $days->first()?->measured_on->toDateString(),
+                'daily' => $days->map(static fn (SiteSearchDay $day): array => [
+                    'day' => $day->measured_on->toDateString(), 'clicks' => $day->clicks, 'impressions' => $day->impressions,
+                    'position' => $day->position_tenths === null ? null : $day->position_tenths / 10,
+                ])->values()->all(),
+                'top_queries' => array_map(static fn (array $row): array => ['query' => $row['value'], ...$row['metrics']], $this->top('query', $property)),
+                'top_pages' => $this->topPages($property),
+                'top_windows' => ['queries' => $this->topWindow('query', $property), 'pages' => $this->topWindow('page', $property)],
             ];
         });
     }
 
     /**
-     * Whether the performance page should queue a read on its own: a selected
-     * property that has never been read and that nobody has asked about yet.
+     * The Home card's cut of the same report, cheap enough for a 15-second
+     * poll: the state, the two 28-day totals, the current window's days and a
+     * count of the top pages. No history, no ranking lists, no tracked pages.
+     *
+     * @return array<string, mixed>
+     */
+    public function forCard(Project $project): array
+    {
+        $integration = $this->connection->for($project);
+
+        return $this->current->run($project, function () use ($project, $integration): array {
+            $status = $this->status($project, $integration);
+            $property = $status['property'];
+            $windows = $status['windows'];
+            $days = $property === null ? collect() : SiteSearchDay::query()
+                ->whereIn('measurement_read_id', $this->reads($property)->select('id'))
+                ->whereBetween('measured_on', [$windows->from->toDateString(), $windows->to->toDateString()])
+                ->orderBy('measured_on')->get();
+            $pages = $property === null ? 0 : SiteSearchTopRow::query()->where('kind', 'page')->where('period', 'current')
+                ->whereIn('measurement_read_id', $this->reads($property)->select('id'))->count();
+
+            return [
+                ...$this->summary($status, $days),
+                'daily' => $days->filter(static fn (SiteSearchDay $day): bool => $day->measured_on->toDateString() >= $windows->currentFrom->toDateString())
+                    ->map(static fn (SiteSearchDay $day): array => ['day' => $day->measured_on->toDateString(), 'clicks' => $day->clicks, 'impressions' => $day->impressions])
+                    ->values()->all(),
+                'top_pages_count' => $pages,
+            ];
+        });
+    }
+
+    /**
+     * Whether a screen should queue a read on its own: a selected property
+     * that has never been read and that nobody has asked about yet.
      *
      * Covers projects that connected before site-wide reads existed, and a
      * switch whose read was blocked by the previous one still running. Only
      * when no request is remembered, so a page polling every few seconds does
      * not queue a read per poll, and a request that went unanswered is shown
-     * as failed instead of quietly re-queued forever.
+     * as failed instead of quietly re-queued forever. The cache is asked
+     * first, so the common answer costs no query.
      */
     public function needsFirstRead(Project $project): bool
     {
+        if (! SyncSiteSearchJob::eligible($project) || SyncSiteSearchJob::requestedAt($project->id) !== null) {
+            return false;
+        }
         $property = $this->property($this->connection->for($project));
 
         return $property !== null
-            && SyncSiteSearchJob::eligible($project)
-            && SyncSiteSearchJob::requestedAt($project->id) === null
             && $this->current->run($project, fn (): bool => $this->latest(SynchronizeSiteSearch::DAILY, $property) === null);
     }
 
-    /** @return array<string, mixed> */
-    private function report(Project $project, ?ProjectIntegration $integration): array
+    /**
+     * The one place state, freshness and the latest attempt are decided, for
+     * both the page and the card, so the two cannot disagree about whether
+     * the numbers are current.
+     *
+     * @return array{property: string|null, selected: string|null, state: string, reason: string|null, reading: bool, complete: MeasurementRead|null, windows: Windows, stale: bool, latest: array{status: string, reason: string|null, finished_at: string|null}|null, has_days: bool}
+     */
+    private function status(Project $project, ?ProjectIntegration $integration): array
     {
         $property = $this->property($integration);
-        $latest = $this->latest(SynchronizeSiteSearch::DAILY, $property);
-        $complete = $this->latestComplete(SynchronizeSiteSearch::DAILY, $property);
-        $reading = $this->reads($property)->whereIn('source', self::SOURCES)
+        $latest = $property === null ? null : $this->latest(SynchronizeSiteSearch::DAILY, $property);
+        $complete = $latest === null ? null : ($latest->status === ReadStatus::Complete ? $latest : $this->latestComplete(SynchronizeSiteSearch::DAILY, $property));
+        $reading = $property !== null && $this->reads($property)->whereIn('source', self::SOURCES)
             ->where('status', ReadStatus::Reading)
             ->where('started_at', '>=', now()->subMinutes(self::STALLED_AFTER_MINUTES))
             ->exists();
-        // The window the stored numbers were read for, not today's: a read
-        // that ended on the 12th stays a window ending on the 12th until the
-        // next complete read, rather than sliding and losing its newest days.
-        $windows = $complete === null
-            ? new Windows
-            : new Windows(Carbon::parse($complete->window_to->toDateString(), 'America/Los_Angeles'));
-
-        $days = SiteSearchDay::query()->whereIn('measurement_read_id', $this->reads($property)->select('id'))->orderBy('measured_on')->get();
-        [$state, $reason] = $this->state($project, $integration, $latest, $complete, $days->isNotEmpty(), $reading);
-
-        $current = [$windows->currentFrom->toDateString(), $windows->to->toDateString()];
-        $previous = [$windows->from->toDateString(), $windows->previousTo->toDateString()];
-        $within = static fn (array $range): Collection => $days->filter(static fn (SiteSearchDay $day): bool => $day->measured_on->toDateString() >= $range[0] && $day->measured_on->toDateString() <= $range[1]);
-
-        $allWindows = $windows->toArray();
+        $hasDays = $complete !== null && SiteSearchDay::query()->whereIn('measurement_read_id', $this->reads($property)->select('id'))->exists();
+        [$state, $reason] = $this->state($project, $integration, $latest, $complete, $hasDays, $reading);
+        $stalled = $latest !== null && $this->stalled($latest);
+        $inFlight = $latest?->status === ReadStatus::Reading && ! $stalled;
+        $today = new Windows;
 
         return [
+            'property' => $property,
+            'selected' => $integration?->searchConsoleSite(),
             'state' => $state,
-            'property' => $integration?->searchConsoleSite(),
             'reason' => $reason,
             'reading' => $reading,
-            'updated_at' => $complete?->finished_at?->toIso8601String(),
-            'windows' => ['current' => $allWindows['current'], 'previous' => $allWindows['previous']],
-            'current' => $this->totals($within($current)),
-            'previous' => $this->totals($within($previous)),
-            'history_from' => $days->first()?->measured_on->toDateString(),
-            'daily' => $days->map(static fn (SiteSearchDay $day): array => [
-                'day' => $day->measured_on->toDateString(), 'clicks' => $day->clicks, 'impressions' => $day->impressions,
-                'position' => $day->position_tenths === null ? null : $day->position_tenths / 10,
-            ])->values()->all(),
-            'top_queries' => array_map(static fn (array $row): array => ['query' => $row['value'], ...$row['metrics']], $this->top('query', $property)),
-            'top_pages' => $this->topPages($property),
+            'complete' => $complete,
+            // The window the stored numbers were read for, not today's: a read
+            // that ended on the 12th stays a window ending on the 12th until
+            // the next complete read, rather than sliding and losing its
+            // newest days.
+            'windows' => $complete === null ? $today : new Windows(Carbon::parse($complete->window_to->toDateString(), 'America/Los_Angeles')),
+            // Stale: the last attempt fell short (a read in flight is not a
+            // shortfall), or the numbers are more than a couple of days behind.
+            'stale' => $latest !== null && (
+                ($latest->status !== ReadStatus::Complete && ! $inFlight)
+                || ($complete !== null && $complete->window_to->copy()->addDays(self::STALE_AFTER_DAYS)->toDateString() < $today->to->toDateString())
+            ),
+            'latest' => $latest === null ? null : [
+                'status' => $stalled ? ReadStatus::Failed->value : $latest->status->value,
+                'reason' => $stalled ? 'The report did not finish. Run the measurement again.' : $latest->reason,
+                'finished_at' => $latest->finished_at?->toIso8601String(),
+            ],
+            'has_days' => $hasDays,
+        ];
+    }
+
+    /**
+     * @param  array{property: string|null, selected: string|null, state: string, reason: string|null, reading: bool, complete: MeasurementRead|null, windows: Windows, stale: bool, latest: array{status: string, reason: string|null, finished_at: string|null}|null, has_days: bool}  $status
+     * @param  Collection<array-key, SiteSearchDay>  $days
+     * @return array<string, mixed>
+     */
+    private function summary(array $status, Collection $days): array
+    {
+        $windows = $status['windows'];
+        $within = static fn (string $from, string $to): Collection => $days->filter(static fn (SiteSearchDay $day): bool => $day->measured_on->toDateString() >= $from && $day->measured_on->toDateString() <= $to);
+        $all = $windows->toArray();
+
+        return [
+            'state' => $status['state'],
+            'property' => $status['selected'],
+            'reason' => $status['reason'],
+            'reading' => $status['reading'],
+            'stale' => $status['stale'],
+            'latest' => $status['latest'],
+            'updated_at' => $status['complete']?->finished_at?->toIso8601String(),
+            'windows' => ['current' => $all['current'], 'previous' => $all['previous']],
+            'current' => $this->totals($within($windows->currentFrom->toDateString(), $windows->to->toDateString())),
+            'previous' => $this->totals($within($windows->from->toDateString(), $windows->previousTo->toDateString())),
         ];
     }
 
@@ -149,23 +213,34 @@ final class SiteSearchReport
             if ($reading || ($latest?->status === ReadStatus::Reading && ! $this->stalled($latest))) {
                 return ['reading', null];
             }
+            // A request newer than the last attempt is a retry on its way: the
+            // failure it answers is no longer the news. Only while recent — a
+            // queued job that never ran leaves no record behind, and
+            // "reading" forever is a screen that polls forever.
+            $requested = SyncSiteSearchJob::requestedAt($project->id);
+            $recent = $requested !== null && $requested->greaterThanOrEqualTo(now()->subMinutes(self::STALLED_AFTER_MINUTES));
+            if ($recent && ($latest?->created_at === null || $requested->greaterThan($latest->created_at))) {
+                return ['reading', null];
+            }
             if ($latest !== null) {
                 return ['failed', $this->stalled($latest)
                     ? 'The report did not finish. Run the measurement again.'
                     : ($latest->reason ?? 'Search Console could not be read.')];
-            }
-            // Nothing recorded yet. Reading only while the request is recent:
-            // a queued job that never ran leaves no record behind, and
-            // "reading" forever is a screen that polls forever.
-            $requested = SyncSiteSearchJob::requestedAt($project->id);
-            if ($requested !== null && $requested->greaterThanOrEqualTo(now()->subMinutes(self::STALLED_AFTER_MINUTES))) {
-                return ['reading', null];
             }
 
             return ['failed', 'Google has not answered yet. Try refreshing search data.'];
         }
 
         return [$hasDays ? 'ready' : 'no_data', null];
+    }
+
+    /** @return array{from: string, to: string}|null */
+    private function topWindow(string $kind, ?string $property): ?array
+    {
+        $row = SiteSearchTopRow::query()->where('kind', $kind)->where('period', 'current')
+            ->whereIn('measurement_read_id', $this->reads($property)->select('id'))->first(['window_from', 'window_to']);
+
+        return $row === null ? null : ['from' => $row->window_from->toDateString(), 'to' => $row->window_to->toDateString()];
     }
 
     /**

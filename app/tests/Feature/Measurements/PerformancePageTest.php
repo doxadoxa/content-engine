@@ -81,6 +81,8 @@ final class PerformancePageTest extends TestCase
         $this->post('/performance/read')->assertRedirect('/performance');
         Queue::assertPushed(SyncPageMeasurementsJob::class, 1);
         Queue::assertPushed(SyncPageMeasurementsJob::class, fn (SyncPageMeasurementsJob $job): bool => $job->projectId === $project->id && $job->queue === 'pipeline-expensive');
+        // No Search Console connection: only the tracked pages are read.
+        Queue::assertNotPushed(SyncSiteSearchJob::class);
         $this->post('/performance/read')->assertStatus(429);
     }
 
@@ -96,13 +98,20 @@ final class PerformancePageTest extends TestCase
     }
 
     #[Test]
-    public function without_tracked_pages_only_the_site_is_read_and_paused_projects_cannot_queue_measurements(): void
+    public function the_site_is_read_only_when_connected_and_nothing_readable_or_a_paused_project_is_refused(): void
     {
         Queue::fake();
         [$owner, $project] = $this->member('owner');
-        $this->actingAs($owner)->post('/performance/read')->assertRedirect('/performance');
+        // Neither a property nor a tracked page: nothing to queue.
+        $this->actingAs($owner)->post('/performance/read')->assertStatus(422);
+        Queue::assertNothingPushed();
+
+        ProjectIntegration::factory()->searchOnly()->create();
+        $this->travel(2)->minutes();
+        $this->post('/performance/read')->assertRedirect('/performance');
         Queue::assertPushed(SyncSiteSearchJob::class, 1);
         Queue::assertNotPushed(SyncPageMeasurementsJob::class);
+
         $this->travel(2)->minutes();
         SitePage::factory()->create(['tracked_at' => now()]);
         $project->update(['status' => ProjectStatus::Paused]);

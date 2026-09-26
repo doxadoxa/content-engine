@@ -116,6 +116,25 @@ export type SiteSearch = {
     current: SiteSearchTotals | null;
     previous: SiteSearchTotals | null;
     history_from: string | null;
+    /** Stored data is behind, or the latest read from Google failed. */
+    stale: boolean;
+    /** The latest daily read for the current property. */
+    latest: {
+        status:
+            | 'reading'
+            | 'complete'
+            | 'partial'
+            | 'unavailable'
+            | 'incompatible'
+            | 'failed';
+        reason: string | null;
+        finished_at: string | null;
+    } | null;
+    /** The current-period window each top list was read for. */
+    top_windows: {
+        queries: { from: string; to: string } | null;
+        pages: { from: string; to: string } | null;
+    };
     daily: {
         day: string;
         clicks: number;

@@ -202,7 +202,7 @@ function OverviewBody({
                 </Notice>
             );
         case 'ready':
-            return <ReadyState site={site} owner={owner} />;
+            return <ReadyState site={site} owner={owner} paused={paused} />;
         default:
             return null;
     }
@@ -314,7 +314,15 @@ function ReadingState() {
     );
 }
 
-function ReadyState({ site, owner }: { site: SiteSearch; owner: boolean }) {
+function ReadyState({
+    site,
+    owner,
+    paused,
+}: {
+    site: SiteSearch;
+    owner: boolean;
+    paused: boolean;
+}) {
     const { current, previous, windows } = site;
 
     return (
@@ -330,6 +338,9 @@ function ReadyState({ site, owner }: { site: SiteSearch; owner: boolean }) {
                     {resultDate(windows.previous.to)}.
                 </p>
             </div>
+            {site.stale && (
+                <StaleNotice site={site} owner={owner} paused={paused} />
+            )}
             <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <StatTile
                     label="Clicks"
@@ -368,6 +379,43 @@ function ReadyState({ site, owner }: { site: SiteSearch; owner: boolean }) {
                 hides rare searches for privacy, so query totals can be lower
                 than site totals. Search dates use Pacific time.
             </p>
+        </div>
+    );
+}
+
+/** Says why the numbers shown may be behind Google's. */
+function StaleNotice({
+    site,
+    owner,
+    paused,
+}: {
+    site: SiteSearch;
+    owner: boolean;
+    paused: boolean;
+}) {
+    const { latest } = site;
+    const unfinished =
+        latest !== null &&
+        latest.status !== 'complete' &&
+        latest.status !== 'reading' &&
+        !site.reading;
+
+    return (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50/40 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+            <p className="flex min-w-0 items-start gap-2">
+                <AlertTriangle
+                    className="mt-1 size-4 shrink-0"
+                    aria-hidden="true"
+                />
+                <span className="min-w-0 break-words">
+                    {unfinished
+                        ? `The last update from Google didn’t finish${latest.reason ? `: ${latest.reason}` : '.'}`
+                        : `These numbers are from ${resultDate(site.windows.current.to)}; newer data hasn’t arrived yet.`}
+                </span>
+            </p>
+            {unfinished && owner && (
+                <RefreshButton paused={paused} reading={site.reading} />
+            )}
         </div>
     );
 }
@@ -664,6 +712,14 @@ function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
         tab === 'queries' ? site.top_queries.length : site.top_pages.length;
     const matches = tab === 'queries' ? queries.length : pages.length;
     const noun = tab === 'queries' ? 'queries' : 'pages';
+    // A list read on another day than the totals covers its own dates.
+    const listWindow = site.top_windows[tab];
+    const ownWindow =
+        listWindow !== null &&
+        (listWindow.from !== site.windows.current.from ||
+            listWindow.to !== site.windows.current.to)
+            ? `${resultDate(listWindow.from)} – ${resultDate(listWindow.to)}`
+            : null;
 
     const select = (next: Tab) => {
         setTab(next);
@@ -742,6 +798,12 @@ function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
                     />
                 </label>
             </div>
+            {ownWindow && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                    {tab === 'queries' ? 'Top queries' : 'Top pages'} for{' '}
+                    {ownWindow}
+                </p>
+            )}
             <div
                 role="tabpanel"
                 id={`${base}-panel`}
@@ -792,8 +854,9 @@ function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
                     >
                         <table className="w-full min-w-[720px] text-sm">
                             <caption className="sr-only">
-                                Top {noun} on Google for the current 28 days,
-                                with changes from the previous 28 days
+                                Top {noun} on Google for{' '}
+                                {ownWindow ?? 'the current 28 days'}, with
+                                changes from the previous 28 days
                             </caption>
                             <thead>
                                 <tr className="border-b bg-muted/20 text-left text-xs text-muted-foreground">
