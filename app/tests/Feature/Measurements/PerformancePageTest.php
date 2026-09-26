@@ -7,6 +7,7 @@ namespace Tests\Feature\Measurements;
 use App\Enums\ProjectStatus;
 use App\Feedback\Measurements\ReadStatus;
 use App\Feedback\Measurements\SyncPageMeasurementsJob;
+use App\Feedback\Measurements\SyncSiteSearchJob;
 use App\Models\MeasurementRead;
 use App\Models\PageMetric;
 use App\Models\Project;
@@ -46,7 +47,7 @@ final class PerformancePageTest extends TestCase
     }
 
     #[Test]
-    public function a_connected_search_account_without_measurements_is_shown_without_requesting_data(): void
+    public function a_connected_search_account_without_measurements_queues_only_the_site_read_and_no_page_read(): void
     {
         Queue::fake();
         Http::preventStrayRequests();
@@ -58,10 +59,16 @@ final class PerformancePageTest extends TestCase
             ->where('search_connected', true)
             ->where('search_data_mode', 'current')
             ->where('report.sources.gsc_pages.status', 'not_read')
-            ->where('report.pages.0.current.search.clicks', null));
+            ->where('report.pages.0.current.search.clicks', null)
+            ->where('site_search.state', 'reading'));
 
         Http::assertNothingSent();
-        Queue::assertNothingPushed();
+        // The whole property has never been read, so the page asks for it —
+        // once, however often it polls. Tracked pages still wait for their
+        // own read.
+        $this->get('/performance')->assertOk();
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+        Queue::assertNotPushed(SyncPageMeasurementsJob::class);
     }
 
     #[Test]
@@ -89,15 +96,19 @@ final class PerformancePageTest extends TestCase
     }
 
     #[Test]
-    public function missing_tracked_pages_and_paused_projects_cannot_queue_measurements(): void
+    public function without_tracked_pages_only_the_site_is_read_and_paused_projects_cannot_queue_measurements(): void
     {
         Queue::fake();
         [$owner, $project] = $this->member('owner');
-        $this->actingAs($owner)->post('/performance/read')->assertStatus(422);
+        $this->actingAs($owner)->post('/performance/read')->assertRedirect('/performance');
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+        Queue::assertNotPushed(SyncPageMeasurementsJob::class);
+        $this->travel(2)->minutes();
         SitePage::factory()->create(['tracked_at' => now()]);
         $project->update(['status' => ProjectStatus::Paused]);
         $this->post('/performance/read')->assertStatus(422);
-        Queue::assertNothingPushed();
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+        Queue::assertNotPushed(SyncPageMeasurementsJob::class);
     }
 
     #[Test]

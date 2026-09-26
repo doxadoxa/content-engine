@@ -26,6 +26,24 @@ interface SearchConsoleGateway
     /** @param list<string> $urls */
     public function pageReport(Project $project, array $urls, Carbon $from, Carbon $to, bool $queries = false): ReadResult;
 
+    /**
+     * The whole property, with no page filter.
+     *
+     * Exists because `pageReport` can only answer for pages somebody chose to
+     * track, and a project that has just connected has chosen none — so the
+     * first thing an owner saw after connecting was nothing at all.
+     *
+     * `$dimension` is one of `date`, `query` or `page`. A `date` report is read
+     * to completion; `query` and `page` return Google's top `$rowLimit` rows
+     * (sorted by clicks), which is all a ranking list needs.
+     *
+     * `$property` pins the read to the property a caller captured once at the
+     * start of a sync, so the three reports of one sync cannot straddle an
+     * owner switching property halfway through. Null means "whatever is
+     * selected now".
+     */
+    public function siteReport(Project $project, Carbon $from, Carbon $to, string $dimension, ?int $rowLimit = null, ?string $property = null): ReadResult;
+
     public function name(): string;
 
     /** Whether this project has somewhere to read from. */

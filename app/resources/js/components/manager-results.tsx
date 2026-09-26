@@ -1,6 +1,7 @@
 import { Link } from '@inertiajs/react';
-import { ArrowUpRight, Search, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Loader2, Search, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import { TrendChart } from '@/components/trend-chart';
 import { Button } from '@/components/ui/button';
 import { workspacePanelClass } from '@/components/workspace-page';
 
@@ -19,6 +20,18 @@ export type ResultsSummary = {
         connected: boolean;
         status: string;
         updated_at: string | null;
+        /** `site` = the whole Search Console property; else monitored pages only. */
+        scope: 'site' | 'tracked_pages';
+        state:
+            | 'not_connected'
+            | 'no_property'
+            | 'reading'
+            | 'ready'
+            | 'no_data'
+            | 'failed'
+            | 'paused';
+        /** Why search data is failing or paused, when the server knows. */
+        reason?: string | null;
         daily: {
             day: string;
             clicks: number | null;
@@ -112,15 +125,47 @@ function visibility(results: ResultsSummary) {
     };
 }
 
+type Search = ResultsSummary['search'];
+
+const siteWide = (search: Search) => search.scope === 'site';
+
+/** One line on where the search numbers come from, or why there are none. */
+function searchNote(search: Search) {
+    if (siteWide(search)) {
+        switch (search.state) {
+            case 'not_connected':
+                return 'Connect Google Search Console';
+            case 'no_property':
+                return 'Choose a Search Console property';
+            case 'reading':
+                return 'Reading your search data from Google…';
+            case 'no_data':
+                return 'No search data in Google yet';
+            case 'failed':
+                return 'Unable to read search data';
+            case 'paused':
+                return 'Search data paused';
+            default:
+                return `Whole website${search.stale ? ' · update needed' : ''}`;
+        }
+    }
+
+    return search.observed_pages > 0
+        ? `${search.observed_pages} of ${search.tracked_pages} monitored pages${search.stale ? ' · update needed' : ''}`
+        : search.connected
+          ? 'Waiting for search measurements'
+          : 'Connect Google Search Console';
+}
+
+const searchHref = (search: Search) =>
+    siteWide(search)
+        ? '/performance#site-search'
+        : '/performance#search-results';
+
 export function ManagerResults({ results }: { results: ResultsSummary }) {
     const { search, purchases } = results;
     const ai = visibility(results);
-    const searchNote =
-        search.observed_pages > 0
-            ? `${search.observed_pages} of ${search.tracked_pages} monitored pages${search.stale ? ' · update needed' : ''}`
-            : search.connected
-              ? 'Waiting for search measurements'
-              : 'Connect Google Search Console';
+    const note = searchNote(search);
 
     return (
         <section
@@ -151,9 +196,9 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
                         ? search.clicks - search.previous_clicks
                         : null
                 }
-                note={searchNote}
+                note={note}
                 caption={`${resultDate(search.from)} – ${resultDate(search.to)}`}
-                href="/performance#search-results"
+                href={searchHref(search)}
             />
             <ResultCard
                 title="Search impressions"
@@ -164,9 +209,13 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
                         ? search.impressions - search.previous_impressions
                         : null
                 }
-                note={searchNote}
-                caption="Times your pages appeared in Google"
-                href="/performance#search-results"
+                note={note}
+                caption={
+                    siteWide(search)
+                        ? 'Times your website appeared in Google'
+                        : 'Times your pages appeared in Google'
+                }
+                href={searchHref(search)}
             />
             <ResultCard
                 title="Recorded purchases"
@@ -323,31 +372,15 @@ function SearchTrend({
     search,
     projectId,
 }: {
-    search: ResultsSummary['search'];
+    search: Search;
     projectId: string;
 }) {
     const [metric, setMetric] = useState<'clicks' | 'impressions'>('clicks');
-    const hasData = search.daily.some((day) => day[metric] !== null);
-    const max = Math.max(1, ...search.daily.map((day) => day[metric] ?? 0));
-    const y = (value: number) => 154 - (value / max) * 130;
-    const x = (index: number) =>
-        15 + (index / Math.max(1, search.daily.length - 1)) * 610;
-    const path = search.daily
-        .map((day, index) => {
-            const value = day[metric];
-
-            if (value === null) {
-                return '';
-            }
-
-            const command =
-                index === 0 || search.daily[index - 1][metric] === null
-                    ? 'M'
-                    : 'L';
-
-            return `${command} ${x(index)} ${y(value)}`;
-        })
-        .join(' ');
+    const site = siteWide(search);
+    const hasData =
+        (!site || search.state === 'ready') &&
+        search.daily.some((day) => day[metric] !== null);
+    const empty = emptyTrend(search, projectId);
 
     return (
         <section
@@ -365,7 +398,7 @@ function SearchTrend({
                     </p>
                 </div>
                 <Link
-                    href="/performance#search-results"
+                    href={searchHref(search)}
                     className="inline-flex items-center gap-1 text-xs font-medium underline underline-offset-4"
                 >
                     Explore search <ArrowUpRight className="size-3.5" />
@@ -375,6 +408,7 @@ function SearchTrend({
                 <>
                     <div
                         className="mt-5 flex gap-1 self-start rounded-lg bg-muted p-1"
+                        role="group"
                         aria-label="Search chart metric"
                     >
                         {(['clicks', 'impressions'] as const).map((item) => (
@@ -396,62 +430,20 @@ function SearchTrend({
                         </span>
                     </p>
                     <div className="mt-3 flex-1">
-                        <div className="text-right text-xs text-muted-foreground">
-                            {max.toLocaleString()}
-                        </div>
-                        <svg
-                            viewBox="0 0 640 175"
-                            className="w-full"
-                            role="img"
-                            aria-label={`Daily Google ${metric}. Missing days appear as gaps. Full values are in the table below.`}
-                        >
-                            {[24, 89, 154].map((height) => (
-                                <line
-                                    key={height}
-                                    x1="15"
-                                    x2="625"
-                                    y1={height}
-                                    y2={height}
-                                    stroke="currentColor"
-                                    className="text-border"
-                                    strokeDasharray="4 5"
-                                />
-                            ))}
-                            <path
-                                d={path}
-                                fill="none"
-                                stroke="currentColor"
-                                className="text-primary"
-                                strokeWidth="3"
-                                strokeLinejoin="round"
-                            />
-                            {search.daily.map(
-                                (day, index) =>
-                                    day[metric] !== null && (
-                                        <circle
-                                            key={day.day}
-                                            cx={x(index)}
-                                            cy={y(day[metric]!)}
-                                            r="3"
-                                            fill="currentColor"
-                                            className="text-primary"
-                                        >
-                                            <title>
-                                                {resultDate(day.day)}:{' '}
-                                                {day[metric]} {metric}
-                                            </title>
-                                        </circle>
-                                    ),
-                            )}
-                        </svg>
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>{resultDate(search.from)}</span>
-                            <span>{resultDate(search.to)}</span>
-                        </div>
+                        <TrendChart
+                            points={search.daily.map((day) => ({
+                                day: day.day,
+                                value: day[metric],
+                            }))}
+                            unit={metric}
+                            label={`Daily Google ${metric}${site ? ' for your whole website' : ' for monitored pages'}`}
+                            summary="Missing days appear as gaps. Full values are in the Daily numbers table below."
+                        />
                     </div>
                     <p className="mt-4 text-xs leading-5 text-muted-foreground">
-                        {search.observed_pages} of {search.tracked_pages}{' '}
-                        monitored pages. Missing days are gaps.
+                        {site
+                            ? 'Every page of your website in Google Search.'
+                            : `${search.observed_pages} of ${search.tracked_pages} monitored pages. Missing days are gaps.`}
                         {search.stale &&
                             ' These saved measurements need an update.'}
                     </p>
@@ -462,8 +454,9 @@ function SearchTrend({
                         <div className="mt-3 max-h-52 overflow-auto">
                             <table className="w-full text-left tabular-nums">
                                 <caption className="sr-only">
-                                    Daily search measurements for monitored
-                                    pages
+                                    {site
+                                        ? 'Daily search measurements for your whole website'
+                                        : 'Daily search measurements for monitored pages'}
                                 </caption>
                                 <thead>
                                     <tr>
@@ -491,36 +484,34 @@ function SearchTrend({
                     </details>
                 </>
             ) : (
-                <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border bg-muted/40 p-4">
-                    <Search
-                        className="size-5 shrink-0 text-muted-foreground"
-                        aria-hidden="true"
-                    />
+                <div
+                    className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border bg-muted/40 p-4"
+                    role={empty.busy ? 'status' : undefined}
+                >
+                    {empty.busy ? (
+                        <Loader2
+                            className="size-5 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none"
+                            aria-hidden="true"
+                        />
+                    ) : (
+                        <Search
+                            className="size-5 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                        />
+                    )}
                     <div className="min-w-0 flex-1">
-                        <h3 className="text-sm font-medium">
-                            {search.connected
-                                ? 'Waiting for Google measurements'
-                                : 'Google Search Console is not connected'}
-                        </h3>
+                        <h3 className="text-sm font-medium">{empty.title}</h3>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                            {search.connected
-                                ? 'Your traffic trend will appear after measurements are saved.'
-                                : 'Connect it to see clicks, impressions, and your traffic trend.'}
+                            {empty.body}
                         </p>
                     </div>
-                    <Button asChild size="sm" variant="outline">
-                        <Link
-                            href={
-                                search.connected
-                                    ? '/performance'
-                                    : `/projects/${projectId}/edit`
-                            }
-                        >
-                            {search.connected
-                                ? 'Open performance'
-                                : 'Connect Google'}
-                        </Link>
-                    </Button>
+                    {empty.action && (
+                        <Button asChild size="sm" variant="outline">
+                            <Link href={empty.action.href}>
+                                {empty.action.label}
+                            </Link>
+                        </Button>
+                    )}
                 </div>
             )}
             <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
@@ -530,6 +521,80 @@ function SearchTrend({
             </p>
         </section>
     );
+}
+
+/** What the trend card says while there is no chart to draw. */
+function emptyTrend(
+    search: Search,
+    projectId: string,
+): {
+    title: string;
+    body: string;
+    busy?: boolean;
+    action?: { href: string; label: string };
+} {
+    const settings = `/projects/${projectId}/edit`;
+    const performance = { href: '/performance', label: 'Open performance' };
+
+    const notConnected = {
+        title: 'Google Search Console is not connected',
+        body: 'Connect it to see clicks, impressions, and your traffic trend.',
+        action: { href: settings, label: 'Connect Google' },
+    };
+
+    // Whole-site data carries its own state; `connected` is false until a
+    // property is chosen, so it must not decide anything here.
+    if (!siteWide(search)) {
+        return search.connected
+            ? {
+                  title: 'Waiting for Google measurements',
+                  body: 'Your traffic trend will appear after measurements are saved.',
+                  action: performance,
+              }
+            : notConnected;
+    }
+
+    switch (search.state) {
+        case 'not_connected':
+            return notConnected;
+        case 'no_property':
+            return {
+                title: 'Choose a Search Console property',
+                body: 'Google is connected. Pick the property for this website in project settings to see its search traffic.',
+                action: { href: settings, label: 'Choose a property' },
+            };
+        case 'reading':
+            return {
+                title: 'Reading your search data from Google…',
+                body: 'Your traffic trend usually appears within a minute.',
+                busy: true,
+            };
+        case 'no_data':
+            return {
+                title: 'No search data in Google yet',
+                body: 'Search Console hasn’t recorded any searches for this website. This is normal for a new or recently verified site.',
+                action: performance,
+            };
+        case 'failed':
+            return {
+                title: 'Unable to read search data',
+                body: `${search.reason ?? 'Google didn’t return your search data.'} Open Search performance to try again.`,
+                action: performance,
+            };
+        case 'paused':
+            return {
+                title: 'Search data is paused',
+                body:
+                    search.reason ??
+                    'This project is paused, so search data isn’t being read from Google.',
+            };
+        default:
+            return {
+                title: 'No searches recorded in the last 28 days',
+                body: 'Your traffic trend will appear once Google records clicks or impressions.',
+                action: performance,
+            };
+    }
 }
 
 function ResultCard({

@@ -11,6 +11,8 @@ use App\Billing\Subscriptions;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Feedback\ManagerResults;
+use App\Feedback\Measurements\SiteSearchReport;
+use App\Feedback\Measurements\SyncSiteSearchJob;
 use App\Models\ArticleSchedule;
 use App\Models\AssistantThread;
 use App\Models\ContentItem;
@@ -91,7 +93,17 @@ class HomeController extends Controller
             'pageWork' => Inertia::defer(fn (): array => $this->pageWork()),
             'manager' => Inertia::defer(fn (): array => $this->manager($project)),
             // The dashboard's primary purpose: show the saved results on first paint.
-            'results' => fn (): array => app(ManagerResults::class)->for($project),
+            // Self-heals the first site-wide read here too, not only on the
+            // performance page: a project that connected before site-wide reads
+            // existed lands on this screen first and would otherwise sit on
+            // "not answered yet" until somebody opened Search performance.
+            'results' => function () use ($project): array {
+                if (app(SiteSearchReport::class)->needsFirstRead($project)) {
+                    SyncSiteSearchJob::request($project);
+                }
+
+                return app(ManagerResults::class)->for($project);
+            },
 
             'needs' => Inertia::defer(fn (): array => $this->needs()),
             'figures' => Inertia::defer(fn (): array => $this->figures()),

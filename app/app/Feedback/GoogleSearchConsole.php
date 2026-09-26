@@ -6,6 +6,7 @@ namespace App\Feedback;
 
 use App\Feedback\Contracts\SearchConsoleGateway;
 use App\Feedback\Measurements\ReadsPageSearch;
+use App\Feedback\Measurements\ReadsSiteSearch;
 use App\Integrations\Exceptions\GoogleUnavailable;
 use App\Integrations\Google\GoogleConnection;
 use App\Models\Project;
@@ -31,6 +32,7 @@ use Illuminate\Support\Facades\Log;
 class GoogleSearchConsole implements SearchConsoleGateway
 {
     use ReadsPageSearch;
+    use ReadsSiteSearch;
 
     /** Google's own ceiling per request. */
     private const int PAGE_SIZE = 25000;

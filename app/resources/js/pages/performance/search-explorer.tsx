@@ -13,7 +13,11 @@ type QueryRow = {
     previous: SearchTotals | undefined;
 };
 type Sort = 'clicks' | 'impressions' | 'position';
-const format = (
+type Metrics = Pick<
+    SearchTotals,
+    'clicks' | 'impressions' | 'ctr' | 'position'
+>;
+export const format = (
     value: number | null | undefined,
     kind: 'count' | 'rate' | 'position' = 'count',
 ) =>
@@ -24,7 +28,7 @@ const format = (
           : kind === 'position'
             ? value.toFixed(1)
             : value.toLocaleString();
-const pagePath = (url: string) => {
+export const pagePath = (url: string) => {
     try {
         const parsed = new URL(url);
 
@@ -406,13 +410,37 @@ function SearchTable({
         </>
     );
 }
-function MetricCells({
+/**
+ * The change as it will be displayed, positive meaning better: rounded to
+ * one decimal (CTR in percentage points), so a change too small to show
+ * reads as "No change" instead of a signed zero. Lower positions are better.
+ */
+export const changeSize = (
+    metric: 'clicks' | 'impressions' | 'ctr' | 'position',
+    current: number,
+    previous: number,
+) => {
+    const raw =
+        metric === 'position'
+            ? previous - current
+            : metric === 'ctr'
+              ? (current - previous) * 100
+              : current - previous;
+    const rounded =
+        metric === 'clicks' || metric === 'impressions'
+            ? Math.round(raw)
+            : Math.round(raw * 10) / 10;
+
+    return rounded === 0 ? 0 : rounded;
+};
+
+export function MetricCells({
     current,
     previous,
     comparable,
 }: {
-    current?: SearchTotals;
-    previous?: SearchTotals;
+    current?: Metrics | null;
+    previous?: Metrics | null;
     comparable: boolean;
 }) {
     return (
@@ -475,11 +503,10 @@ function Change({
         );
     }
 
-    const delta =
-        metric === 'position' ? previous - current : current - previous;
+    const delta = changeSize(metric, current, previous);
     const amount =
         metric === 'ctr'
-            ? `${(Math.abs(delta) * 100).toFixed(1)} pp`
+            ? `${Math.abs(delta).toFixed(1)} pp`
             : metric === 'position'
               ? Math.abs(delta).toFixed(1)
               : Math.abs(delta).toLocaleString();

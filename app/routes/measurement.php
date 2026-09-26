@@ -7,3 +7,4 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('performance', [PagePerformanceController::class, 'index'])->name('performance.index');
 Route::post('performance/read', [PagePerformanceController::class, 'read'])->middleware(['project.owner', 'throttle:2,1'])->name('performance.read');
+Route::post('performance/monitor', [PagePerformanceController::class, 'monitor'])->middleware(['project.owner', 'throttle:20,1'])->name('performance.monitor');

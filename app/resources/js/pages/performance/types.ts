@@ -89,3 +89,64 @@ export type Report = {
     pages: Page[];
     notes: string[];
 };
+
+/** Whole-property Search Console totals; `ctr` is a 0–1 fraction. */
+export type SiteSearchTotals = {
+    clicks: number;
+    impressions: number;
+    ctr: number | null;
+    position: number | null;
+};
+export type SiteSearchState =
+    | 'not_connected'
+    | 'no_property'
+    | 'reading'
+    | 'ready'
+    | 'no_data'
+    | 'failed'
+    | 'paused';
+type SiteSearchWindow = { from: string; to: string; days: number };
+export type SiteSearch = {
+    state: SiteSearchState;
+    property: string | null;
+    reason: string | null;
+    reading: boolean;
+    updated_at: string | null;
+    windows: { current: SiteSearchWindow; previous: SiteSearchWindow };
+    current: SiteSearchTotals | null;
+    previous: SiteSearchTotals | null;
+    history_from: string | null;
+    daily: {
+        day: string;
+        clicks: number;
+        impressions: number;
+        position: number | null;
+    }[];
+    top_queries: (SiteSearchTotals & {
+        query: string;
+        previous: SiteSearchTotals | null;
+    })[];
+    top_pages: (SiteSearchTotals & {
+        url: string;
+        previous: SiteSearchTotals | null;
+        tracked: boolean;
+        page_id: string | null;
+    })[];
+};
+
+/** "sc-domain:example.com" or "https://example.com/" → "example.com". */
+export const propertyHost = (property: string | null) => {
+    if (!property) {
+        return null;
+    }
+
+    if (property.startsWith('sc-domain:')) {
+        return property.slice('sc-domain:'.length);
+    }
+
+    try {
+        return new URL(property).host;
+    } catch {
+        return property;
+    }
+};

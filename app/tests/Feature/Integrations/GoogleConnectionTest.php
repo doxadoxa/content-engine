@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Integrations;
 
+use App\Feedback\Measurements\ReadStatus;
+use App\Feedback\Measurements\SynchronizeSiteSearch;
+use App\Feedback\Measurements\SyncSiteSearchJob;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Integrations\Google\GoogleConnection;
+use App\Models\MeasurementRead;
 use App\Models\Project;
 use App\Models\ProjectIntegration;
+use App\Models\SiteSearchDay;
 use App\Models\User;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -15,6 +20,10 @@ use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
+use Inertia\Support\SessionKey;
+use Inertia\Testing\AssertableInertia;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -86,6 +95,8 @@ final class GoogleConnectionTest extends TestCase
                 'expires_in' => 3600,
                 'scope' => ProjectIntegration::SCOPE_SEARCH_CONSOLE.' '.ProjectIntegration::SCOPE_ANALYTICS,
             ]),
+            // Listed straight after connecting, to find this site's property.
+            'www.googleapis.com/webmasters/v3/sites' => Http::response(['siteEntry' => []]),
         ]);
 
         $this->actingAs($operator)
@@ -111,7 +122,8 @@ final class GoogleConnectionTest extends TestCase
         $this->assertNull(session('google.oauth.verifier'));
         $this->assertNull(session('google.oauth.state'));
 
-        Http::assertSent(fn (ClientRequest $request): bool => $request['code_verifier'] === 'the-verifier'
+        Http::assertSent(fn (ClientRequest $request): bool => str_contains($request->url(), 'oauth2.googleapis.com/token')
+            && $request['code_verifier'] === 'the-verifier'
             && $request['grant_type'] === 'authorization_code');
     }
 
@@ -463,13 +475,267 @@ final class GoogleConnectionTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    #[Test]
+    public function connecting_chooses_the_one_search_console_site_that_is_strictly_this_website_and_reads_it(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject('https://www.Example.com/shop');
+        $this->fakeCallback([
+            ['siteUrl' => 'sc-domain:example.com', 'permissionLevel' => 'siteOwner'],
+            ['siteUrl' => 'https://notexample.com/', 'permissionLevel' => 'siteOwner'],
+            ['siteUrl' => 'https://example.com/blog/', 'permissionLevel' => 'siteOwner'],
+            ['siteUrl' => 'sc-domain:example.com.evil.test', 'permissionLevel' => 'siteOwner'],
+        ]);
+
+        $this->returnFromGoogle($operator, $project);
+
+        $this->assertSame('sc-domain:example.com', $this->integrationFor($project)?->searchConsoleSite());
+        Queue::assertPushed(SyncSiteSearchJob::class, fn (SyncSiteSearchJob $job): bool => $job->projectId === $project->id);
+        $this->assertSame('Google connected. Reading search data for example.com now.', $this->toast());
+    }
+
+    /** @return array<string, array{0: list<array{siteUrl: string, permissionLevel: string}>, 1?: string}> */
+    public static function sitesThatAreNotOneStrictMatch(): array
+    {
+        return [
+            // A substring is not a match: `notexample.com` contains `example.com`.
+            'substring only' => [[['siteUrl' => 'https://notexample.com/', 'permissionLevel' => 'siteOwner']]],
+            'no sites' => [[]],
+            // Two domain properties that both cover the site: which to read is
+            // the owner's call.
+            'two domain properties' => [[
+                ['siteUrl' => 'sc-domain:example.com', 'permissionLevel' => 'siteOwner'],
+                ['siteUrl' => 'sc-domain:www.example.com', 'permissionLevel' => 'siteFullUser'],
+            ]],
+            // A URL-prefix property sees exactly one scheme and host.
+            'bare host for a www site' => [[['siteUrl' => 'https://example.com/', 'permissionLevel' => 'siteOwner']], 'https://www.example.com'],
+            'www host for a bare site' => [[['siteUrl' => 'https://www.example.com/', 'permissionLevel' => 'siteOwner']], 'https://example.com'],
+            'http property for an https site' => [[['siteUrl' => 'http://example.com/', 'permissionLevel' => 'siteOwner']], 'https://example.com'],
+            // Not the site root: a port or a query makes it a different property.
+            'another port' => [[['siteUrl' => 'https://example.com:8443/', 'permissionLevel' => 'siteOwner']]],
+            'a query' => [[['siteUrl' => 'https://example.com/?preview=1', 'permissionLevel' => 'siteOwner']]],
+        ];
+    }
+
+    /**
+     * One case per test, not a loop: `Http::fake()` appends stubs and the first
+     * match wins, so a second fake inside a loop never answers.
+     *
+     * @param  list<array{siteUrl: string, permissionLevel: string}>  $sites
+     */
+    #[Test]
+    #[DataProvider('sitesThatAreNotOneStrictMatch')]
+    public function connecting_asks_instead_of_choosing_when_no_site_or_two_sites_match(array $sites, string $website = 'https://example.com'): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject($website);
+        $this->fakeCallback($sites);
+
+        $this->returnFromGoogle($operator, $project);
+
+        $this->assertNotNull($this->integrationFor($project));
+        $this->assertNull($this->integrationFor($project)->searchConsoleSite());
+        Queue::assertNotPushed(SyncSiteSearchJob::class);
+        $this->assertSame('Google connected. Choose which properties to read.', $this->toast());
+    }
+
+    #[Test]
+    public function connecting_chooses_a_url_prefix_property_with_exactly_the_sites_scheme_and_host(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject('https://WWW.example.com./shop');
+        $this->fakeCallback([
+            ['siteUrl' => 'https://example.com/', 'permissionLevel' => 'siteOwner'],
+            ['siteUrl' => 'http://www.example.com/', 'permissionLevel' => 'siteOwner'],
+            ['siteUrl' => 'https://www.example.com/', 'permissionLevel' => 'siteOwner'],
+        ]);
+
+        $this->returnFromGoogle($operator, $project);
+
+        $this->assertSame('https://www.example.com/', $this->integrationFor($project)?->searchConsoleSite());
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+    }
+
+    #[Test]
+    public function disconnecting_forgets_the_old_propertys_numbers_so_a_reconnect_starts_reading_afresh(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject('https://example.com');
+        app(CurrentProject::class)->run($project, function (): void {
+            ProjectIntegration::factory()->create(['config' => ['search_console_site' => 'https://example.com/']]);
+            $read = MeasurementRead::query()->create([
+                'source' => SynchronizeSiteSearch::DAILY, 'window_from' => '2025-05-13', 'window_to' => now('America/Los_Angeles')->subDays(3)->toDateString(),
+                'status' => ReadStatus::Complete, 'started_at' => now(), 'finished_at' => now(),
+                'metadata' => ['property' => 'https://example.com/'],
+            ]);
+            SiteSearchDay::query()->create(['measurement_read_id' => $read->id, 'measured_on' => now('America/Los_Angeles')->subDays(5)->toDateString(), 'clicks' => 5, 'impressions' => 50]);
+        });
+        Http::fake(['oauth2.googleapis.com/revoke' => Http::response('')]);
+
+        $this->actingAs($operator)->delete("/projects/{$project->getKey()}/google");
+
+        app(CurrentProject::class)->run($project, function (): void {
+            $this->assertSame(0, SiteSearchDay::query()->count());
+            $this->assertSame(0, MeasurementRead::query()->count());
+        });
+
+        $this->fakeCallback([['siteUrl' => 'sc-domain:example.com', 'permissionLevel' => 'siteOwner']]);
+        $this->returnFromGoogle($operator, $project);
+        $this->assertSame('sc-domain:example.com', $this->integrationFor($project)?->searchConsoleSite());
+
+        $this->actingAs($operator)->withSession(['project_id' => $project->id])->get('/performance')->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('site_search.state', 'reading')
+                ->where('site_search.property', 'sc-domain:example.com')
+                ->where('site_search.current', null)
+                ->where('site_search.daily', []));
+    }
+
+    #[Test]
+    public function connecting_prefers_the_domain_property_when_the_site_is_verified_both_ways(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject('https://example.com');
+        $this->fakeCallback([
+            ['siteUrl' => 'https://www.example.com/', 'permissionLevel' => 'siteFullUser'],
+            ['siteUrl' => 'sc-domain:example.com', 'permissionLevel' => 'siteOwner'],
+        ]);
+
+        $this->returnFromGoogle($operator, $project);
+
+        // The domain property is the whole site; the URL-prefix one is a slice.
+        $this->assertSame('sc-domain:example.com', $this->integrationFor($project)?->searchConsoleSite());
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+    }
+
+    #[Test]
+    public function google_failing_to_list_sites_still_connects(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject('https://example.com');
+        Http::fake([
+            'oauth2.googleapis.com/token' => Http::response($this->grant()),
+            'www.googleapis.com/webmasters/v3/sites' => Http::response([], 503),
+        ]);
+
+        $this->returnFromGoogle($operator, $project);
+
+        $this->assertTrue($this->integrationFor($project)?->isUsable());
+        $this->assertNull($this->integrationFor($project)->searchConsoleSite());
+        Queue::assertNotPushed(SyncSiteSearchJob::class);
+        $this->assertSame('Google connected. Choose which properties to read.', $this->toast());
+    }
+
+    #[Test]
+    public function reconnecting_keeps_the_chosen_site_and_reads_it_again(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject('https://example.com');
+        $this->connect($project);
+        Http::fake(['oauth2.googleapis.com/token' => Http::response($this->grant())]);
+
+        $this->returnFromGoogle($operator, $project);
+
+        $this->assertSame('sc-domain:example.com', $this->integrationFor($project)?->searchConsoleSite());
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+        $this->assertSame('Google connected. Reading search data for example.com now.', $this->toast());
+    }
+
+    #[Test]
+    public function choosing_a_search_console_site_reads_it_straight_away(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject();
+        app(CurrentProject::class)->run($project, fn () => ProjectIntegration::factory()->unchosen()->create());
+        $this->fakeListings();
+
+        $this->actingAs($operator)->patch("/projects/{$project->getKey()}/google", ['search_console_site' => 'https://example.com/'])
+            ->assertRedirect("/projects/{$project->getKey()}/edit");
+
+        Queue::assertPushed(SyncSiteSearchJob::class, fn (SyncSiteSearchJob $job): bool => $job->projectId === $project->id);
+        $this->assertSame('Saved. Reading your search data from Google now.', $this->toast());
+    }
+
+    #[Test]
+    public function saving_without_a_site_reads_nothing(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject();
+        app(CurrentProject::class)->run($project, fn () => ProjectIntegration::factory()->unchosen()->create());
+        $this->fakeListings();
+
+        $this->actingAs($operator)->patch("/projects/{$project->getKey()}/google", ['analytics_property' => 'properties/111']);
+
+        Queue::assertNotPushed(SyncSiteSearchJob::class);
+        $this->assertSame('Saved. The next feedback run will read from these.', $this->toast());
+    }
+
+    #[Test]
+    public function switching_to_another_site_forgets_the_previous_sites_numbers(): void
+    {
+        Queue::fake();
+        [$operator, $project] = $this->operatorWithProject();
+        $this->connect($project);
+        app(CurrentProject::class)->run($project, function (): void {
+            $read = MeasurementRead::query()->create([
+                'source' => SynchronizeSiteSearch::DAILY, 'window_from' => '2025-05-13', 'window_to' => '2026-09-12',
+                'status' => ReadStatus::Complete, 'started_at' => now(), 'finished_at' => now(),
+            ]);
+            SiteSearchDay::query()->create(['measurement_read_id' => $read->id, 'measured_on' => '2026-09-01', 'clicks' => 5, 'impressions' => 50]);
+        });
+        $this->fakeListings();
+
+        $this->actingAs($operator)->patch("/projects/{$project->getKey()}/google", ['search_console_site' => 'https://example.com/']);
+
+        app(CurrentProject::class)->run($project, function (): void {
+            $this->assertSame(0, SiteSearchDay::query()->count());
+            $this->assertSame(0, MeasurementRead::query()->count());
+        });
+        Queue::assertPushed(SyncSiteSearchJob::class, 1);
+    }
+
+    private function returnFromGoogle(User $operator, Project $project): void
+    {
+        $this->actingAs($operator)
+            ->withSession($this->pendingSession($project))
+            ->get('/integrations/google/callback?code=auth-code&state=the-state')
+            ->assertRedirect("/projects/{$project->getKey()}/edit");
+    }
+
+    /** @param list<array<string, string>> $sites */
+    private function fakeCallback(array $sites): void
+    {
+        Http::fake([
+            'oauth2.googleapis.com/token' => Http::response($this->grant()),
+            'www.googleapis.com/webmasters/v3/sites' => Http::response(['siteEntry' => $sites]),
+        ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function grant(): array
+    {
+        return [
+            'access_token' => 'access-abc',
+            'refresh_token' => 'refresh-xyz',
+            'expires_in' => 3600,
+            'scope' => ProjectIntegration::SCOPE_SEARCH_CONSOLE.' '.ProjectIntegration::SCOPE_ANALYTICS,
+        ];
+    }
+
+    private function toast(): ?string
+    {
+        $flash = session(SessionKey::FLASH_DATA);
+
+        return is_array($flash) && is_array($flash['toast'] ?? null) ? ($flash['toast']['message'] ?? null) : null;
+    }
+
     /**
      * @return array{User, Project}
      */
-    private function operatorWithProject(): array
+    private function operatorWithProject(?string $websiteUrl = null): array
     {
         $operator = User::factory()->create();
-        $project = Project::factory()->create();
+        $project = Project::factory()->create($websiteUrl === null ? [] : ['website_url' => $websiteUrl]);
         $operator->projects()->attach($project, ['role' => 'owner']);
 
         return [$operator, $project];
