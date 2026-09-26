@@ -47,9 +47,9 @@ final class StrandedDeliveries
      * then would dispatch a second copy of a delivery that is still running —
      * which is how an article gets published twice. So this has to stay above
      * `retry_after` on the Redis connection (2 700 s, see `config/queue.php`),
-     * and `StrandedThresholdTest` fails if it does not. An hour clears it by a
-     * quarter of an hour; it was half an hour until `retry_after` went up from
-     * 1 200 s and left it underneath.
+     * and `StrandedThresholdTest` fails if the shipped defaults stop doing so.
+     * An hour clears it by a quarter of an hour; it was half an hour until
+     * `retry_after` went up from 1 200 s and left it underneath.
      *
      * An hour is still short enough to matter: an article scheduled for a
      * morning that is recovered in the afternoon has missed the slot somebody
