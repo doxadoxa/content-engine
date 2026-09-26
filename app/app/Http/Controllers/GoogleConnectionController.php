@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 /**
  * Connecting a project to Search Console and GA4.
@@ -47,7 +48,7 @@ class GoogleConnectionController extends Controller
     ) {}
 
     /** Send the operator to Google. */
-    public function connect(Request $request, Project $project): RedirectResponse
+    public function connect(Request $request, Project $project): SymfonyResponse
     {
         $this->authorise($request, $project);
 
@@ -66,7 +67,11 @@ class GoogleConnectionController extends Controller
         $request->session()->put(self::SESSION_VERIFIER, $grant['verifier']);
         $request->session()->put(self::SESSION_PROJECT, $project->getKey());
 
-        return redirect()->away($grant['url']);
+        // `Inertia::location()`, not `redirect()->away()`: the Connect button
+        // is an Inertia `<Link>`, so this is an XHR, and a plain 302 to
+        // `accounts.google.com` would be followed by the fetch — where CORS and
+        // the CSP's `connect-src` block it — instead of by the browser.
+        return Inertia::location($grant['url']);
     }
 
     /**

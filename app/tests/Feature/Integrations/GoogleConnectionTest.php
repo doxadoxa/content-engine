@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Integrations;
 
+use App\Http\Middleware\HandleInertiaRequests;
 use App\Integrations\Google\GoogleConnection;
 use App\Models\Project;
 use App\Models\ProjectIntegration;
@@ -253,6 +254,28 @@ final class GoogleConnectionTest extends TestCase
         // Scopes come from the new grant: unticking Analytics on the second
         // consent screen must not leave the first grant's scopes behind.
         $this->assertFalse($integration->grants(ProjectIntegration::SCOPE_ANALYTICS));
+    }
+
+    #[Test]
+    public function connecting_from_an_inertia_link_leaves_the_application_instead_of_fetching_google(): void
+    {
+        [$operator, $project] = $this->operatorWithProject();
+
+        // The Connect button is an Inertia `<Link>`. A 302 would be followed
+        // by the XHR, which CORS and the CSP block; 409 with the location is
+        // what makes the client navigate the whole window.
+        $response = $this->actingAs($operator)
+            ->withHeaders([
+                'X-Inertia' => 'true',
+                'X-Inertia-Version' => (string) app(HandleInertiaRequests::class)->version(request()),
+            ])
+            ->get("/projects/{$project->getKey()}/google/connect");
+
+        $response->assertStatus(409);
+        $this->assertStringStartsWith(
+            'https://accounts.google.com/',
+            (string) $response->headers->get('X-Inertia-Location'),
+        );
     }
 
     #[Test]
