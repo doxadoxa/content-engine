@@ -22,6 +22,7 @@ use Illuminate\Support\Carbon;
  * @property array<string, mixed> $metadata
  * @property Carbon|null $started_at
  * @property Carbon|null $finished_at
+ * @property Carbon|null $created_at
  */
 class MeasurementRead extends Model
 {

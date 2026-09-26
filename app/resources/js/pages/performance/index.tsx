@@ -1,5 +1,6 @@
-import { Form, Head, Link, usePage, usePoll } from '@inertiajs/react';
-import { RefreshCw, Search } from 'lucide-react';
+import { Head, Link, usePage, usePoll } from '@inertiajs/react';
+import { Search } from 'lucide-react';
+import { useEffect } from 'react';
 import { resultDate } from '@/components/manager-results';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,11 +12,12 @@ import {
 import { index as feedbackIndex } from '@/routes/feedback';
 import { connect as connectGoogle } from '@/routes/google';
 import { index as pagesIndex } from '@/routes/pages';
-import { read } from '@/routes/performance';
 import { edit as editProject } from '@/routes/projects';
 import { ChangeFollowups } from './change-followups';
 import { SearchExplorer } from './search-explorer';
-import type { AnalyticsTotals, Report, Source } from './types';
+import { RefreshButton, SiteOverview } from './site-overview';
+import { propertyHost } from './types';
+import type { AnalyticsTotals, Report, SiteSearch, Source } from './types';
 
 const labels: Record<Source['status'], string> = {
     not_read: 'Not read yet',
@@ -35,10 +37,12 @@ export default function Performance({
     report,
     search_connected: connected,
     search_data_mode: dataMode,
+    site_search: site,
 }: {
     report: Report;
     search_connected: boolean;
     search_data_mode: 'current' | 'saved' | 'none';
+    site_search: SiteSearch;
 }) {
     const { auth } = usePage().props;
     const project = auth.project;
@@ -67,12 +71,37 @@ export default function Performance({
                 (query) => query.impressions !== null && query.impressions > 0,
             ),
     );
-    const compactExplorer = !connected && !hasSearchData;
+    const notConnected = site.state === 'not_connected';
+    const compactExplorer = notConnected && !hasSearchData;
     const stale =
         report.sources.gsc_pages.stale || report.sources.gsc_queries.stale;
-    usePoll(30000, {
-        only: ['report', 'search_connected', 'search_data_mode'],
-    });
+    const siteReading =
+        !['paused', 'failed'].includes(site.state) &&
+        (site.state === 'reading' || site.reading);
+    const hasProperty = !['not_connected', 'no_property', 'paused'].includes(
+        site.state,
+    );
+    const host = propertyHost(site.property);
+    const pollProps = [
+        'report',
+        'search_connected',
+        'search_data_mode',
+        'site_search',
+    ];
+    usePoll(30000, { only: pollProps });
+    // While Google is being read, check back every few seconds so the first
+    // report appears soon after it lands instead of up to 30 seconds later.
+    const fastPoll = usePoll(5000, { only: pollProps }, { autoStart: false });
+    useEffect(() => {
+        if (siteReading) {
+            fastPoll.start();
+        } else {
+            fastPoll.stop();
+        }
+
+        return () => fastPoll.stop();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [siteReading]);
 
     return (
         <>
@@ -81,64 +110,30 @@ export default function Performance({
                 <WorkspaceHeader
                     eyebrow="Google Search"
                     title="Search performance"
-                    context={`${report.pages.length} monitored pages`}
+                    context={
+                        host
+                            ? `${host} · ${monitoredLabel(report.pages.length)}`
+                            : monitoredLabel(report.pages.length)
+                    }
                     description="See the searches that bring people to your website and the pages they find."
                     actions={
                         <>
                             <Button asChild variant="outline">
                                 <Link href={pagesIndex()}>Manage pages</Link>
                             </Button>
-                            {owner && connected && report.pages.length > 0 && (
-                                <Form {...read.form()}>
-                                    {({ processing }) => (
-                                        <Button
-                                            disabled={
-                                                processing || reading || paused
-                                            }
-                                        >
-                                            <RefreshCw
-                                                className={`size-4 ${processing || reading ? 'animate-spin' : ''}`}
-                                            />
-                                            {paused
-                                                ? 'Project paused'
-                                                : processing || reading
-                                                  ? 'Refreshing…'
-                                                  : 'Refresh search data'}
-                                        </Button>
-                                    )}
-                                </Form>
-                            )}
+                            {owner &&
+                                connected &&
+                                site.state !== 'paused' &&
+                                (hasProperty || report.pages.length > 0) && (
+                                    <RefreshButton
+                                        paused={paused}
+                                        reading={reading || siteReading}
+                                    />
+                                )}
                         </>
                     }
                 />
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-                    <div>
-                        <p className="font-medium">
-                            {resultDate(report.windows.current.from)} –{' '}
-                            {resultDate(report.windows.current.to)} ·{' '}
-                            {report.windows.current.days} days
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                            Compared with{' '}
-                            {resultDate(report.windows.previous.from)} –{' '}
-                            {resultDate(report.windows.previous.to)}. Google’s
-                            latest {report.windows.excluded_recent_days} days
-                            are still settling.
-                        </p>
-                    </div>
-                    {hasSearchData && (
-                        <Badge variant="outline">
-                            {dataMode === 'saved'
-                                ? 'Saved measurements'
-                                : reading
-                                  ? 'Updating measurements'
-                                  : stale
-                                    ? 'Saved measurements · update needed'
-                                    : 'Latest measurements'}
-                        </Badge>
-                    )}
-                </div>
-                {!connected && (
+                {notConnected && (
                     <section
                         className={`${workspacePanelClass} flex flex-wrap items-center justify-between gap-5 p-6`}
                         aria-label="Search Console connection"
@@ -175,102 +170,172 @@ export default function Performance({
                         )}
                     </section>
                 )}
-                {connected && !hasSearchData && (
-                    <p className="rounded-xl border bg-card/60 p-4 text-sm text-muted-foreground">
-                        {report.pages.length === 0
-                            ? 'Add website pages to start monitoring their search performance.'
-                            : reading
-                              ? 'Your first search report is being collected. This page will update as data arrives.'
-                              : paused
-                                ? 'Search Console is connected. Resume your project in Settings to collect new measurements.'
-                                : owner
-                                  ? 'Search Console is connected. Refresh search data to collect measurements for your monitored pages.'
-                                  : 'Search Console is connected. Your business owner can refresh search data to collect the first measurements.'}
-                    </p>
+                {!notConnected && (
+                    <SiteOverview
+                        site={site}
+                        owner={owner}
+                        paused={paused}
+                        projectId={project?.id ?? null}
+                    />
                 )}
-                {currentSearchData && !currentSearchActivity && (
-                    <p
-                        className="rounded-xl border bg-card/60 p-4 text-sm text-muted-foreground"
-                        role="status"
-                    >
-                        {dataMode === 'saved'
-                            ? 'The saved Search Console report recorded no impressions or clicks for these observation dates.'
-                            : 'Search Console returned measurements for this period, but recorded no impressions or clicks.'}
-                    </p>
-                )}
-                {!compactExplorer && <SearchExplorer report={report} />}
-                <details className={`${workspacePanelClass} p-5`}>
-                    <summary className="cursor-pointer font-medium">
-                        Performance after page improvements
-                    </summary>
-                    <div className="mt-5">
-                        <ChangeFollowups report={report.changes} />
-                    </div>
-                </details>
-                <details
-                    id="reporting-connections"
-                    className={`${workspacePanelClass} p-5`}
+                <section
+                    aria-labelledby="monitored-pages-title"
+                    className="mt-4 flex min-w-0 flex-col gap-5 sm:gap-6"
                 >
-                    <summary className="cursor-pointer font-medium">
-                        Reporting connections and data details
-                    </summary>
-                    <div className="mt-5 space-y-5">
-                        <div className="grid gap-3 lg:grid-cols-3">
-                            <SourceCard
-                                title="Google Search · pages"
-                                source={report.sources.gsc_pages}
-                            />
-                            <SourceCard
-                                title="Google Search · queries"
-                                source={report.sources.gsc_queries}
-                            />
-                            <SourceCard
-                                title="Website visits"
-                                source={
-                                    report.sources.ga4_property_landing_paths
-                                }
-                            />
+                    <div>
+                        <h2
+                            id="monitored-pages-title"
+                            className="text-lg font-semibold"
+                        >
+                            Monitored pages
+                        </h2>
+                        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+                            Pages you monitor get a before-and-after comparison
+                            each time you improve them.
+                        </p>
+                    </div>
+                    {report.pages.length === 0 ? (
+                        <p className="rounded-xl border bg-card/60 p-4 text-sm leading-6 text-muted-foreground">
+                            No pages monitored yet.{' '}
+                            {owner && site.state === 'ready'
+                                ? 'Choose Monitor next to a page in Top pages above, or add pages in '
+                                : 'Add pages in '}
+                            <Link href={pagesIndex()} className="underline">
+                                Manage pages
+                            </Link>
+                            .
+                        </p>
+                    ) : (
+                        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                            <div>
+                                <p className="font-medium">
+                                    {resultDate(report.windows.current.from)} –{' '}
+                                    {resultDate(report.windows.current.to)} ·{' '}
+                                    {report.windows.current.days} days
+                                </p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                    Compared with{' '}
+                                    {resultDate(report.windows.previous.from)} –{' '}
+                                    {resultDate(report.windows.previous.to)}.
+                                    Google’s latest{' '}
+                                    {report.windows.excluded_recent_days} days
+                                    are still settling.
+                                </p>
+                            </div>
+                            {hasSearchData && (
+                                <Badge variant="outline">
+                                    {dataMode === 'saved'
+                                        ? 'Saved measurements'
+                                        : reading
+                                          ? 'Updating measurements'
+                                          : stale
+                                            ? 'Saved measurements · update needed'
+                                            : 'Latest measurements'}
+                                </Badge>
+                            )}
                         </div>
-                        {owner && project && (
-                            <div className="flex flex-wrap items-center gap-3">
-                                <Button asChild variant="outline">
-                                    <a href={connectGoogle(project.id).url}>
-                                        Connect or renew Google
-                                    </a>
-                                </Button>
+                    )}
+                    {connected && !hasSearchData && report.pages.length > 0 && (
+                        <p className="rounded-xl border bg-card/60 p-4 text-sm text-muted-foreground">
+                            {reading
+                                ? 'Your first search report is being collected. This page will update as data arrives.'
+                                : paused
+                                  ? 'Search Console is connected. Resume your project in Settings to collect new measurements.'
+                                  : owner
+                                    ? 'Search Console is connected. Refresh search data to collect measurements for your monitored pages.'
+                                    : 'Search Console is connected. Your business owner can refresh search data to collect the first measurements.'}
+                        </p>
+                    )}
+                    {currentSearchData && !currentSearchActivity && (
+                        <p
+                            className="rounded-xl border bg-card/60 p-4 text-sm text-muted-foreground"
+                            role="status"
+                        >
+                            {dataMode === 'saved'
+                                ? 'The saved Search Console report recorded no impressions or clicks for these observation dates.'
+                                : 'Search Console returned measurements for this period, but recorded no impressions or clicks.'}
+                        </p>
+                    )}
+                    {!compactExplorer && report.pages.length > 0 && (
+                        <SearchExplorer report={report} />
+                    )}
+                    <details className={`${workspacePanelClass} p-5`}>
+                        <summary className="cursor-pointer font-medium">
+                            Performance after page improvements
+                        </summary>
+                        <div className="mt-5">
+                            <ChangeFollowups report={report.changes} />
+                        </div>
+                    </details>
+                    <details
+                        id="reporting-connections"
+                        className={`${workspacePanelClass} p-5`}
+                    >
+                        <summary className="cursor-pointer font-medium">
+                            Reporting connections and data details
+                        </summary>
+                        <div className="mt-5 space-y-5">
+                            <div className="grid gap-3 lg:grid-cols-3">
+                                <SourceCard
+                                    title="Google Search · pages"
+                                    source={report.sources.gsc_pages}
+                                />
+                                <SourceCard
+                                    title="Google Search · queries"
+                                    source={report.sources.gsc_queries}
+                                />
+                                <SourceCard
+                                    title="Website visits"
+                                    source={
+                                        report.sources
+                                            .ga4_property_landing_paths
+                                    }
+                                />
+                            </div>
+                            {owner && project && (
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <Button asChild variant="outline">
+                                        <a href={connectGoogle(project.id).url}>
+                                            Connect or renew Google
+                                        </a>
+                                    </Button>
+                                    <Link
+                                        href={editProject(project.id)}
+                                        className="text-sm underline"
+                                    >
+                                        Choose Google properties
+                                    </Link>
+                                </div>
+                            )}
+                            <details className="rounded-xl border p-4">
+                                <summary className="cursor-pointer text-sm font-medium">
+                                    Supplementary Analytics observations
+                                </summary>
+                                <div className="mt-4">
+                                    <PropertyAnalytics report={report} />
+                                </div>
+                            </details>
+                            <div className="space-y-2 text-xs leading-5 text-muted-foreground">
+                                {report.notes.map((note) => (
+                                    <p key={note}>{note}</p>
+                                ))}
                                 <Link
-                                    href={editProject(project.id)}
-                                    className="text-sm underline"
+                                    href={feedbackIndex()}
+                                    className="inline-block underline"
                                 >
-                                    Choose Google properties
+                                    Earlier article reports
                                 </Link>
                             </div>
-                        )}
-                        <details className="rounded-xl border p-4">
-                            <summary className="cursor-pointer text-sm font-medium">
-                                Supplementary Analytics observations
-                            </summary>
-                            <div className="mt-4">
-                                <PropertyAnalytics report={report} />
-                            </div>
-                        </details>
-                        <div className="space-y-2 text-xs leading-5 text-muted-foreground">
-                            {report.notes.map((note) => (
-                                <p key={note}>{note}</p>
-                            ))}
-                            <Link
-                                href={feedbackIndex()}
-                                className="inline-block underline"
-                            >
-                                Earlier article reports
-                            </Link>
                         </div>
-                    </div>
-                </details>
+                    </details>
+                </section>
             </WorkspacePage>
         </>
     );
 }
+
+const monitoredLabel = (count: number) =>
+    count === 1 ? '1 monitored page' : `${count} monitored pages`;
 
 function MonitoredPages({ pages }: { pages: Report['pages'] }) {
     if (pages.length === 0) {

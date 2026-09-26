@@ -26,7 +26,12 @@ final class TrackedPages
         return $this->track($project, (string) $page->canonical_url, (string) $page->locale, $page->page_kind->value, $page->id);
     }
 
-    public function track(Project $project, string $url, string $locale, string $kind, ?string $expectedTrackedId = null): SitePage
+    /**
+     * `$preferDeclaredLocale` treats `$locale` as a guess the page's declared
+     * language may correct — for callers that inferred it from a URL rather
+     * than asked the owner.
+     */
+    public function track(Project $project, string $url, string $locale, string $kind, ?string $expectedTrackedId = null, bool $preferDeclaredLocale = false): SitePage
     {
         $locales = array_values(array_unique([$project->default_locale, ...$project->locales]));
         if (! in_array($locale, $locales, true)) {
@@ -35,7 +40,8 @@ final class TrackedPages
         if (! in_array($kind, ['commercial', 'editorial', 'other'], true)) {
             throw ValidationException::withMessages(['kind' => 'Choose a supported page type.']);
         }
-        $read = $this->reader->read($project, $url, $locale);
+        $read = $this->reader->read($project, $url, $locale, $preferDeclaredLocale);
+        $locale = $read['locale'];
 
         return $this->current->run($project, fn () => DB::transaction(function () use ($project, $url, $locale, $kind, $read, $expectedTrackedId): SitePage {
             // Serialise public-identity decisions, including aliases and old ContentItem URLs.

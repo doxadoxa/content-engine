@@ -151,6 +151,83 @@ class GoogleProperties
     }
 
     /**
+     * Search Console sites that are unmistakably this website, for choosing
+     * one without asking.
+     *
+     * Deliberately not {@see matching()}: that one is a substring guess, fine
+     * for preselecting a dropdown and wrong for a decision nobody reviews —
+     * `notexample.com` contains `example.com`.
+     *
+     * A domain property covers every scheme and subdomain, so it matches the
+     * website's host with a leading `www.` ignored. A URL-prefix property
+     * covers exactly one scheme and host, so it has to equal the website's
+     * scheme and host exactly and be the site root: `https://example.com/`
+     * does not see `https://www.example.com`, and `https://example.com/blog/`
+     * reads only the blog.
+     *
+     * @param  list<array{value: string, label: string}>  $options
+     * @return list<string>
+     */
+    public function strictMatches(array $options, ?string $websiteUrl): array
+    {
+        $website = $websiteUrl === null ? false : parse_url($websiteUrl);
+        $host = is_array($website) ? $this->exactHost($website['host'] ?? null) : null;
+        $scheme = is_array($website) ? strtolower($website['scheme'] ?? '') : '';
+
+        if ($host === null || ! in_array($scheme, ['http', 'https'], true)) {
+            return [];
+        }
+
+        $matches = [];
+
+        foreach ($options as $option) {
+            $value = $option['value'];
+
+            if (str_starts_with($value, 'sc-domain:')) {
+                $domain = $this->exactHost(Str::after($value, 'sc-domain:'));
+                $matches = $domain !== null && $this->withoutWww($domain) === $this->withoutWww($host)
+                    ? [...$matches, $value] : $matches;
+
+                continue;
+            }
+
+            $parts = parse_url($value);
+            $root = is_array($parts)
+                && strtolower($parts['scheme'] ?? '') === $scheme
+                && ($parts['path'] ?? '/') === '/'
+                // One isset() per key: isset($a, $b) is true only when
+                // *all* are set, so a combined negation lets a port or a
+                // query through on its own.
+                && ! isset($parts['query'])
+                && ! isset($parts['port'])
+                && ! isset($parts['user'])
+                && ! isset($parts['fragment']);
+
+            if ($root && $this->exactHost($parts['host'] ?? null) === $host) {
+                $matches[] = $value;
+            }
+        }
+
+        return $matches;
+    }
+
+    /** `Example.COM.` and `example.com` are one host. */
+    private function exactHost(mixed $host): ?string
+    {
+        if (! is_string($host) || trim($host) === '') {
+            return null;
+        }
+
+        return rtrim(Str::lower(trim($host)), '.');
+    }
+
+    /** Only for domain properties: `www.example.com` and `example.com` are one domain. */
+    private function withoutWww(string $host): string
+    {
+        return Str::replaceStart('www.', '', $host);
+    }
+
+    /**
      * Every page of account summaries.
      *
      * `pageSize` caps at 200 and an agency login can see more than that. A

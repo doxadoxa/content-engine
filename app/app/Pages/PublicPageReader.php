@@ -18,8 +18,41 @@ final class PublicPageReader
 {
     public function __construct(private readonly PublicHttpClient $http, private readonly PublicHttpTarget $targets, private readonly FactualPageSurfaces $facts) {}
 
-    /** @return array{url: string, canonical_url: string, locale: string, fields: array<string, string>, content_hash: string, description_count: int, fact_surfaces: array<string, mixed>} */
-    public function read(Project $project, string $url, string $locale): array
+    /**
+     * The project locale a page's `<html lang>` names: an exact regional match
+     * first (`pt-BR` is `pt-BR`, not `pt-PT`), then the language alone. When
+     * the language alone matches more than one locale, the guess the caller
+     * already had wins if it is one of them, since the declaration cannot
+     * choose between them.
+     */
+    public static function declaredLocale(Project $project, string $declared, ?string $guess = null): ?string
+    {
+        $declared = strtolower(str_replace('_', '-', trim($declared)));
+        if ($declared === '') {
+            return null;
+        }
+        $locales = array_values(array_unique([$project->default_locale, ...$project->locales]));
+        foreach ($locales as $locale) {
+            if (strtolower(str_replace('_', '-', $locale)) === $declared) {
+                return $locale;
+            }
+        }
+        $language = explode('-', $declared)[0];
+        $candidates = array_values(array_filter($locales, static fn (string $locale): bool => strtolower(explode('-', str_replace('_', '-', $locale))[0]) === $language));
+        if ($guess !== null && in_array($guess, $candidates, true)) {
+            return $guess;
+        }
+
+        return $candidates[0] ?? null;
+    }
+
+    /**
+     * `$preferDeclared` lets the page's own `<html lang>` override `$locale`
+     * when it names one of the project's locales; the returned `locale` is the
+     * one used.
+     *
+     * @return array{url: string, canonical_url: string, locale: string, fields: array<string, string>, content_hash: string, description_count: int, fact_surfaces: array<string, mixed>} */
+    public function read(Project $project, string $url, string $locale, bool $preferDeclared = false): array
     {
         $origin = $project->website_url ?: $project->sitemap_url;
         if (! $origin) {
@@ -52,6 +85,9 @@ final class PublicPageReader
         }
         $xpath = new DOMXPath($doc);
         $actualLocale = trim((string) $xpath->evaluate('string(/html/@lang)'));
+        if ($preferDeclared) {
+            $locale = self::declaredLocale($project, $actualLocale, $locale) ?? $locale;
+        }
         if ($actualLocale !== '' && strtolower(explode('-', str_replace('_', '-', $actualLocale))[0]) !== strtolower(explode('-', $locale)[0])) {
             throw ValidationException::withMessages(['locale' => 'The live page declares a different language. Select that language before importing it.']);
         }

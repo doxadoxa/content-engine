@@ -119,7 +119,11 @@ class GooglePanel
             'listing_failed' => false,
             // Offered as a preselection, never as a decision: being wrong costs
             // a click, and being silently wrong would cost a month of somebody
-            // else's data.
+            // else's data. The one decision taken without asking — choosing
+            // the Search Console site straight after connecting — is made in
+            // GoogleConnectionController::callback() with
+            // GoogleProperties::strictMatches(), and only when exactly one
+            // site is this website's host; this substring guess never saves.
             'suggested_site' => $integration->searchConsoleSite()
                 ?? $this->properties->matching($sites, $project->website_url),
             'suggested_property' => $integration->analyticsProperty()

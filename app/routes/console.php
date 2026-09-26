@@ -151,8 +151,10 @@ Schedule::command('audit:sweep')
     ->runInBackground()
     ->sentryMonitor();
 
+// After 08:00 UTC, when the Pacific date has rolled over even under PST
+// (UTC-8), so the day's read already includes the newest settled day.
 Schedule::command('pages:measure')
-    ->dailyAt('07:20')
+    ->dailyAt('08:20')
     ->withoutOverlapping()
     ->sentryMonitor();
 

@@ -8,6 +8,7 @@ use App\Feedback\Contracts\SearchConsoleGateway;
 use App\Feedback\Measurements\ReadResult;
 use App\Feedback\Measurements\ReadStatus;
 use App\Feedback\Measurements\SearchRow;
+use App\Feedback\Measurements\SiteSearchRow;
 use App\Models\Project;
 use Illuminate\Support\Carbon;
 
@@ -20,11 +21,17 @@ use Illuminate\Support\Carbon;
  */
 class FakeSearchConsole implements SearchConsoleGateway
 {
+    /** @var list<array{dimension: string, from: string, to: string, row_limit: int|null, property: string|null}> */
+    public array $siteCalls = [];
+
     /** @var array<int, ReadResult> */
     private array $pageReports = [];
 
     /** @var list<UnitMetrics> */
     private array $rows = [];
+
+    /** @var array<string, ReadResult> keyed by dimension, or `dimension@from` for one period */
+    private array $siteReports = [];
 
     private bool $configured = true;
 
@@ -48,6 +55,59 @@ class FakeSearchConsole implements SearchConsoleGateway
                 $row->url, $row->measuredOn->toDateString(), $row->impressions, $row->clicks, $row->position,
             ), $this->performance($project, $urls, $from, $to)),
         );
+    }
+
+    /**
+     * Script a whole-property report. `$from` narrows it to the call whose
+     * window starts that day — the query and page lists are read twice, once
+     * per 28-day period, and a test comparing them needs two answers.
+     */
+    public function willReadSite(string $dimension, ReadResult $result, ?string $from = null): self
+    {
+        $this->siteReports[$from === null ? $dimension : $dimension.'@'.$from] = $result;
+
+        return $this;
+    }
+
+    /**
+     * Unscripted, the site report is derived from the per-URL rows given to
+     * {@see willReport()}: summed per day for `date`, per URL for `page`, and
+     * empty for `query`, which those rows cannot express.
+     */
+    public function siteReport(Project $project, Carbon $from, Carbon $to, string $dimension, ?int $rowLimit = null, ?string $property = null): ReadResult
+    {
+        $this->siteCalls[] = ['dimension' => $dimension, 'from' => $from->toDateString(), 'to' => $to->toDateString(), 'row_limit' => $rowLimit, 'property' => $property];
+        if (! $this->configured) {
+            return new ReadResult(ReadStatus::Unavailable, reason: 'Search Console is not connected.');
+        }
+        $scripted = $this->siteReports[$dimension.'@'.$from->toDateString()] ?? $this->siteReports[$dimension] ?? null;
+        if ($scripted !== null) {
+            return $scripted;
+        }
+        $grouped = [];
+        foreach ($this->rows as $row) {
+            if (! $row->measuredOn->betweenIncluded($from, $to) || $dimension === 'query') {
+                continue;
+            }
+            $key = $dimension === 'date' ? $row->measuredOn->toDateString() : $row->url;
+            $grouped[$key] = [
+                'impressions' => ($grouped[$key]['impressions'] ?? 0) + $row->impressions,
+                'clicks' => ($grouped[$key]['clicks'] ?? 0) + $row->clicks,
+            ];
+        }
+        $rows = [];
+        foreach ($grouped as $key => $totals) {
+            $rows[] = new SiteSearchRow(
+                $dimension === 'date' ? (string) $key : null, $dimension === 'date' ? null : (string) $key,
+                $totals['impressions'], $totals['clicks'], null,
+            );
+        }
+        if ($dimension !== 'date') {
+            usort($rows, static fn (SiteSearchRow $a, SiteSearchRow $b): int => $b->clicks <=> $a->clicks);
+            $rows = array_slice($rows, 0, $rowLimit ?? 250);
+        }
+
+        return new ReadResult(ReadStatus::Complete, $rows);
     }
 
     public function name(): string

@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\IntegrationProvider;
+use App\Feedback\Measurements\SynchronizeSiteSearch;
+use App\Feedback\Measurements\SyncSiteSearchJob;
 use App\Integrations\Exceptions\ConnectionRevoked;
 use App\Integrations\Exceptions\GoogleUnavailable;
 use App\Integrations\Google\GoogleConnection;
 use App\Integrations\Google\GoogleOAuth;
 use App\Integrations\Google\GoogleProperties;
+use App\Models\MeasurementRead;
 use App\Models\Project;
 use App\Models\ProjectIntegration;
 use App\Models\User;
@@ -143,6 +146,12 @@ class GoogleConnectionController extends Controller
 
         $this->store($project, $user, $grant);
 
+        $site = $this->siteToRead($project);
+
+        if ($site !== null && $this->readSiteSearch($project)) {
+            return $this->back($project, 'success', 'Google connected. Reading search data for '.$this->readable($site).' now.');
+        }
+
         return $this->back($project, 'success', 'Google connected. Choose which properties to read.');
     }
 
@@ -183,8 +192,9 @@ class GoogleConnectionController extends Controller
 
         $site = $this->chosen($validated['search_console_site'] ?? null, $sites);
         $property = $this->chosen($validated['analytics_property'] ?? null, $analytics);
+        $previousSite = $integration->searchConsoleSite();
 
-        $this->current->run($project, static function () use ($integration, $site, $property): void {
+        $this->current->run($project, static function () use ($integration, $site, $property, $previousSite): void {
             $integration->forceFill([
                 'config' => [
                     ...$integration->config,
@@ -192,7 +202,29 @@ class GoogleConnectionController extends Controller
                     'analytics_property' => $property,
                 ],
             ])->save();
+
+            // Another property is another website's numbers. Kept, they would
+            // sit under the new property's name until its first complete read
+            // replaced them — or indefinitely, if that read failed. Deleting
+            // the reads cascades to the rows they wrote.
+            if ($previousSite !== null && $previousSite !== $site) {
+                self::forgetSiteSearch();
+            }
         });
+        if ($previousSite !== $site) {
+            // The request belonged to the old property. Forgotten before the
+            // new one is asked for, so that if a read of the old property
+            // still holds the job's unique lock, the performance page's
+            // self-heal is free to ask again once it ends.
+            SyncSiteSearchJob::forgetRequest($project->id);
+        }
+
+        $neverRead = $site !== null && ! $this->current->run($project, static fn (): bool => MeasurementRead::query()
+            ->where('source', SynchronizeSiteSearch::DAILY)->where('metadata->property', $site)->exists());
+
+        if ($site !== null && ($site !== $previousSite || $neverRead) && $this->readSiteSearch($project)) {
+            return $this->back($project, 'success', 'Saved. Reading your search data from Google now.');
+        }
 
         return $this->back($project, 'success', 'Saved. The next feedback run will read from these.');
     }
@@ -214,10 +246,101 @@ class GoogleConnectionController extends Controller
                 $this->oauth->revoke($token);
             }
 
-            $this->current->run($project, static fn () => $integration->delete());
+            $this->current->run($project, static function () use ($integration): void {
+                $integration->delete();
+                // Whatever connects next may read another property; the
+                // numbers of this one must not be waiting under its name.
+                self::forgetSiteSearch();
+            });
+            SyncSiteSearchJob::forgetRequest($project->id);
         }
 
         return $this->back($project, 'success', 'Google disconnected.');
+    }
+
+    /**
+     * The Search Console site to read straight after connecting, if there is
+     * one nobody needs to be asked about.
+     *
+     * A reconnect keeps the site already chosen. A first connection picks one
+     * only when exactly one of the account's sites is strictly this website —
+     * zero or two leave the choice to the owner, and so does Google failing to
+     * list them: the connection is saved either way.
+     */
+    private function siteToRead(Project $project): ?string
+    {
+        $integration = $this->connection->for($project);
+
+        if ($integration === null || ! $integration->grants(ProjectIntegration::SCOPE_SEARCH_CONSOLE)) {
+            return null;
+        }
+
+        if ($integration->searchConsoleSite() !== null) {
+            return $integration->searchConsoleSite();
+        }
+
+        try {
+            $sites = $this->properties->searchConsoleSites($integration);
+        } catch (GoogleUnavailable $e) {
+            Log::warning('Could not list Search Console sites after connecting', [
+                'project' => $project->slug,
+                'reason' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        $matches = $this->properties->strictMatches($sites, $project->website_url);
+
+        // An account verified both ways — `sc-domain:example.com` and
+        // `https://example.com/` — is common, and not a real ambiguity: the
+        // domain property is the whole site, every protocol and subdomain, and
+        // the URL-prefix one is a slice of it.
+        $domains = array_values(array_filter($matches, static fn (string $value): bool => str_starts_with($value, 'sc-domain:')));
+
+        if (count($domains) === 1) {
+            $matches = $domains;
+        }
+
+        if (count($matches) !== 1) {
+            return null;
+        }
+
+        $site = $matches[0];
+
+        $this->current->run($project, static function () use ($integration, $site): void {
+            $integration->forceFill([
+                'config' => [...$integration->config, 'search_console_site' => $site],
+            ])->save();
+        });
+
+        return $site;
+    }
+
+    /** Queue a whole-property read, when this project is one that reads. */
+    private function readSiteSearch(Project $project): bool
+    {
+        return SyncSiteSearchJob::request($project);
+    }
+
+    /** Delete the current tenant's site reads; their rows cascade with them. */
+    private static function forgetSiteSearch(): void
+    {
+        MeasurementRead::query()->whereIn('source', [
+            SynchronizeSiteSearch::DAILY, SynchronizeSiteSearch::QUERIES, SynchronizeSiteSearch::PAGES,
+        ])->delete();
+    }
+
+    /** `sc-domain:example.com` and `https://example.com/` both read as `example.com`. */
+    private function readable(string $site): string
+    {
+        if (str_starts_with($site, 'sc-domain:')) {
+            return substr($site, strlen('sc-domain:'));
+        }
+
+        $host = parse_url($site, PHP_URL_HOST);
+
+        return is_string($host) && $host !== '' ? $host : $site;
     }
 
     /**

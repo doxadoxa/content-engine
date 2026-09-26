@@ -8,7 +8,7 @@ namespace App\Feedback\Measurements;
 final readonly class ReadResult
 {
     /**
-     * @param  list<SearchRow|AnalyticsRow>  $rows
+     * @param  list<SearchRow|AnalyticsRow|SiteSearchRow>  $rows
      * @param  array<string, mixed>  $metadata
      */
     public function __construct(
