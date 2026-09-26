@@ -231,6 +231,12 @@ final class SiteSearchTest extends TestCase
         $this->assertSame(['queries' => ['from' => self::CURRENT_FROM, 'to' => '2026-09-12'], 'pages' => ['from' => self::CURRENT_FROM, 'to' => '2026-09-12']], $report['top_windows']);
         $this->assertFalse($report['stale']);
         $this->assertSame('complete', $report['latest']['status']);
+        foreach (['daily', 'queries', 'pages'] as $source) {
+            $this->assertSame('complete', $report['sources'][$source]['status']);
+            $this->assertFalse($report['sources'][$source]['stale']);
+            $this->assertNull($report['sources'][$source]['reason']);
+            $this->assertNotNull($report['sources'][$source]['finished_at']);
+        }
         $this->assertFalse($report['top_pages'][0]['tracked']);
         $this->assertNull($report['top_pages'][0]['page_id']);
     }
@@ -441,6 +447,65 @@ final class SiteSearchTest extends TestCase
     }
 
     #[Test]
+    public function a_failed_ranking_list_on_the_first_sync_is_stale_rather_than_an_empty_answer(): void
+    {
+        [, $project] = $this->owner();
+        $this->connect($project);
+        $this->search()
+            ->willReadSite('date', new ReadResult(ReadStatus::Complete, [new SiteSearchRow('2026-09-01', null, 100, 10, 5.0)]))
+            ->willReadSite('query', new ReadResult(ReadStatus::Failed, reason: 'Search Console answered 500.'));
+        app(SynchronizeSiteSearch::class)->sync($project);
+
+        $report = app(SiteSearchReport::class)->forProject($project);
+
+        $this->assertSame('ready', $report['state']);
+        $this->assertTrue($report['stale']);
+        $this->assertSame(['status' => 'failed', 'reason' => 'Search Console answered 500.'], array_intersect_key($report['sources']['queries'], ['status' => 0, 'reason' => 0]));
+        $this->assertTrue($report['sources']['queries']['stale']);
+        $this->assertFalse($report['sources']['daily']['stale']);
+        $this->assertFalse($report['sources']['pages']['stale']);
+        $this->assertSame([], $report['top_queries']);
+        $this->assertNull($report['top_windows']['queries']);
+        $this->assertSame('complete', $report['latest']['status']);
+        $search = app(ManagerResults::class)->for($project)['search'];
+        $this->assertTrue($search['stale']);
+        $this->assertSame(10, $search['clicks']);
+    }
+
+    #[Test]
+    public function a_later_failed_page_list_keeps_the_older_list_and_says_it_is_stale(): void
+    {
+        [, $project] = $this->owner();
+        $this->connect($project);
+        $this->scriptSite();
+        app(SynchronizeSiteSearch::class)->sync($project);
+
+        // A day later the windows move (current now starts 2026-08-17) and the
+        // page list fails; the daily totals and queries still read.
+        $this->travel(1)->day();
+        $this->search()
+            ->willReadSite('query', new ReadResult(ReadStatus::Complete, [new SiteSearchRow(null, 'window cleaning', 90, 9, 4.0)]))
+            ->willReadSite('page', new ReadResult(ReadStatus::Failed, reason: 'Search Console answered 503.'));
+        $reads = app(SynchronizeSiteSearch::class)->sync($project);
+        $this->assertSame(ReadStatus::Complete, $reads[SynchronizeSiteSearch::DAILY]->status);
+        $this->assertSame(ReadStatus::Failed, $reads[SynchronizeSiteSearch::PAGES]->status);
+
+        $report = app(SiteSearchReport::class)->forProject($project);
+
+        $this->assertSame('ready', $report['state']);
+        $this->assertTrue($report['stale']);
+        $this->assertSame('failed', $report['sources']['pages']['status']);
+        $this->assertSame('Search Console answered 503.', $report['sources']['pages']['reason']);
+        $this->assertTrue($report['sources']['pages']['stale']);
+        $this->assertFalse($report['sources']['daily']['stale']);
+        $this->assertSame('2026-09-13', $report['windows']['current']['to']);
+        $this->assertCount(2, $report['top_pages']);
+        $this->assertSame(['from' => self::CURRENT_FROM, 'to' => '2026-09-12'], $report['top_windows']['pages']);
+        $this->assertSame(['from' => '2026-08-17', 'to' => '2026-09-13'], $report['top_windows']['queries']);
+        $this->assertTrue(app(ManagerResults::class)->for($project)['search']['stale']);
+    }
+
+    #[Test]
     public function a_retry_after_a_failure_reads_as_reading_until_it_answers(): void
     {
         Queue::fake();
@@ -606,6 +671,7 @@ final class SiteSearchTest extends TestCase
             ->where('site_search.top_windows', ['queries' => null, 'pages' => null])
             ->where('site_search.latest', null)
             ->where('site_search.stale', false)
+            ->where('site_search.sources.queries', ['status' => 'not_read', 'reason' => null, 'finished_at' => null, 'stale' => false])
             ->has('site_search.history_from')
             ->has('site_search.updated_at'));
         Queue::assertPushed(SyncSiteSearchJob::class, fn (SyncSiteSearchJob $job): bool => $job->projectId === $project->id);

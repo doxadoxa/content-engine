@@ -105,6 +105,22 @@ export type SiteSearchState =
     | 'no_data'
     | 'failed'
     | 'paused';
+export type SiteSearchSource = {
+    status:
+        | 'not_read'
+        | 'reading'
+        | 'complete'
+        | 'partial'
+        | 'unavailable'
+        | 'incompatible'
+        | 'failed';
+    reason: string | null;
+    finished_at: string | null;
+    stale: boolean;
+};
+/** The read ended without a complete result (it isn't running or pending). */
+export const sourceFailed = (source: SiteSearchSource) =>
+    !['complete', 'reading', 'not_read'].includes(source.status);
 type SiteSearchWindow = { from: string; to: string; days: number };
 export type SiteSearch = {
     state: SiteSearchState;
@@ -130,6 +146,8 @@ export type SiteSearch = {
         reason: string | null;
         finished_at: string | null;
     } | null;
+    /** Per-read status: daily totals, top queries, top pages. */
+    sources: Record<'daily' | 'queries' | 'pages', SiteSearchSource>;
     /** The current-period window each top list was read for. */
     top_windows: {
         queries: { from: string; to: string } | null;

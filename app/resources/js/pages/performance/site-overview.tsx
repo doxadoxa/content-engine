@@ -23,7 +23,7 @@ import { show as showPage } from '@/routes/pages';
 import { monitor, read } from '@/routes/performance';
 import { edit as editProject } from '@/routes/projects';
 import { changeSize, format, MetricCells, pagePath } from './search-explorer';
-import { propertyHost } from './types';
+import { propertyHost, sourceFailed } from './types';
 import type { SiteSearch, SiteSearchTotals } from './types';
 
 const PAGE_SIZE = 25;
@@ -36,6 +36,12 @@ type RangeKey = (typeof RANGES)[number]['key'];
 type ChartMetric = 'clicks' | 'impressions';
 type Tab = 'queries' | 'pages';
 const DAY = 86_400_000;
+const SOURCE_KEYS = ['daily', 'queries', 'pages'] as const;
+const SOURCE_LABELS = {
+    daily: 'Search totals',
+    queries: 'Top queries',
+    pages: 'Top pages',
+} as const;
 // Noon UTC keeps whole-day arithmetic clear of daylight-saving shifts.
 const dayTime = (day: string) => Date.parse(`${day.slice(0, 10)}T12:00:00Z`);
 const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10);
@@ -372,7 +378,7 @@ function ReadyState({
                 end={windows.current.to}
                 historyFrom={site.history_from}
             />
-            <TopLists site={site} owner={owner} />
+            <TopLists site={site} owner={owner} paused={paused} />
             <p className="text-xs leading-5 text-muted-foreground">
                 CTR (click-through rate) is the share of impressions that became
                 clicks. For average position, a lower number is better. Google
@@ -393,12 +399,27 @@ function StaleNotice({
     owner: boolean;
     paused: boolean;
 }) {
-    const { latest } = site;
-    const unfinished =
-        latest !== null &&
-        latest.status !== 'complete' &&
-        latest.status !== 'reading' &&
-        !site.reading;
+    const { sources } = site;
+    // Daily totals first: they drive the tiles and the chart.
+    const failed = site.reading
+        ? undefined
+        : SOURCE_KEYS.find((key) => sourceFailed(sources[key]));
+    const behind = SOURCE_KEYS.find((key) => sources[key].stale);
+    const listEnd = (key: 'queries' | 'pages') => {
+        const window = site.top_windows[key];
+
+        return window ? ` since ${resultDate(window.to)}` : '';
+    };
+    const because = (reason: string | null) => (reason ? `: ${reason}` : '.');
+    let message = `These numbers are from ${resultDate(site.windows.current.to)}; newer data hasn’t arrived yet.`;
+
+    if (failed === 'daily') {
+        message = `The last update from Google didn’t finish${because(sources.daily.reason)}`;
+    } else if (failed) {
+        message = `${SOURCE_LABELS[failed]} didn’t update${because(sources[failed].reason)}`;
+    } else if (behind && behind !== 'daily') {
+        message = `${SOURCE_LABELS[behind]} haven’t updated${listEnd(behind)}; newer data hasn’t arrived yet.`;
+    }
 
     return (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50/40 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
@@ -407,13 +428,9 @@ function StaleNotice({
                     className="mt-1 size-4 shrink-0"
                     aria-hidden="true"
                 />
-                <span className="min-w-0 break-words">
-                    {unfinished
-                        ? `The last update from Google didn’t finish${latest.reason ? `: ${latest.reason}` : '.'}`
-                        : `These numbers are from ${resultDate(site.windows.current.to)}; newer data hasn’t arrived yet.`}
-                </span>
+                <span className="min-w-0 break-words">{message}</span>
             </p>
-            {unfinished && owner && (
+            {failed && owner && (
                 <RefreshButton paused={paused} reading={site.reading} />
             )}
         </div>
@@ -692,7 +709,15 @@ function Trend({
     );
 }
 
-function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
+function TopLists({
+    site,
+    owner,
+    paused,
+}: {
+    site: SiteSearch;
+    owner: boolean;
+    paused: boolean;
+}) {
     const [tab, setTab] = useState<Tab>('queries');
     const [term, setTerm] = useState('');
     const [limit, setLimit] = useState(PAGE_SIZE);
@@ -720,6 +745,11 @@ function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
             listWindow.to !== site.windows.current.to)
             ? `${resultDate(listWindow.from)} – ${resultDate(listWindow.to)}`
             : null;
+    const source = site.sources[tab];
+    const listFailed = sourceFailed(source);
+    const listReading = source.status === 'reading';
+    const listName = SOURCE_LABELS[tab];
+    const because = source.reason ? `: ${source.reason}` : '.';
 
     const select = (next: Tab) => {
         setTab(next);
@@ -798,11 +828,26 @@ function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
                     />
                 </label>
             </div>
-            {ownWindow && (
-                <p className="mt-3 text-xs text-muted-foreground">
-                    {tab === 'queries' ? 'Top queries' : 'Top pages'} for{' '}
-                    {ownWindow}
+            {listFailed && total > 0 ? (
+                <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-amber-900 dark:text-amber-200">
+                    <AlertTriangle
+                        className="mt-0.5 size-3.5 shrink-0"
+                        aria-hidden="true"
+                    />
+                    <span className="min-w-0 break-words">
+                        {listWindow
+                            ? `This list is from ${resultDate(listWindow.from)} – ${resultDate(listWindow.to)}. `
+                            : ''}
+                        The latest update didn’t finish{because}
+                    </span>
                 </p>
+            ) : (
+                ownWindow && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                        {tab === 'queries' ? 'Top queries' : 'Top pages'} for{' '}
+                        {ownWindow}
+                    </p>
+                )
             )}
             <div
                 role="tabpanel"
@@ -818,7 +863,37 @@ function TopLists({ site, owner }: { site: SiteSearch; owner: boolean }) {
                         ? ''
                         : `Showing ${Math.min(limit, matches).toLocaleString()} of ${matches.toLocaleString()} ${noun}${needle ? ` matching “${term.trim()}”` : ''}`}
                 </p>
-                {total === 0 ? (
+                {total === 0 && listReading ? (
+                    <div aria-busy="true" className="space-y-2 p-4">
+                        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Spinner
+                                aria-hidden="true"
+                                role={undefined}
+                                aria-label={undefined}
+                            />
+                            Reading {listName.toLocaleLowerCase()} from Google…
+                        </p>
+                        {[0, 1, 2, 3, 4].map((row) => (
+                            <Skeleton key={row} className="h-10 w-full" />
+                        ))}
+                    </div>
+                ) : total === 0 && listFailed ? (
+                    <EmptyList
+                        title={`${listName} couldn’t be read from Google`}
+                        description={
+                            source.reason ??
+                            'Google didn’t return this list on the last update.'
+                        }
+                        action={
+                            owner ? (
+                                <RefreshButton
+                                    paused={paused}
+                                    reading={site.reading}
+                                />
+                            ) : undefined
+                        }
+                    />
+                ) : total === 0 ? (
                     <EmptyList
                         title={
                             tab === 'queries'

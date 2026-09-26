@@ -126,22 +126,29 @@ final class SiteSearchReport
      * both the page and the card, so the two cannot disagree about whether
      * the numbers are current.
      *
-     * @return array{property: string|null, selected: string|null, state: string, reason: string|null, reading: bool, complete: MeasurementRead|null, windows: Windows, stale: bool, latest: array{status: string, reason: string|null, finished_at: string|null}|null, has_days: bool}
+     * @return array{property: string|null, selected: string|null, state: string, reason: string|null, reading: bool, complete: MeasurementRead|null, windows: Windows, stale: bool, latest: array{status: string, reason: string|null, finished_at: string|null}|null, sources: array<string, array{status: string, reason: string|null, finished_at: string|null, stale: bool}>, has_days: bool}
      */
     private function status(Project $project, ?ProjectIntegration $integration): array
     {
         $property = $this->property($integration);
-        $latest = $property === null ? null : $this->latest(SynchronizeSiteSearch::DAILY, $property);
-        $complete = $latest === null ? null : ($latest->status === ReadStatus::Complete ? $latest : $this->latestComplete(SynchronizeSiteSearch::DAILY, $property));
+        $today = new Windows;
+        // One rule for all three reports. The daily totals drive the state,
+        // but a ranking list that failed is just as much a reason to call the
+        // screen stale: otherwise an empty or older list sits beside current
+        // totals as though it were the answer.
+        $sources = [];
+        foreach (['daily' => SynchronizeSiteSearch::DAILY, 'queries' => SynchronizeSiteSearch::QUERIES, 'pages' => SynchronizeSiteSearch::PAGES] as $name => $source) {
+            $sources[$name] = $this->source($source, $property, $today);
+        }
+        ['latest' => $latest, 'complete' => $complete] = $sources['daily'];
         $reading = $property !== null && $this->reads($property)->whereIn('source', self::SOURCES)
             ->where('status', ReadStatus::Reading)
             ->where('started_at', '>=', now()->subMinutes(self::STALLED_AFTER_MINUTES))
             ->exists();
         $hasDays = $complete !== null && SiteSearchDay::query()->whereIn('measurement_read_id', $this->reads($property)->select('id'))->exists();
         [$state, $reason] = $this->state($project, $integration, $latest, $complete, $hasDays, $reading);
-        $stalled = $latest !== null && $this->stalled($latest);
-        $inFlight = $latest?->status === ReadStatus::Reading && ! $stalled;
-        $today = new Windows;
+        $summaries = array_map(static fn (array $source): array => $source['summary'], $sources);
+        $daily = $summaries['daily'];
 
         return [
             'property' => $property,
@@ -155,23 +162,46 @@ final class SiteSearchReport
             // the next complete read, rather than sliding and losing its
             // newest days.
             'windows' => $complete === null ? $today : new Windows(Carbon::parse($complete->window_to->toDateString(), 'America/Los_Angeles')),
-            // Stale: the last attempt fell short (a read in flight is not a
-            // shortfall), or the numbers are more than a couple of days behind.
-            'stale' => $latest !== null && (
-                ($latest->status !== ReadStatus::Complete && ! $inFlight)
-                || ($complete !== null && $complete->window_to->copy()->addDays(self::STALE_AFTER_DAYS)->toDateString() < $today->to->toDateString())
-            ),
-            'latest' => $latest === null ? null : [
-                'status' => $stalled ? ReadStatus::Failed->value : $latest->status->value,
-                'reason' => $stalled ? 'The report did not finish. Run the measurement again.' : $latest->reason,
-                'finished_at' => $latest->finished_at?->toIso8601String(),
-            ],
+            'stale' => in_array(true, array_column($summaries, 'stale'), true),
+            'latest' => $latest === null ? null : ['status' => $daily['status'], 'reason' => $daily['reason'], 'finished_at' => $daily['finished_at']],
+            'sources' => $summaries,
             'has_days' => $hasDays,
         ];
     }
 
     /**
-     * @param  array{property: string|null, selected: string|null, state: string, reason: string|null, reading: bool, complete: MeasurementRead|null, windows: Windows, stale: bool, latest: array{status: string, reason: string|null, finished_at: string|null}|null, has_days: bool}  $status
+     * One report's latest attempt, its latest complete read, and what the
+     * screen says about it. Two lookups, no rows.
+     *
+     * Stale: the last attempt fell short (a read in flight is not a
+     * shortfall), or the stored result is more than a couple of days behind.
+     *
+     * @return array{latest: MeasurementRead|null, complete: MeasurementRead|null, summary: array{status: string, reason: string|null, finished_at: string|null, stale: bool}}
+     */
+    private function source(string $source, ?string $property, Windows $today): array
+    {
+        $latest = $property === null ? null : $this->latest($source, $property);
+        $complete = $latest === null ? null : ($latest->status === ReadStatus::Complete ? $latest : $this->latestComplete($source, $property));
+        $stalled = $latest !== null && $this->stalled($latest);
+        $inFlight = $latest?->status === ReadStatus::Reading && ! $stalled;
+
+        return [
+            'latest' => $latest,
+            'complete' => $complete,
+            'summary' => [
+                'status' => $latest === null ? 'not_read' : ($stalled ? ReadStatus::Failed->value : $latest->status->value),
+                'reason' => $stalled ? 'The report did not finish. Run the measurement again.' : $latest?->reason,
+                'finished_at' => $latest?->finished_at?->toIso8601String(),
+                'stale' => $latest !== null && (
+                    ($latest->status !== ReadStatus::Complete && ! $inFlight)
+                    || ($complete !== null && $complete->window_to->copy()->addDays(self::STALE_AFTER_DAYS)->toDateString() < $today->to->toDateString())
+                ),
+            ],
+        ];
+    }
+
+    /**
+     * @param  array{property: string|null, selected: string|null, state: string, reason: string|null, reading: bool, complete: MeasurementRead|null, windows: Windows, stale: bool, latest: array{status: string, reason: string|null, finished_at: string|null}|null, sources: array<string, array{status: string, reason: string|null, finished_at: string|null, stale: bool}>, has_days: bool}  $status
      * @param  Collection<array-key, SiteSearchDay>  $days
      * @return array<string, mixed>
      */
@@ -188,6 +218,7 @@ final class SiteSearchReport
             'reading' => $status['reading'],
             'stale' => $status['stale'],
             'latest' => $status['latest'],
+            'sources' => $status['sources'],
             'updated_at' => $status['complete']?->finished_at?->toIso8601String(),
             'windows' => ['current' => $all['current'], 'previous' => $all['previous']],
             'current' => $this->totals($within($windows->currentFrom->toDateString(), $windows->to->toDateString())),
