@@ -13,7 +13,7 @@ import film from '../../../media/avyo-film.mp4';
 
 const FILM_ID = 'avyo-film';
 
-/** The words the film puts on screen, in order: it has music but no narration. */
+/** The words the film puts on screen, in order, for screen readers. */
 const transcript = [
     'what’s included in a deep clean?',
     'Every day, people ask Google and AI about what you do.',
@@ -179,23 +179,17 @@ export function FilmSection() {
                         </div>
                     )}
                 </div>
-                <figcaption className="relative mt-6 text-center text-xs leading-5 text-[#746d60]">
-                    Product film · Illustrative business and data · Music, no
-                    narration
-                    <details className="mx-auto mt-3 max-w-xl text-left">
-                        <summary className="cursor-pointer text-center underline decoration-[#b9b5a7] underline-offset-4">
-                            Read the words in the film
-                        </summary>
-                        <ol
-                            id="film-transcript"
-                            className="mt-4 list-inside list-decimal space-y-2 text-sm leading-6 text-[#625d57]"
-                        >
-                            {transcript.map((line) => (
-                                <li key={line}>{line}</li>
-                            ))}
-                        </ol>
-                    </details>
-                </figcaption>
+                {/*
+                    The film has music but no narration, so without this a
+                    screen reader announces a video and nothing of what it says.
+                    Sighted visitors read the same words on screen, so it stays
+                    out of the layout.
+                */}
+                <ol id="film-transcript" className="sr-only">
+                    {transcript.map((line) => (
+                        <li key={line}>{line}</li>
+                    ))}
+                </ol>
             </figure>
         </section>
     );
