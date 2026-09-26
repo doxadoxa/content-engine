@@ -1,0 +1,44 @@
+{
+    "fps": 30,
+    "bpm": 100,
+    "beat": 18,
+    "bar": 72,
+    "duration": 1656,
+    "scenes": {
+        "question": [0, 216],
+        "gap": [216, 360],
+        "meet": [360, 504],
+        "research": [504, 720],
+        "write": [720, 936],
+        "publish": [936, 1152],
+        "measure": [1152, 1368],
+        "close": [1368, 1656]
+    },
+    "question": {
+        "typeStart": 12,
+        "framesPerChar": 2,
+        "query": "what's included in a deep clean?",
+        "chips": [90, 99, 108, 117, 126, 135],
+        "headline": 144
+    },
+    "gap": { "line1": 222, "line2": 252, "underline": 270 },
+    "meet": { "wipe": 360, "tile": 366, "quarter": 378, "bite": 390, "wordmark": 396, "tagline1": 432, "tagline2": 450 },
+    "research": {
+        "questions": [522, 540, 558],
+        "ticks": [531, 549, 567],
+        "cards": [576, 585, 594],
+        "scheduled": 612
+    },
+    "write": {
+        "art": [738, 747, 756, 765],
+        "kicker": 768,
+        "titleStart": 774,
+        "titleFramesPerChar": 1,
+        "title": "What to expect from a deep clean",
+        "body": 810,
+        "badge": 864
+    },
+    "publish": { "toggle": 972, "approve": 1008, "fly": 1014, "toast": 1044 },
+    "measure": { "chart": 1170, "rows": [1206, 1224, 1242], "note": 1260 },
+    "close": { "line1": 1372, "line2": 1390, "sub": 1440, "lockup": 1476, "cta": 1494 }
+}

@@ -3,10 +3,12 @@ import {
     ArrowRight,
     Check,
     FileCheck2,
+    Play,
     Search,
     TrendingUp,
 } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
+import { FilmSection, playFilm } from '@/components/marketing/film';
 import {
     ArticlePreview,
     CalendarPreview,
@@ -167,10 +169,20 @@ export default function Marketing({ pricing }: Props) {
                                 />
                             </Link>
                             <a
-                                href="#how-it-works"
-                                className="inline-flex min-h-12 items-center gap-2 text-sm font-medium underline decoration-[#b9b5a7] underline-offset-4"
+                                href="#film"
+                                onClick={playFilm}
+                                className="group inline-flex min-h-12 items-center gap-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#17352f]"
                             >
-                                See how it works
+                                <span
+                                    className="grid size-10 place-items-center rounded-full border border-[#b9b5a7] transition-colors group-hover:bg-white/60"
+                                    aria-hidden="true"
+                                >
+                                    <Play className="ml-0.5 size-3.5 fill-current" />
+                                </span>
+                                <span className="underline decoration-[#b9b5a7] underline-offset-4">
+                                    Watch the film
+                                </span>
+                                <span className="text-[#71675b]">0:55</span>
                             </a>
                         </div>
                         <p className="mt-5 text-xs leading-6 text-[#71675b]">
@@ -196,6 +208,7 @@ export default function Marketing({ pricing }: Props) {
                     </div>
                     <CalendarPreview />
                 </section>
+                <FilmSection />
                 <section
                     id="how-it-works"
                     className="scroll-mt-6 bg-[#17352f] py-24 text-[#f8f2e8] sm:py-32"
