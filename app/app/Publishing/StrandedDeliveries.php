@@ -45,16 +45,17 @@ final class StrandedDeliveries
      * clearing the queue's own `retry_after`. Until that elapses the job may
      * still be reserved by a worker that is merely slow, and a sweep before
      * then would dispatch a second copy of a delivery that is still running —
-     * which is how an article gets published twice. 1 800 s was `retry_after`
-     * plus a generous margin, rounded to half an hour, when `retry_after` on
-     * the Redis connection was 1 200 s. It is 2 700 s now (see
-     * `config/queue.php`), so this no longer clears it.
+     * which is how an article gets published twice. So this has to stay above
+     * `retry_after` on the Redis connection (2 700 s, see `config/queue.php`),
+     * and `StrandedThresholdTest` fails if the shipped defaults stop doing so.
+     * An hour clears it by a quarter of an hour; it was half an hour until
+     * `retry_after` went up from 1 200 s and left it underneath.
      *
-     * Half an hour is also short enough to matter: an article scheduled for a
+     * An hour is still short enough to matter: an article scheduled for a
      * morning that is recovered in the afternoon has missed the slot somebody
      * chose for it.
      */
-    public const int AFTER_SECONDS = 1_800;
+    public const int AFTER_SECONDS = 3_600;
 
     /**
      * How many times a row may be swept before it is called a dead letter.
