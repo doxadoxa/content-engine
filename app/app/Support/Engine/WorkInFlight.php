@@ -19,7 +19,9 @@ use Illuminate\Support\Carbon;
  * articles and no impressions, and a grid of zeroes reads as a broken product
  * rather than a young one. What it does have is work in flight — so this is
  * what the top of the landing screen is until the work stops, and it returns
- * nothing at all once it has.
+ * nothing at all once it has. During a first run the top of the screen is
+ * {@see FirstRun}, which tells the same work as milestones; this panel then
+ * keeps only what the journey does not show, failures above all.
  *
  * Extracted from `DashboardController` when the dashboard stopped being a
  * screen. Nothing here changed in the move: the value of these two queries is

@@ -2,8 +2,10 @@ import { Deferred, Head, Link, usePoll } from '@inertiajs/react';
 import {
     ArrowRight,
     CalendarDays,
+    Check,
     CheckCircle2,
     FileText,
+    Loader2,
     Sparkles,
     TriangleAlert,
 } from 'lucide-react';
@@ -16,6 +18,7 @@ import { Spinner } from '@/components/ui/spinner';
 import {
     WorkspaceHeader,
     WorkspacePage,
+    workspaceHeroClass,
     workspacePanelClass,
 } from '@/components/workspace-page';
 import { show as onboarding } from '@/routes/onboarding';
@@ -38,6 +41,16 @@ type Run = {
     message?: string | null;
 };
 type Work = { launching: boolean; active: Run[]; failed: Run[] };
+/** The first run, milestone by milestone. See `App\Support\Engine\FirstRun`. */
+type JourneyStep = {
+    key: 'site' | 'topics' | 'calendar' | 'articles' | 'ai';
+    label: string;
+    state: 'done' | 'active' | 'upcoming';
+    detail: string | null;
+    subject: string | null;
+    subject_id: string | null;
+};
+type Journey = { steps: JourneyStep[] };
 type Article = {
     id: string;
     title: string;
@@ -79,6 +92,7 @@ type Props = {
     hasProjects: boolean;
     checklist: Step[];
     work?: Work;
+    journey?: Journey | null;
     manager?: Dashboard;
     results?: ResultsSummary;
     health?: { healthy: boolean; reason: string | null };
@@ -90,6 +104,7 @@ export default function Home({
     hasProjects,
     checklist,
     work,
+    journey,
     manager,
     results,
     health,
@@ -101,14 +116,61 @@ export default function Home({
      * only thing that turns the spinner into a finished article and the button
      * that starts the trial — so leaving it out asked the server, every
      * fifteen seconds, for everything except the one prop that had changed.
+     * `journey` is here for the same reason: it says "this page updates
+     * itself", and a step that never ticks over would make that a lie.
      */
     usePoll(15000, {
-        only: ['preview', 'work', 'manager', 'checklist', 'results'],
+        only: ['preview', 'work', 'journey', 'manager', 'checklist', 'results'],
     });
     const planning =
         work?.active.some((run) =>
             ['research', 'planning'].includes(run.pipeline),
         ) ?? false;
+
+    /*
+     * The sample owns this moment during a card-free preview, and two panels
+     * both saying "Avyo is working" is one too many.
+     */
+    const shownJourney = preview ? null : (journey ?? null);
+
+    /*
+     * Whether an AI check is running, from either source: the journey during
+     * the first run, the run panel for every check after it. A scheduled or
+     * manual check on an existing sampling set runs as `ai_sample` pipelines
+     * with no `visibility` run at all, so both count — otherwise the cards
+     * said "Not checked yet" while the assistants were being asked.
+     */
+    const checking = Boolean(
+        journey?.steps.some(
+            (step) => step.key === 'ai' && step.state === 'active',
+        ) ||
+        work?.active.some((run) => AI_CHECK_PIPELINES.includes(run.pipeline)),
+    );
+
+    /*
+     * While the journey is up, the result cards sit below the content engine:
+     * the journey is the news, and a row of "not checked yet" above it is the
+     * empty grid it replaced. Decided by the journey alone, not by whether
+     * anything has been measured yet — the first AI answer lands mid-session,
+     * and cards that jumped from the bottom of the page to the top under
+     * somebody's cursor would lose them their place.
+     */
+    const resultsLater = shownJourney !== null;
+
+    /*
+     * The run panel, minus what the journey is already showing. Failures stay
+     * in it, and it moves up under the journey so they are still read.
+     */
+    const laterWork =
+        shownJourney && work
+            ? {
+                  launching: false,
+                  active: work.active.filter(
+                      (run) => !JOURNEY_PIPELINES.includes(run.pipeline),
+                  ),
+                  failed: work.failed,
+              }
+            : work;
 
     if (!project) {
         return (
@@ -167,10 +229,22 @@ export default function Home({
                     }
                 />
                 {preview && <PreviewPanel preview={preview} />}
-                {results && <ManagerResults results={results} />}
+                {shownJourney && (
+                    <>
+                        <JourneyPanel journey={shownJourney} />
+                        <WorkPanel work={laterWork} />
+                    </>
+                )}
+                {results && !resultsLater && (
+                    <ManagerResults results={results} checking={checking} />
+                )}
                 {manager && !preview && <PublishingStatus manager={manager} />}
-                {results && (
-                    <DashboardCharts results={results} projectId={project.id} />
+                {results && !resultsLater && (
+                    <DashboardCharts
+                        results={results}
+                        projectId={project.id}
+                        checking={checking}
+                    />
                 )}
                 <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-6">
                     <div>
@@ -206,32 +280,45 @@ export default function Home({
                         </section>
                     )}
                 </Deferred>
-                <WorkPanel work={work} />
+                {!shownJourney && <WorkPanel work={work} />}
                 <Deferred data="manager" fallback={<LoadingPanel />}>
                     {manager && (
                         <>
-                            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                                <Count
-                                    title="Being written"
-                                    value={manager.writing}
-                                    href="/content?view=writing"
-                                />
-                                <Count
-                                    title="Needs attention"
-                                    value={manager.needs_review}
-                                    href="/content?view=review"
-                                />
-                                <Count
-                                    title="Scheduled"
-                                    value={manager.scheduled}
-                                    href="/content?view=scheduled"
-                                />
-                                <Count
-                                    title="Published"
-                                    value={manager.published}
-                                    href="/content?view=published"
-                                />
-                            </div>
+                            {/*
+                             * Four zeroes say nothing a new project does not
+                             * already know, and they were half of the "empty
+                             * fields" a paying customer read as a product that
+                             * had not started. The row appears with the first
+                             * article.
+                             */}
+                            {manager.writing +
+                                manager.needs_review +
+                                manager.scheduled +
+                                manager.published >
+                                0 && (
+                                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                    <Count
+                                        title="Being written"
+                                        value={manager.writing}
+                                        href="/content?view=writing"
+                                    />
+                                    <Count
+                                        title="Needs attention"
+                                        value={manager.needs_review}
+                                        href="/content?view=review"
+                                    />
+                                    <Count
+                                        title="Scheduled"
+                                        value={manager.scheduled}
+                                        href="/content?view=scheduled"
+                                    />
+                                    <Count
+                                        title="Published"
+                                        value={manager.published}
+                                        href="/content?view=published"
+                                    />
+                                </div>
+                            )}
                             <div className="grid items-start gap-5 lg:grid-cols-2">
                                 <section
                                     className={`${workspacePanelClass} overflow-hidden`}
@@ -312,6 +399,16 @@ export default function Home({
                             ))}
                         </div>
                     </section>
+                )}
+                {results && resultsLater && (
+                    <>
+                        <ManagerResults results={results} checking={checking} />
+                        <DashboardCharts
+                            results={results}
+                            projectId={project.id}
+                            checking={checking}
+                        />
+                    </>
                 )}
                 <Setup checklist={checklist} projectId={project.id} />
             </WorkspacePage>
@@ -447,6 +544,216 @@ function PreviewPanel({ preview }: { preview: Preview }) {
                 </div>
             )}
         </section>
+    );
+}
+
+/** The pipelines that ask the AI assistants: the check, and each sampled cell. */
+const AI_CHECK_PIPELINES = ['visibility', 'ai_sample'];
+
+/** The pipelines the journey already describes, by the step they drive. */
+const JOURNEY_PIPELINES = [
+    'site_audit',
+    'research',
+    'planning',
+    'generation',
+    ...AI_CHECK_PIPELINES,
+];
+
+/**
+ * The first run, told as it happens.
+ *
+ * A customer who had just paid opened this screen to a row of dashes, and the
+ * only sign of the engine was a spinner below the fold. They read it as a
+ * product that had not started, which is the one thing it must never look
+ * like. So while the first run lasts it leads the page: what is done, what is
+ * happening now, and what is next.
+ *
+ * Steps rather than a percentage. They are not equal in length, and a bar
+ * drawn from them would move in lies.
+ */
+function JourneyPanel({ journey }: { journey: Journey }) {
+    const done = journey.steps.filter((step) => step.state === 'done').length;
+    const active = journey.steps.filter((step) => step.state === 'active');
+    // The first step still to come *after* the furthest one reached. An
+    // article written on demand can finish before the calendar is planned,
+    // and "up next: planning" beside a finished article reads backwards.
+    const reached = journey.steps.reduce(
+        (last, step, index) => (step.state === 'upcoming' ? last : index),
+        -1,
+    );
+    const next =
+        active.length === 0
+            ? (journey.steps.find(
+                  (step, index) => index > reached && step.state === 'upcoming',
+              ) ?? null)
+            : null;
+
+    // One sentence for screen readers, spoken when it changes rather than on
+    // every poll: the list itself re-renders every fifteen seconds.
+    // Label and subject only, never the detail: the details are running
+    // counts ("12 topics found so far") that change on most polls, and a
+    // sentence that changes is a sentence a screen reader speaks again.
+    const now = active.length
+        ? active
+              .map((step) =>
+                  [step.label, step.subject].filter(Boolean).join(': '),
+              )
+              .join('. ')
+        : next
+          ? `Up next: ${next.label}`
+          : 'Finishing up';
+
+    return (
+        <section className={workspaceHeroClass} aria-labelledby="journey-title">
+            <div
+                className="pointer-events-none absolute -top-24 -right-20 -z-10 size-80 rounded-full bg-[#f3cf6a]/12 blur-3xl motion-safe:animate-pulse motion-safe:[animation-duration:6s]"
+                aria-hidden="true"
+            />
+            <div
+                className="pointer-events-none absolute -bottom-32 left-10 -z-10 size-72 rounded-full bg-[#d6533c]/14 blur-3xl motion-safe:animate-pulse motion-safe:[animation-duration:8s]"
+                aria-hidden="true"
+            />
+
+            <div className="p-6 sm:p-8">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                        <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-white/8 ring-1 ring-white/10">
+                            <Sparkles
+                                className="size-5 text-[#f3cf6a] motion-safe:animate-pulse motion-safe:[animation-duration:3s]"
+                                aria-hidden="true"
+                            />
+                        </span>
+                        <div>
+                            <h2
+                                id="journey-title"
+                                className="text-xl font-semibold tracking-tight text-balance sm:text-2xl"
+                            >
+                                Avyo is working on your business
+                            </h2>
+                            <p className="mt-1 max-w-xl text-sm leading-6 text-pretty text-white/65">
+                                Your first articles take a few minutes, and the
+                                first AI check follows within the hour. You can
+                                close this page. Avyo keeps going, and this page
+                                updates itself.
+                            </p>
+                        </div>
+                    </div>
+                    <p className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-xs text-white/75 tabular-nums">
+                        {done} of {journey.steps.length} done
+                    </p>
+                </div>
+
+                <ol className="mt-8 grid gap-5 lg:grid-cols-5 lg:gap-4">
+                    {journey.steps.map((step, index) => (
+                        <JourneyStepItem
+                            key={step.key}
+                            step={step}
+                            next={step === next}
+                            last={index === journey.steps.length - 1}
+                        />
+                    ))}
+                </ol>
+
+                <p className="sr-only" aria-live="polite" aria-atomic="true">
+                    {now}
+                </p>
+            </div>
+        </section>
+    );
+}
+
+function JourneyStepItem({
+    step,
+    next,
+    last,
+}: {
+    step: JourneyStep;
+    next: boolean;
+    last: boolean;
+}) {
+    const status = {
+        done: 'Done',
+        active: 'In progress',
+        upcoming: 'Not started yet',
+    }[step.state];
+
+    return (
+        <li
+            className="relative flex gap-3 lg:flex-col"
+            aria-current={step.state === 'active' ? 'step' : undefined}
+        >
+            {!last && (
+                // The thread between steps: down the side on a phone, across
+                // the top on a wide screen. Lit once the step before is done.
+                <span
+                    className={`absolute top-8 -bottom-3 left-3 w-px lg:top-3 lg:-right-2 lg:bottom-auto lg:left-8 lg:h-px lg:w-auto ${step.state === 'done' ? 'bg-sage/70' : 'bg-white/15'}`}
+                    aria-hidden="true"
+                />
+            )}
+            <JourneyStepIcon state={step.state} />
+            <div className="min-w-0 pb-1">
+                <p
+                    className={`text-sm leading-6 font-medium ${step.state === 'upcoming' ? 'text-white/55' : 'text-[#f3ecdd]'}`}
+                >
+                    <span className="sr-only">{status}: </span>
+                    {step.label}
+                </p>
+                {step.subject &&
+                    (step.subject_id ? (
+                        <Link
+                            href={`/content/${step.subject_id}`}
+                            className="mt-1 line-clamp-2 text-xs leading-5 text-[#f3cf6a] underline underline-offset-4"
+                        >
+                            {step.subject}
+                        </Link>
+                    ) : (
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#f3cf6a]">
+                            {step.subject}
+                        </p>
+                    ))}
+                {step.detail && (
+                    <p className="mt-1 text-xs leading-5 text-white/60">
+                        {step.detail}
+                    </p>
+                )}
+                {next && !step.detail && (
+                    <p className="mt-1 text-xs leading-5 text-white/60">
+                        Up next
+                    </p>
+                )}
+            </div>
+        </li>
+    );
+}
+
+function JourneyStepIcon({ state }: { state: JourneyStep['state'] }) {
+    if (state === 'done') {
+        return (
+            <span
+                className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-sage text-white"
+                aria-hidden="true"
+            >
+                <Check className="size-3.5" strokeWidth={3} />
+            </span>
+        );
+    }
+
+    if (state === 'active') {
+        return (
+            <span
+                className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-[#17352f] shadow-[0_0_18px_rgba(243,207,106,0.35)] ring-1 ring-[#f3cf6a]/60"
+                aria-hidden="true"
+            >
+                <Loader2 className="size-3.5 animate-spin text-[#f3cf6a] motion-reduce:animate-none" />
+            </span>
+        );
+    }
+
+    return (
+        <span
+            className="relative size-6 shrink-0 rounded-full border border-white/25 bg-[#17352f]"
+            aria-hidden="true"
+        />
     );
 }
 
@@ -610,6 +917,7 @@ function WorkPanel({ work }: { work?: Work }) {
         refresh: 'Updating your article',
         site_audit: 'Getting to know your website',
         visibility: 'Checking sampled AI answers',
+        ai_sample: 'Asking the AI assistants about you',
     };
 
     return (

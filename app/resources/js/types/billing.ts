@@ -69,6 +69,24 @@ export type Billing = {
      * cannot say it.
      */
     exhausted: BillingMetric[];
+    /**
+     * The part of `exhausted` worth warning about.
+     *
+     * Leaves out what the engine does once a period by itself (the content
+     * plan and the site audit), where a used-up counter means the work got
+     * done, and is empty during a trial that converts to a plan already
+     * chosen, whose allowance is sample-sized on purpose. Decided on the
+     * server, so the banner and the billing page cannot disagree.
+     */
+    shortfalls: BillingMetric[];
+    /**
+     * A trial of a plan the customer already picked, set to start by itself.
+     *
+     * False for the legacy bare trial (plan key `trial`, nothing chosen) and
+     * for a trial cancelled before it ends. When true there is nothing left
+     * to choose, so nothing should ask them to.
+     */
+    converts_after_trial: boolean;
     trial_ends_at: string | null;
     period_ends_at: string | null;
 };

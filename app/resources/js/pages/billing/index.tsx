@@ -11,6 +11,7 @@ import {
     WorkspacePage,
     workspacePanelClass,
 } from '@/components/workspace-page';
+import { formatPlanPrice } from '@/lib/money';
 import { index } from '@/routes/billing';
 import type { Billing, BillingMetric, BillingUsage } from '@/types/billing';
 import { allowanceDefinitions, allowanceLabel } from './allowances';
@@ -55,23 +56,12 @@ export default function BillingPage({
 }: Props) {
     const { errors } = usePage<{ errors: Record<string, string> }>().props;
     const money = (cents: number, planCurrency: string = currency) =>
-        new Intl.NumberFormat(undefined, {
-            style: 'currency',
-            currency: planCurrency.toUpperCase(),
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 2,
-        })
-            .formatToParts(cents / 100)
-            .map((part) =>
-                part.type === 'currency' && planCurrency.toLowerCase() === 'usd'
-                    ? 'US$'
-                    : part.value,
-            )
-            .join('');
+        formatPlanPrice(cents, planCurrency);
 
-    const exhausted = entitlement.exhausted.filter(
-        (metric) => (entitlement.usage[metric]?.limit ?? 1) !== 0,
-    );
+    // The server's list of shortfalls rather than every used-up counter, so
+    // this card and the banner agree: a content plan or site audit made on
+    // schedule, or a trial's sample-sized allowance, is not a shortfall.
+    const exhausted = entitlement.shortfalls;
 
     return (
         <>

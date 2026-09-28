@@ -25,6 +25,7 @@ use App\Models\WebhookDelivery;
 use App\Onboarding\WebsiteChecklist;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Support\Content\ManagerContent;
+use App\Support\Engine\FirstRun;
 use App\Support\Engine\WorkInFlight;
 use App\Support\Health\StackHealth;
 use App\Support\Tenancy\CurrentProject;
@@ -39,6 +40,7 @@ class HomeController extends Controller
 {
     public function __construct(
         private readonly WorkInFlight $work,
+        private readonly FirstRun $firstRun,
     ) {}
 
     public function __invoke(
@@ -89,6 +91,13 @@ class HomeController extends Controller
             // version somebody closes.
             'preview' => $this->preview($request, $project),
             'work' => $this->work->for($project),
+            // The first run as a journey — what has been done, what is being
+            // done now — and the top of this screen while it lasts. Not
+            // deferred for the reason `work` is not: in a project's first hour
+            // it is the only thing here with anything to say, and it is what
+            // a customer who has just paid is looking for. A closure so a
+            // partial reload that asks for something else skips its queries.
+            'journey' => fn (): ?array => $this->firstRun->for($project),
             'article_workflow' => ManagerContent::workflow($project),
             'pageWork' => Inertia::defer(fn (): array => $this->pageWork()),
             'manager' => Inertia::defer(fn (): array => $this->manager($project)),

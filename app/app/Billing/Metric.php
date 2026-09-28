@@ -42,4 +42,28 @@ enum Metric: string
             self::AssistantTurns => 'assistant turns',
         };
     }
+
+    /**
+     * Is this something the engine does once a period on its own?
+     *
+     * Every plan allows exactly one content plan and one site audit a period,
+     * and the engine makes both itself without anybody asking. So a used-up
+     * counter here means the work got done, not that the manager ran short —
+     * and reporting it as "you have used this period's content plans" beside
+     * a warning triangle read, to a paying customer, as an error.
+     *
+     * The AI answers are deliberately not in here, although the scheduled
+     * checks are sized to fill them: manual collections and rechecks spend the
+     * same allowance, and when they do, the next scheduled check is refused.
+     * That is a shortfall somebody has to hear about.
+     *
+     * The limit still applies; this only decides what is worth *saying*.
+     */
+    public function isRoutine(): bool
+    {
+        return match ($this) {
+            self::ContentPlans, self::SiteAudits => true,
+            default => false,
+        };
+    }
 }

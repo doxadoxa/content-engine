@@ -127,6 +127,9 @@ function visibility(results: ResultsSummary) {
 
 type Search = ResultsSummary['search'];
 
+/** What a card says while it has no number: a short reason, maybe busy. */
+type Status = { label: string; busy?: boolean };
+
 const siteWide = (search: Search) => search.scope === 'site';
 
 /** One line on where the search numbers come from, or why there are none. */
@@ -162,10 +165,50 @@ const searchHref = (search: Search) =>
         ? '/performance#site-search'
         : '/performance#search-results';
 
-export function ManagerResults({ results }: { results: ResultsSummary }) {
+/**
+ * What a search card says in place of a number it does not have.
+ *
+ * A bare dash was the answer to every one of these, and a customer in their
+ * first hour read a row of them as a product that had not started. The card
+ * already knows which of "not connected", "reading" and "nothing recorded" it
+ * is, so it says that instead.
+ */
+function searchStatus(search: Search): Status {
+    if (!siteWide(search)) {
+        return search.connected
+            ? { label: 'No data yet' }
+            : { label: 'Not connected' };
+    }
+
+    switch (search.state) {
+        case 'not_connected':
+            return { label: 'Not connected' };
+        case 'no_property':
+            // Google is connected; what is missing is which property to read.
+            return { label: 'Choose property' };
+        case 'reading':
+            return { label: 'Reading…', busy: true };
+        case 'failed':
+            return { label: 'Unavailable' };
+        case 'paused':
+            return { label: 'Paused' };
+        default:
+            return { label: 'No data yet' };
+    }
+}
+
+export function ManagerResults({
+    results,
+    checking = false,
+}: {
+    results: ResultsSummary;
+    /** An AI visibility check is running now, so "not checked" would be wrong. */
+    checking?: boolean;
+}) {
     const { search, purchases } = results;
     const ai = visibility(results);
     const note = searchNote(search);
+    const searchPending = searchStatus(search);
 
     return (
         <section
@@ -174,11 +217,18 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
         >
             <ResultCard
                 title="AI visibility"
-                value={percentage(ai.score)}
+                value={ai.score === null ? null : percentage(ai.score)}
+                pending={
+                    checking
+                        ? { label: 'Checking now', busy: true }
+                        : { label: 'Not checked yet' }
+                }
                 note={
                     ai.answers > 0
                         ? `Mentioned in ${ai.mentions} of ${ai.answers} answers`
-                        : 'See whether AI names your business'
+                        : checking
+                          ? 'Asking the assistants about your business'
+                          : 'See whether AI names your business'
                 }
                 caption={
                     ai.sampled_at
@@ -190,7 +240,8 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
             />
             <ResultCard
                 title="Clicks from Google"
-                value={number(search.clicks)}
+                value={search.clicks === null ? null : number(search.clicks)}
+                pending={searchPending}
                 change={
                     search.clicks !== null && search.previous_clicks !== null
                         ? search.clicks - search.previous_clicks
@@ -202,7 +253,12 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
             />
             <ResultCard
                 title="Search impressions"
-                value={number(search.impressions)}
+                value={
+                    search.impressions === null
+                        ? null
+                        : number(search.impressions)
+                }
+                pending={searchPending}
                 change={
                     search.impressions !== null &&
                     search.previous_impressions !== null
@@ -219,7 +275,14 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
             />
             <ResultCard
                 title="Recorded purchases"
-                value={number(purchases.count)}
+                value={
+                    purchases.count === null ? null : number(purchases.count)
+                }
+                pending={
+                    purchases.connected
+                        ? { label: 'Waiting' }
+                        : { label: 'Not connected' }
+                }
                 note={
                     purchases.count !== null
                         ? purchases.paused
@@ -241,19 +304,28 @@ export function ManagerResults({ results }: { results: ResultsSummary }) {
 export function DashboardCharts({
     results,
     projectId,
+    checking = false,
 }: {
     results: ResultsSummary;
     projectId: string;
+    checking?: boolean;
 }) {
     return (
         <div className="grid items-start gap-5 xl:grid-cols-2">
-            <AiVisibilityPanel results={results} />
+            <AiVisibilityPanel results={results} checking={checking} />
             <SearchTrend search={results.search} projectId={projectId} />
         </div>
     );
 }
 
-export function AiVisibilityPanel({ results }: { results: ResultsSummary }) {
+export function AiVisibilityPanel({
+    results,
+    checking = false,
+}: {
+    results: ResultsSummary;
+    /** A check is running: unanswered rows are being asked, not empty. */
+    checking?: boolean;
+}) {
     const ai = visibility(results);
 
     return (
@@ -281,7 +353,9 @@ export function AiVisibilityPanel({ results }: { results: ResultsSummary }) {
             <p className="mt-5 text-sm text-[#f3ecdd]/80">
                 {ai.answers > 0
                     ? `${ai.mentions} mentions in ${ai.answers} answers`
-                    : 'Your first check will appear here'}
+                    : checking
+                      ? 'Asking the assistants now. Answers appear here as they arrive.'
+                      : 'Your first check will appear here'}
                 {ai.sampled_at && (
                     <span className="ml-2 text-xs">
                         · {ai.earlier ? 'Earlier checks' : 'Latest check'} ·{' '}
@@ -303,6 +377,14 @@ export function AiVisibilityPanel({ results }: { results: ResultsSummary }) {
                                             {provider.answers}
                                         </span>
                                     </>
+                                ) : checking ? (
+                                    <span className="inline-flex items-center gap-1.5 text-xs text-[#f3ecdd]/80">
+                                        <Loader2
+                                            className="size-3 animate-spin motion-reduce:animate-none"
+                                            aria-hidden="true"
+                                        />
+                                        Asking…
+                                    </span>
                                 ) : (
                                     <span className="text-xs text-[#f3ecdd]/65">
                                         No answers yet
@@ -314,10 +396,14 @@ export function AiVisibilityPanel({ results }: { results: ResultsSummary }) {
                             className="h-1.5 overflow-hidden rounded-full bg-white/10"
                             aria-hidden="true"
                         >
-                            <div
-                                className="h-full rounded-full bg-[#f3cf6a]"
-                                style={{ width: `${provider.score ?? 0}%` }}
-                            />
+                            {provider.score === null && checking ? (
+                                <div className="h-full w-full rounded-full bg-[#f3cf6a]/25 motion-safe:animate-pulse" />
+                            ) : (
+                                <div
+                                    className="h-full rounded-full bg-[#f3cf6a]"
+                                    style={{ width: `${provider.score ?? 0}%` }}
+                                />
+                            )}
                         </div>
                         {provider.sampled_at &&
                             ai.sampled_at &&
@@ -600,6 +686,7 @@ function emptyTrend(
 function ResultCard({
     title,
     value,
+    pending,
     change,
     note,
     caption,
@@ -607,7 +694,9 @@ function ResultCard({
     accent = false,
 }: {
     title: string;
-    value: string;
+    /** Null while unmeasured; `pending` is shown in its place. */
+    value: string | null;
+    pending: Status;
     change?: number | null;
     note: string;
     caption: string;
@@ -626,9 +715,23 @@ function ResultCard({
                     aria-hidden="true"
                 />
             </div>
-            <p className="mt-4 text-4xl font-semibold tracking-tight tabular-nums">
-                {value}
-            </p>
+            {value !== null ? (
+                <p className="mt-4 text-4xl font-semibold tracking-tight tabular-nums">
+                    {value}
+                </p>
+            ) : (
+                // The same height as a number, so a row of cards half measured
+                // and half not still lines up.
+                <p className="mt-4 flex h-10 items-center gap-2 text-base font-medium text-muted-foreground">
+                    {pending.busy && (
+                        <Loader2
+                            className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                        />
+                    )}
+                    {pending.label}
+                </p>
+            )}
             <p className="mt-3 text-xs leading-5 text-muted-foreground">
                 {note}
             </p>
