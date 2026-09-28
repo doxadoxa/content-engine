@@ -9,6 +9,8 @@ use App\Enums\AssetRole;
 use App\Enums\WebhookEvent;
 use App\Media\Contracts\ImageGenerationProvider;
 use App\Media\FakeImageGeneration;
+use App\Media\GeneratedImage;
+use App\Media\MediaWriteFailed;
 use App\Models\Asset;
 use App\Models\Channel;
 use App\Models\ContentItem;
@@ -23,6 +25,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Testing\PendingCommand;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -229,6 +232,88 @@ final class MediaRedrawCommandTest extends TestCase
         $this->assertSame([], $this->images->prompts());
     }
 
+    #[Test]
+    public function a_picture_paid_for_and_then_refused_by_the_disk_is_counted_and_stops_the_run(): void
+    {
+        $provider = $this->failingProvider(paid: true);
+        $first = $this->article('How to clean grout');
+        $this->picture($first, AssetRole::Hero, $first->title);
+        $second = $this->article('How to clean ovens');
+        $this->picture($second, AssetRole::Hero, $second->title);
+
+        $this->redraw(['--limit' => 5])
+            ->expectsOutputToContain('The media disk refused a write.')
+            ->expectsOutputToContain('Drew 0 of 1 attempted picture(s), about $0.04.')
+            ->assertFailed();
+
+        $this->assertSame(1, $provider->calls, 'Every later file would have been drawn and billed the same way.');
+    }
+
+    #[Test]
+    public function a_failed_draw_still_counts_against_the_limit(): void
+    {
+        $provider = $this->failingProvider(paid: false);
+        $first = $this->article('How to clean grout');
+        $this->picture($first, AssetRole::Hero, $first->title);
+        $second = $this->article('How to clean ovens');
+        $this->picture($second, AssetRole::Hero, $second->title);
+
+        $this->redraw(['--limit' => 1])->assertFailed();
+
+        $this->assertSame(1, $provider->calls);
+    }
+
+    #[Test]
+    public function a_limit_that_is_not_a_whole_number_is_refused_rather_than_ignored(): void
+    {
+        $unit = $this->article('How to clean grout');
+        $this->picture($unit, AssetRole::Hero, $unit->title);
+
+        foreach (['one', '-1', '1.5'] as $limit) {
+            $this->redraw(['--limit' => $limit])
+                ->expectsOutputToContain('--limit must be a whole number')
+                ->assertFailed();
+        }
+
+        $this->assertSame([], $this->images->prompts());
+    }
+
+    #[Test]
+    public function an_article_is_sent_again_once_when_its_last_picture_moves(): void
+    {
+        $unit = $this->article('How to clean grout', published: true);
+        $this->picture($unit, AssetRole::Hero, $unit->title);
+        $this->picture($unit, AssetRole::Inline, 'Tools you need');
+        $channel = $this->holding($unit);
+
+        $this->redraw(['--limit' => 1])->assertSuccessful();
+
+        $this->assertSame(0, $this->pending($unit), 'Half its pictures are still broken; one update, when it is whole.');
+
+        $this->redraw()->assertSuccessful();
+
+        $this->assertSame(1, $this->pending($unit));
+        $this->assertSame($channel->id, WebhookDelivery::query()->where('status', 'pending')->value('channel_id'));
+    }
+
+    #[Test]
+    public function the_update_is_queued_with_the_move_so_a_run_that_dies_later_does_not_lose_it(): void
+    {
+        $fixed = $this->article('How to clean grout', published: true);
+        $this->picture($fixed, AssetRole::Hero, $fixed->title, onDisk: true);
+        $this->holding($fixed);
+
+        // Drawn after the copy above, and refused by the disk: the run stops
+        // before any end-of-run step could have happened.
+        $this->failingProvider(paid: true);
+        $broken = $this->article('How to clean ovens');
+        $this->picture($broken, AssetRole::Hero, $broken->title);
+
+        $this->redraw()->assertFailed();
+
+        $this->assertSame(1, $this->pending($fixed));
+    }
+
     /** @param  array<string, mixed>  $options */
     private function redraw(array $options = []): PendingCommand
     {
@@ -238,6 +323,68 @@ final class MediaRedrawCommandTest extends TestCase
         $pending = $this->artisan('media:redraw', ['project' => $this->project->slug, ...$options]);
 
         return $pending;
+    }
+
+    /**
+     * An image provider that fails every call, after the vendor billed it or before.
+     *
+     * @return ImageGenerationProvider&object{calls: int}
+     */
+    private function failingProvider(bool $paid): ImageGenerationProvider
+    {
+        $provider = new class($paid) implements ImageGenerationProvider
+        {
+            public int $calls = 0;
+
+            public function __construct(private readonly bool $paid) {}
+
+            public function name(): string
+            {
+                return 'failing';
+            }
+
+            public function isConfigured(): bool
+            {
+                return true;
+            }
+
+            /**
+             * @param  list<string>  $references
+             * @param  array<string, mixed>  $options
+             */
+            public function generate(string $prompt, array $references = [], array $options = []): GeneratedImage
+            {
+                $this->calls++;
+
+                if ($this->paid) {
+                    throw (new MediaWriteFailed('Could not write to the s3 disk.'))->withSpend('failing', 'model', 40_000);
+                }
+
+                throw new RuntimeException('The provider timed out.');
+            }
+        };
+
+        $this->app->instance(ImageGenerationProvider::class, $provider);
+
+        return $provider;
+    }
+
+    /** A verified channel that already received this article. */
+    private function holding(ContentItem $unit): Channel
+    {
+        $channel = Channel::factory()->create(['verified_at' => now()]);
+        WebhookDelivery::factory()->create([
+            'channel_id' => $channel->id,
+            'content_item_id' => $unit->id,
+            'payload_snapshot' => ['event' => WebhookEvent::Published->value],
+        ]);
+
+        return $channel;
+    }
+
+    private function pending(ContentItem $unit): int
+    {
+        return WebhookDelivery::query()->where('content_item_id', $unit->id)->where('status', 'pending')->count();
     }
 
     private function article(string $title, bool $published = false, ?string $target = null): ContentItem

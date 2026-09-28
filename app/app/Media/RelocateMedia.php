@@ -18,6 +18,7 @@ use App\Models\WebhookDelivery;
 use App\Pipelines\Steps\Generation\IllustrateDraft;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\SafeMarkdown;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -74,12 +75,7 @@ class RelocateMedia
      */
     public function stale(?string $unitId = null): array
     {
-        $query = fn () => Asset::query()
-            ->whereIn('role', [AssetRole::Hero, AssetRole::Inline])
-            ->whereNull('superseded_at')
-            ->where('disk', '!=', MediaDisk::name());
-
-        $keys = $query()
+        $keys = $this->staleQuery()
             ->when($unitId, fn ($q, $id) => $q->where('content_item_id', $id))
             ->get(['disk', 'path'])
             ->map(static fn (Asset $asset): string => $asset->disk."\0".$asset->path)
@@ -89,7 +85,7 @@ class RelocateMedia
             return [];
         }
 
-        $rows = $query()
+        $rows = $this->staleQuery()
             ->whereIn('path', $keys->map(static fn (string $key): string => explode("\0", $key, 2)[1])->all())
             ->with('contentItem')
             ->orderBy('id')
@@ -159,8 +155,14 @@ class RelocateMedia
      * either as it was or finished — never with rows naming a file that is not
      * there, which is what {@see MediaDisk} exists to prevent.
      *
+     * A published unit whose last stale file this was is queued for redelivery
+     * in the same transaction. Queued afterwards, a run that died in between
+     * would leave the unit fixed here and broken on its channels, and no later
+     * run could tell: {@see stale()} no longer finds it. Waiting for the last
+     * file means one update per article rather than one per picture.
+     *
      * @param  Collection<int, Asset>  $rows
-     * @return array{redrawn: bool, cost: int, units: list<string>}
+     * @return array{redrawn: bool, cost: int, queued: int}
      */
     public function relocate(Collection $rows): array
     {
@@ -197,15 +199,43 @@ class RelocateMedia
             $rows->all(),
         )));
 
-        DB::transaction(function () use ($rows, $original, $moved, $url, $units): void {
+        $queued = DB::transaction(function () use ($rows, $original, $moved, $url, $units): int {
             Asset::query()->whereKey($rows->pluck('id')->all())->update($moved);
 
+            $queued = 0;
+
             foreach ($units as $unitId) {
-                $this->rewriteBody($unitId, $original->path, $url);
+                $unit = $this->rewriteBody($unitId, $original->path, $url);
+
+                if ($unit !== null && ! $this->hasStale($unitId)) {
+                    $queued += $this->redeliver($unit);
+                }
             }
+
+            return $queued;
         });
 
-        return ['redrawn' => $redrawn, 'cost' => $cost, 'units' => $units];
+        return ['redrawn' => $redrawn, 'cost' => $cost, 'queued' => $queued];
+    }
+
+    /** Whether the unit still shows a picture that is not on the media disk. */
+    private function hasStale(string $unitId): bool
+    {
+        return $this->staleQuery()->where('content_item_id', $unitId)->exists();
+    }
+
+    /**
+     * The pictures a unit ships that are not on the media disk. Variants are
+     * candidates nobody chose and superseded rows are history; neither is shown.
+     *
+     * @return Builder<Asset>
+     */
+    private function staleQuery(): Builder
+    {
+        return Asset::query()
+            ->whereIn('role', [AssetRole::Hero, AssetRole::Inline])
+            ->whereNull('superseded_at')
+            ->where('disk', '!=', MediaDisk::name());
     }
 
     /**
@@ -214,11 +244,13 @@ class RelocateMedia
      *
      * Only channels that already hold the article: a relocation is a correction
      * to something that is live, not an occasion to publish it somewhere new.
-     * The publisher sees a delivered revision and sends `content.updated`.
+     * The publisher sees a delivered revision and sends `content.updated`; the
+     * delivery row is written in the caller's transaction and its job is
+     * dispatched after commit.
      *
      * @return int how many deliveries were queued
      */
-    public function redeliver(ContentItem $unit): int
+    private function redeliver(ContentItem $unit): int
     {
         if ($unit->state !== ContentItemState::Published) {
             return 0;
@@ -253,13 +285,15 @@ class RelocateMedia
      * from `APP_URL` at the time it was written, and a deployment that changed
      * its address since would leave a URL this could not reconstruct; the path
      * is random and does not change.
+     *
+     * @return ContentItem|null the unit as saved, still locked
      */
-    private function rewriteBody(string $unitId, string $path, string $url): void
+    private function rewriteBody(string $unitId, string $path, string $url): ?ContentItem
     {
         $unit = ContentItem::query()->whereKey($unitId)->lockForUpdate()->first();
 
         if ($unit === null) {
-            return;
+            return null;
         }
 
         $before = (string) $unit->body_markdown;
@@ -275,7 +309,7 @@ class RelocateMedia
             // by `updated_at`, hands the new image URL to a static site.
             $unit->touch();
 
-            return;
+            return $unit;
         }
 
         $sealed = $this->sealedHash($unit);
@@ -294,6 +328,8 @@ class RelocateMedia
                 ->limit(1)
                 ->update(['body_hash' => $this->facts->bodyHash($unit)]);
         }
+
+        return $unit;
     }
 
     /** The hash the latest business-fact check sealed, as {@see ArticleBusinessFacts::refusal()} reads it. */
