@@ -1,7 +1,7 @@
 import { Link } from '@inertiajs/react';
 import { ArrowRight, Play, RotateCcw, Volume2 } from 'lucide-react';
 import type { MouseEvent } from 'react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import poster from '../../../media/avyo-film-poster.jpg';
 import film from '../../../media/avyo-film.mp4';
 
@@ -12,6 +12,9 @@ import film from '../../../media/avyo-film.mp4';
  */
 
 const FILM_ID = 'avyo-film';
+
+/** Fired on the video when the hero link's play() is refused. */
+const REFUSED = 'avyo-film:refused';
 
 /** The words the film puts on screen, in order, for screen readers. */
 const transcript = [
@@ -47,12 +50,23 @@ export function playFilm(event: MouseEvent<HTMLAnchorElement>) {
         behavior: reduce ? 'auto' : 'smooth',
         block: 'center',
     });
-    void video.play().catch(() => video.setAttribute('controls', ''));
+    // FilmSection owns the overlay, so a refusal goes back through its state
+    // rather than touching the element here.
+    void video.play().catch(() => video.dispatchEvent(new Event(REFUSED)));
 }
 
 export function FilmSection() {
     const video = useRef<HTMLVideoElement>(null);
     const [state, setState] = useState<'idle' | 'playing' | 'ended'>('idle');
+
+    useEffect(() => {
+        const element = video.current;
+        const refused = () => setState('playing');
+
+        element?.addEventListener(REFUSED, refused);
+
+        return () => element?.removeEventListener(REFUSED, refused);
+    }, []);
 
     const play = () => {
         const element = video.current;
