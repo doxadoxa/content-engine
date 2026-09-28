@@ -1,0 +1,24 @@
+{
+  "name": "avyo-intro-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "music": "python3 music/compose.py public/music.wav",
+    "studio": "remotion studio src/index.ts",
+    "render": "npm run music && remotion render src/index.ts AvyoIntro out/avyo-intro.mp4 --codec h264 --crf 18",
+    "render:webm": "npm run music && remotion render src/index.ts AvyoIntro out/avyo-intro.webm --codec vp9 --crf 32",
+    "poster": "remotion still src/index.ts AvyoIntro out/avyo-intro-poster.jpg --frame 480 --image-format jpeg --jpeg-quality 85",
+    "publish": "cp out/avyo-intro.mp4 ../app/resources/media/avyo-film.mp4 && cp out/avyo-intro-poster.jpg ../app/resources/media/avyo-film-poster.jpg"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.373",
+    "lucide-react": "^0.475.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "remotion": "^4.0.373"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "typescript": "^5.7.3"
+  }
+}
