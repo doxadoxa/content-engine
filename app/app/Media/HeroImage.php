@@ -88,19 +88,7 @@ class HeroImage
             }
         }
 
-        $image = $this->images->generate(
-            prompt: implode("\n\n", [
-                "A photograph illustrating this part of an article about {$topic}: {$heading}",
-                'Show the subject being done or the materials involved. Natural light, real '
-                .'setting, no people looking at the camera.',
-                'No text, no logos, no words in the image.',
-            ]),
-            references: $references,
-            options: [
-                'width' => (int) config('media.inline.width', 1200),
-                'height' => (int) config('media.inline.height', 800),
-            ],
-        );
+        $image = $this->drawInline($heading, $topic, $references);
 
         $asset = Asset::query()->create([
             'content_item_id' => $unit->getKey(),
@@ -151,20 +139,7 @@ class HeroImage
             return ['asset' => $borrowed, 'cost' => 0, 'provider' => null, 'model' => null];
         }
 
-        $image = $this->images->generate(
-            // Built from the title and summary rather than from the body: an
-            // illustration should be about the subject, and the body is
-            // thousands of words of it.
-            prompt: implode("\n\n", array_filter([
-                "An editorial image for an article titled: {$title}",
-                $summary,
-                'No text, no logos, no words in the image.',
-            ])),
-            options: [
-                'width' => (int) config('media.hero.width', 1200),
-                'height' => (int) config('media.hero.height', 630),
-            ],
-        );
+        $image = $this->drawHero($title, $summary);
 
         $asset = Asset::query()->create([
             'content_item_id' => $unit->getKey(),
@@ -183,6 +158,63 @@ class HeroImage
             'provider' => $image->provider,
             'model' => $image->model,
         ];
+    }
+
+    /**
+     * A new file for a picture whose file is gone, asked for exactly as the
+     * original was.
+     *
+     * Only the drawing: the caller decides which rows point at the result.
+     * `media:redraw` uses this for pictures written to a disk that did not
+     * outlive its container, where the row is right and the file is missing.
+     * A section picture's alt is its heading, which is what its prompt was
+     * built from; a hero's comes from the unit's title and summary, as before.
+     *
+     * @param  list<string>  $references  URLs of images already made for this unit
+     */
+    public function redraw(Asset $asset, ContentItem $unit, array $references = []): GeneratedImage
+    {
+        if ($asset->role === AssetRole::Inline) {
+            return $this->drawInline($asset->alt, (string) ($unit->target_query ?? $unit->title), $references);
+        }
+
+        return $this->drawHero($unit->title, $unit->summary);
+    }
+
+    private function drawHero(string $title, ?string $summary): GeneratedImage
+    {
+        return $this->images->generate(
+            // Built from the title and summary rather than from the body: an
+            // illustration should be about the subject, and the body is
+            // thousands of words of it.
+            prompt: implode("\n\n", array_filter([
+                "An editorial image for an article titled: {$title}",
+                $summary,
+                'No text, no logos, no words in the image.',
+            ])),
+            options: [
+                'width' => (int) config('media.hero.width', 1200),
+                'height' => (int) config('media.hero.height', 630),
+            ],
+        );
+    }
+
+    /** @param  list<string>  $references */
+    private function drawInline(string $heading, string $topic, array $references): GeneratedImage
+    {
+        return $this->images->generate(
+            prompt: implode("\n\n", [
+                "A photograph illustrating this part of an article about {$topic}: {$heading}",
+                'Show the subject being done or the materials involved. Natural light, real '
+                .'setting, no people looking at the camera.',
+                'No text, no logos, no words in the image.',
+            ]),
+            references: $references,
+            options: [
+                'width' => (int) config('media.inline.width', 1200),
+                'height' => (int) config('media.inline.height', 800),
+            ],
+        );
     }
 
     /**
