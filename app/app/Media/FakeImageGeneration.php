@@ -6,7 +6,6 @@ namespace App\Media;
 
 use App\Media\Contracts\ImageGenerationProvider;
 use App\Pipelines\Exceptions\TerminalStepFailure;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
@@ -62,10 +61,12 @@ class FakeImageGeneration implements ImageGenerationProvider
 
         $path = 'generated/'.Str::random(24).'.webp';
 
-        Storage::disk('public')->put($path, 'not-really-a-webp');
+        // Wherever the real provider would have written it, so a test that
+        // moves the media disk sees the fake follow.
+        MediaDisk::put($path, 'not-really-a-webp');
 
         return new GeneratedImage(
-            disk: 'public',
+            disk: MediaDisk::name(),
             path: $path,
             width: (int) ($options['width'] ?? 1200),
             height: (int) ($options['height'] ?? 630),
