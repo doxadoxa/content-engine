@@ -88,6 +88,9 @@ final class FirstRun
         'planning' => 'calendar',
         'generation' => 'articles',
         'visibility' => 'ai',
+        // One per sampled cell. A check on an existing sampling set runs only
+        // these, with no `visibility` run in front of them.
+        'ai_sample' => 'ai',
     ];
 
     /** @var list<ContentItemState> */

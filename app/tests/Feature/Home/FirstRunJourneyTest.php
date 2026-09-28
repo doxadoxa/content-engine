@@ -267,6 +267,36 @@ final class FirstRunJourneyTest extends TestCase
     }
 
     #[Test]
+    public function a_check_on_an_existing_sampling_set_is_the_ai_step_at_work(): void
+    {
+        [$operator, $project] = $this->operatorIn(OnboardingStatus::Active, [
+            'site_analysis' => ['name' => 'Bright Windows'],
+        ]);
+
+        $this->during($project, function (): void {
+            // A sampling set that already exists is checked by `ai_sample`
+            // pipelines alone, one per cell, with no `visibility` run in front.
+            PipelineRun::factory()->create([
+                'pipeline' => 'generation',
+                'created_at' => now()->subMinutes(40),
+                'finished_at' => now()->subMinutes(30),
+            ]);
+            ContentItem::factory()->draft()->create();
+            PipelineRun::factory()->running()->create(['pipeline' => 'ai_sample']);
+        });
+
+        $this->actingAs($operator)
+            ->get('/home')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('journey.steps.4.key', 'ai')
+                ->where('journey.steps.4.state', 'active')
+                ->where('work.active.0.pipeline', 'ai_sample')
+                ->etc()
+            );
+    }
+
+    #[Test]
     public function a_pause_longer_than_the_scheduler_needs_ends_the_journey(): void
     {
         [$operator, $project] = $this->operatorIn(OnboardingStatus::Active, [

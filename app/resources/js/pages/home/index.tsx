@@ -135,12 +135,16 @@ export default function Home({
 
     /*
      * Whether an AI check is running, from either source: the journey during
-     * the first run, the run panel for every weekly check after it.
+     * the first run, the run panel for every check after it. A scheduled or
+     * manual check on an existing sampling set runs as `ai_sample` pipelines
+     * with no `visibility` run at all, so both count — otherwise the cards
+     * said "Not checked yet" while the assistants were being asked.
      */
     const checking = Boolean(
         journey?.steps.some(
             (step) => step.key === 'ai' && step.state === 'active',
-        ) || work?.active.some((run) => run.pipeline === 'visibility'),
+        ) ||
+        work?.active.some((run) => AI_CHECK_PIPELINES.includes(run.pipeline)),
     );
 
     /*
@@ -543,13 +547,16 @@ function PreviewPanel({ preview }: { preview: Preview }) {
     );
 }
 
+/** The pipelines that ask the AI assistants: the check, and each sampled cell. */
+const AI_CHECK_PIPELINES = ['visibility', 'ai_sample'];
+
 /** The pipelines the journey already describes, by the step they drive. */
 const JOURNEY_PIPELINES = [
     'site_audit',
     'research',
     'planning',
     'generation',
-    'visibility',
+    ...AI_CHECK_PIPELINES,
 ];
 
 /**
@@ -910,6 +917,7 @@ function WorkPanel({ work }: { work?: Work }) {
         refresh: 'Updating your article',
         site_audit: 'Getting to know your website',
         visibility: 'Checking sampled AI answers',
+        ai_sample: 'Asking the AI assistants about you',
     };
 
     return (
