@@ -267,6 +267,55 @@ final readonly class Entitlement
     }
 
     /**
+     * The used-up quotas worth telling the manager about.
+     *
+     * A subset of {@see exhausted()}, which stays as it is for anything that
+     * needs the plain fact. Two kinds of used-up are left out because neither
+     * is a shortfall. Routine metrics ({@see Metric::isRoutine()}) are done
+     * once a period by the engine itself, so reaching the limit means the work
+     * happened. And during a trial that converts to a plan somebody already
+     * chose, the allowance is the trial's sample-sized one on purpose: every
+     * one of its counters fills in the first run, and "see plans" to somebody
+     * who has just picked one is the wrong button under the wrong sentence.
+     *
+     * @return list<string>
+     */
+    public function shortfalls(): array
+    {
+        if ($this->convertsAfterTrial()) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $this->exhausted(),
+            static fn (string $metric): bool => ! Metric::from($metric)->isRoutine(),
+        ));
+    }
+
+    /**
+     * Is this a trial of a plan the customer already chose, set to convert?
+     *
+     * A public trial is a paid plan with free days on the front, so there is
+     * nothing left to choose and the banner should not ask. The legacy bare
+     * trial from {@see Subscriptions::startTrial()} names the plan `trial`,
+     * which means nobody picked one; and a trial cancelled before it ends
+     * carries `canceled_at` while still `trialing`, and will not convert.
+     *
+     * And only a trial Stripe holds converts at all. An administrator can put
+     * a locally assigned plan back into a trial, and that row has no card and
+     * no subscription behind it: promising it "your plan starts on the 3rd"
+     * would be promising a charge that nothing is going to make.
+     */
+    public function convertsAfterTrial(): bool
+    {
+        return $this->status === BillingStatus::Trialing
+            && $this->plan !== null
+            && $this->plan->key !== 'trial'
+            && $this->subscription?->canceled_at === null
+            && $this->subscription->stripe_id !== null;
+    }
+
+    /**
      * What the banner and the paywall render.
      *
      * The cost ceiling is not in here and must not be. It is the one limit a
@@ -287,6 +336,8 @@ final readonly class Entitlement
                 'refusal' => Refusal::noSubscription()->toArray(),
                 'usage' => [],
                 'exhausted' => [],
+                'shortfalls' => [],
+                'converts_after_trial' => false,
                 'trial_ends_at' => null,
                 'period_ends_at' => null,
             ];
@@ -329,6 +380,11 @@ final readonly class Entitlement
             // invisible everywhere except a usage bar on a screen nobody had a
             // reason to open.
             'exhausted' => $this->exhausted(),
+            // What the banner and the billing page actually warn about. Kept
+            // beside `exhausted` rather than replacing it: the plain list is
+            // still the true one, and this is the part of it worth a sentence.
+            'shortfalls' => $this->shortfalls(),
+            'converts_after_trial' => $this->convertsAfterTrial(),
             'trial_ends_at' => $this->trialEndsAt?->toIso8601String(),
             'period_ends_at' => $this->periodEndsAt?->toIso8601String(),
         ];
