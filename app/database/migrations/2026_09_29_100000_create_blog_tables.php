@@ -74,6 +74,20 @@ return new class extends Migration
             $table->unique(['locale', 'slug']);
         });
 
+        // A deletion for a unit the blog has never stored. There is no post
+        // to leave a tombstone on, yet the publish it overtook may still be
+        // retrying — and without the deletion's `sent_at` to compare against,
+        // that retry would create the post the engine had already withdrawn.
+        Schema::create('blog_deletions', function (Blueprint $table): void {
+            $table->id();
+            $table->string('engine_id');
+            $table->string('locale', 12);
+            $table->timestamp('source_sent_at')->nullable();
+            $table->timestamps();
+
+            $table->unique(['engine_id', 'locale']);
+        });
+
         // Idempotency (§2 of the contract). A repeat delivery has nowhere to
         // write a second row, which is what makes "at least once" safe.
         Schema::create('blog_deliveries', function (Blueprint $table): void {
@@ -93,6 +107,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('blog_deliveries');
+        Schema::dropIfExists('blog_deletions');
         Schema::dropIfExists('blog_slug_redirects');
         Schema::dropIfExists('blog_posts');
     }

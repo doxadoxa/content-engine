@@ -118,7 +118,7 @@ final class BlogWebhookController extends Controller
             'status' => $stored->stale ? 'stale' : 'stored',
             // Absolute and on APP_URL: the engine only keeps a public_url on
             // the project's own website origin.
-            'public_url' => $stored->post->trashed() ? null : $stored->post->publicUrl(),
+            'public_url' => $stored->post === null || $stored->post->trashed() ? null : $stored->post->publicUrl(),
         ], static fn (?string $value): bool => $value !== null));
     }
 

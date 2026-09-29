@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Blog;
 
+use App\Models\BlogDeletion;
 use App\Models\BlogPost;
 use App\Models\BlogSlugRedirect;
 use App\Support\Content\SafeMarkdown;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Throwable;
@@ -73,8 +75,8 @@ final class BlogInbox
         $slug = $this->slug($content['slug'] ?? null, $content['title'], $content['id']);
         $sent = $this->date($sentAt);
 
-        // Locked, so two deliveries for the same unit settle one after the
-        // other and the second sees the first's published_at and sent_at.
+        $this->serialise($content['id'], $content['locale']);
+
         // Tombstones included: a deleted post is still the row to compare to.
         $post = BlogPost::withTrashed()
             ->where('engine_id', $content['id'])
@@ -84,6 +86,21 @@ final class BlogInbox
 
         if ($post->exists && $this->isOlder($sent, $post)) {
             return new StoredPost($post, stale: true);
+        }
+
+        if (! $post->exists) {
+            $deletion = BlogDeletion::query()
+                ->where('engine_id', $content['id'])
+                ->where('locale', $content['locale'])
+                ->first();
+
+            if ($deletion !== null && $this->precedes($sent, $deletion->source_sent_at)) {
+                return new StoredPost(null, stale: true);
+            }
+
+            // A publish newer than the deletion is the unit coming back; the
+            // post it creates carries the ordering from here on.
+            $deletion?->delete();
         }
 
         $this->claimSlug($content['locale'], $slug, $content['id']);
@@ -148,8 +165,8 @@ final class BlogInbox
      *
      * A deletion stamped before the version already here is a late retry
      * from before a re-publish, and removes nothing. A deletion for a unit
-     * the blog has never stored leaves no tombstone behind — there is no row
-     * to put one on — so a publish retried after it would still land.
+     * the blog has never stored is kept as a {@see BlogDeletion}, so the
+     * publish it overtook cannot create the post when its retry lands.
      *
      * Returns whether the deletion was acted on.
      *
@@ -166,6 +183,8 @@ final class BlogInbox
 
         $sent = $this->date($sentAt);
 
+        $this->serialise($id, $locale);
+
         $post = BlogPost::withTrashed()
             ->where('engine_id', $id)
             ->where('locale', $locale)
@@ -173,6 +192,15 @@ final class BlogInbox
             ->first();
 
         if ($post === null) {
+            $deletion = BlogDeletion::query()->firstOrNew(['engine_id' => $id, 'locale' => $locale]);
+
+            // Only ever forward: a late retry of an older deletion must not
+            // pull the mark back and let a publish between the two through.
+            if (! $deletion->exists || ! $this->precedes($sent, $deletion->source_sent_at)) {
+                $deletion->source_sent_at = $sent ?? $deletion->source_sent_at;
+                $deletion->save();
+            }
+
             return true;
         }
 
@@ -202,7 +230,27 @@ final class BlogInbox
      */
     private function isOlder(?Carbon $sent, BlogPost $post): bool
     {
-        return $sent !== null && $post->source_sent_at !== null && $sent->lt($post->source_sent_at);
+        return $this->precedes($sent, $post->source_sent_at);
+    }
+
+    /** A stamp missing on either side cannot be ordered, and is not older. */
+    private function precedes(?Carbon $sent, ?Carbon $than): bool
+    {
+        return $sent !== null && $than !== null && $sent->lt($than);
+    }
+
+    /**
+     * One delivery per unit and language at a time, until the transaction
+     * that claimed it commits.
+     *
+     * `lockForUpdate` covers a post that exists; it cannot lock one that does
+     * not yet. A deletion and a publish of a unit the blog has never seen
+     * would otherwise each find nothing, each write its own row, and leave a
+     * live post the engine withdrew.
+     */
+    private function serialise(string $engineId, string $locale): void
+    {
+        DB::select('select pg_advisory_xact_lock(hashtext(?))', ["blog:{$engineId}:{$locale}"]);
     }
 
     /**

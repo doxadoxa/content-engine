@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Blog;
 
 use App\Enums\WebhookEvent;
+use App\Models\BlogDeletion;
 use App\Models\BlogDelivery;
 use App\Models\BlogPost;
 use App\Models\BlogSlugRedirect;
@@ -451,6 +452,50 @@ final class BlogWebhookTest extends TestCase
         $this->assertSame($original->getKey(), $post->getKey());
         $this->assertNull($post->deleted_at);
         $this->get('/blog/why-content-engines-forget-their-readers')->assertOk();
+    }
+
+    #[Test]
+    public function a_deletion_that_overtakes_the_publish_keeps_the_late_publish_out(): void
+    {
+        // The publish was queued first but failed; the deletion reached the
+        // blog before the publish's retry ever did.
+        $this->deliver($this->at($this->payload(WebhookEvent::Deleted), '12:00'))
+            ->assertOk()
+            ->assertJsonPath('status', 'deleted');
+
+        $this->deliver($this->at($this->published(), '11:00'))
+            ->assertOk()
+            ->assertExactJson(['status' => 'stale']);
+
+        $this->assertSame(0, BlogPost::withTrashed()->count());
+        $this->get('/blog/why-content-engines-forget-their-readers')->assertNotFound();
+    }
+
+    #[Test]
+    public function a_publish_newer_than_a_deletion_of_a_post_never_stored_publishes(): void
+    {
+        $this->deliver($this->at($this->payload(WebhookEvent::Deleted), '12:00'))->assertOk();
+
+        $this->deliver($this->at($this->published(), '13:00'))
+            ->assertOk()
+            ->assertJsonPath('status', 'stored');
+
+        $this->assertSame(1, BlogPost::query()->count());
+        $this->assertSame(0, BlogDeletion::query()->count());
+        $this->get('/blog/why-content-engines-forget-their-readers')->assertOk();
+    }
+
+    #[Test]
+    public function a_late_retry_of_an_older_deletion_does_not_let_an_earlier_publish_through(): void
+    {
+        $this->deliver($this->at($this->payload(WebhookEvent::Deleted), '12:00'))->assertOk();
+        $this->deliver($this->at($this->payload(WebhookEvent::Deleted), '10:00'))->assertOk();
+
+        $this->deliver($this->at($this->published(), '11:00'))
+            ->assertOk()
+            ->assertExactJson(['status' => 'stale']);
+
+        $this->assertSame(0, BlogPost::withTrashed()->count());
     }
 
     #[Test]
