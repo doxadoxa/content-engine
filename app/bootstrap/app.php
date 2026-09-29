@@ -47,11 +47,12 @@ return Application::configure(basePath: dirname(__DIR__))
             explode(',', (string) Env::get('TRUSTED_PROXIES', '127.0.0.1,::1')),
         ))));
 
-        // A purchase source has no session and no CSRF token to present, and
+        // A webhook sender has no session and no CSRF token to present, and
         // the POST is authenticated by the HMAC over its raw body instead — see
-        // App\Http\Controllers\Api\PurchaseWebhookController. Narrow on purpose:
-        // the purchase webhooks and nothing else.
-        $middleware->validateCsrfTokens(except: ['api/purchases/*']);
+        // App\Http\Controllers\Api\PurchaseWebhookController and
+        // App\Http\Middleware\VerifyBlogSignature. Narrow on purpose: the
+        // purchase webhooks, the blog's webhook, and nothing else.
+        $middleware->validateCsrfTokens(except: ['api/purchases/*', 'blog/webhook']);
 
         // Read by the inline script in app.blade.php before React mounts, so
         // the page does not flash light before switching to dark.

@@ -16,6 +16,7 @@ import {
 } from '@/components/marketing/product-preview';
 import { openPreferences } from '@/lib/consent';
 import { login } from '@/routes';
+import { index as blog } from '@/routes/blog';
 import { cookies, privacy, terms } from '@/routes/legal';
 
 type PricingPlan = {
@@ -130,6 +131,11 @@ export default function Marketing({ pricing }: Props) {
                         </a>
                         <a href="#faq" className="hover:underline">
                             Questions
+                        </a>
+                        {/* A plain anchor, not <Link>: the blog is server-rendered
+                            Blade (for crawlers), not an Inertia page. */}
+                        <a href={blog.url()} className="hover:underline">
+                            Blog
                         </a>
                     </nav>
                     <Link
@@ -358,6 +364,7 @@ export default function Marketing({ pricing }: Props) {
                 <div className="flex flex-wrap items-center justify-between gap-6">
                     <BrandMark />
                     <div className="flex flex-wrap gap-5 text-xs text-[#625d57]">
+                        <a href={blog.url()}>Blog</a>
                         <Link href={privacy()}>Privacy</Link>
                         <Link href={terms()}>Terms</Link>
                         <Link href={cookies()}>Cookies</Link>
