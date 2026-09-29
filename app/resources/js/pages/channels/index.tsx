@@ -229,6 +229,14 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                                             ? 'Enabled'
                                                             : 'Disabled'}
                                                     </Badge>
+                                                    {/* "Enabled" is the connection, not publishing: without
+                                                        this line a channel waiting on the checkbox looked done. */}
+                                                    <span className="text-xs text-muted-foreground">
+                                                        {channel.autopublish &&
+                                                        channel.can_schedule_articles
+                                                            ? 'Automatic publishing enabled'
+                                                            : 'Automatic publishing not enabled'}
+                                                    </span>
                                                     {isOwner &&
                                                         [
                                                             'webhook',
