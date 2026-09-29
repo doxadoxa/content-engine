@@ -120,6 +120,13 @@ class ChannelController extends Controller
                 && ! PageReceiverClient::same(array_intersect_key($changes['config'], array_flip(['endpoint', 'page_receiver_base', 'username'])), array_intersect_key($channel->config, array_flip(['endpoint', 'page_receiver_base', 'username']))))
             || array_key_exists('secret', $changes);
 
+        // The owner's answer, kept apart from the flag: a connection change
+        // below resets `autopublish` without anyone having said no, and a
+        // passing test may switch it back on only if nobody has.
+        if (array_key_exists('autopublish', $changes) && (bool) $changes['autopublish'] !== $channel->autopublish) {
+            $changes['autopublish_declined_at'] = $changes['autopublish'] ? null : now();
+        }
+
         if ($connectionChanged) {
             $changes['verified_at'] = null;
             $changes['autopublish'] = false;
@@ -130,7 +137,12 @@ class ChannelController extends Controller
             $changes['config']['article_publishing_verified'] = ($channel->config['article_publishing_verified'] ?? false) === true;
         }
 
+        $wasAutomatic = $channel->autopublish;
         $channel->update($changes);
+
+        if ($channel->autopublish !== $wasAutomatic) {
+            app(ArticleSchedules::class)->followChannelAutopublish($channel);
+        }
 
         Inertia::flash('toast', ['type' => 'success', 'message' => "{$channel->name} updated."]);
 
@@ -175,7 +187,8 @@ class ChannelController extends Controller
 
         abort_if($enable && ! app(ArticleSchedules::class)->compatible($channel), 409, 'Test this channel successfully before enabling automatic publishing.');
 
-        $channel->forceFill(['autopublish' => $enable])->save();
+        $channel->forceFill(['autopublish' => $enable, 'autopublish_declined_at' => $enable ? null : now()])->save();
+        app(ArticleSchedules::class)->followChannelAutopublish($channel);
 
         Inertia::flash('toast', [
             'type' => 'success',

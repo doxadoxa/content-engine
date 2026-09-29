@@ -16,6 +16,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\Pages\PageReceiverClient;
 use App\Publishing\PublishToChannels;
 use App\Support\Engine\ArticleWorkflow;
 use Carbon\CarbonImmutable;
@@ -28,6 +29,9 @@ use Illuminate\Validation\ValidationException;
 
 final class ArticleSchedules
 {
+    /** Why an automatic schedule on a channel that may not publish by itself is waiting. */
+    public const string AWAITING_AUTOPUBLISH = 'Enable automatic publishing for this website or choose review first.';
+
     public function __construct(private readonly ChannelPublisherRegistry $publishers, private readonly Entitlements $entitlements) {}
 
     /** Only new work created after a recorded project opt-in can inherit automation. */
@@ -88,7 +92,7 @@ final class ArticleSchedules
                 'local_time' => $input['local_time'], 'timezone' => $item->project->timezone,
                 'mode' => $input['mode'], 'status' => $input['mode'] === 'automatic' && ! $channel->autopublish ? 'blocked' : 'active',
                 'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                'blocked_reason' => $input['mode'] === 'automatic' && ! $channel->autopublish ? 'Enable automatic publishing for this website or choose review first.' : null, 'delivery_id' => null,
+                'blocked_reason' => $input['mode'] === 'automatic' && ! $channel->autopublish ? self::AWAITING_AUTOPUBLISH : null, 'delivery_id' => null,
             ])->save();
 
             return $schedule;
@@ -115,6 +119,37 @@ final class ArticleSchedules
 
             return $schedule;
         });
+    }
+
+    /**
+     * Bring a channel's waiting automatic schedules in line with its switch.
+     *
+     * A schedule saved while the switch was off is stored as blocked, with
+     * the reason written on it, and nothing looked at it again when the
+     * switch went on: the article kept saying "enable automatic publishing"
+     * next to a channel where it was enabled, until its date arrived and
+     * `dispatch()` finally re-checked. The other direction is the same lie
+     * the other way round — "Scheduled" for an article that will block.
+     *
+     * Only schedules nothing has been sent for, and only the block this
+     * switch is responsible for: any other reason is still true.
+     */
+    public function followChannelAutopublish(Channel $channel): void
+    {
+        $waiting = ArticleSchedule::query()->where('channel_id', $channel->getKey())
+            ->where('mode', 'automatic')->whereNull('delivery_id');
+
+        $bump = ['version' => DB::raw('version + 1'), 'updated_at' => now()];
+
+        if ($channel->autopublish) {
+            $waiting->where('status', 'blocked')->where('blocked_reason', self::AWAITING_AUTOPUBLISH)
+                ->update(['status' => 'active', 'blocked_reason' => null, ...$bump]);
+
+            return;
+        }
+
+        $waiting->where('status', 'active')
+            ->update(['status' => 'blocked', 'blocked_reason' => self::AWAITING_AUTOPUBLISH, ...$bump]);
     }
 
     /** Attach a newly verified default only to already-authorized inherited schedules. */
@@ -211,6 +246,51 @@ final class ArticleSchedules
             && ($channel->type !== ChannelType::WordPress || ($channel->config['article_publishing_verified'] ?? false) === true);
     }
 
+    /**
+     * Automatic publishing for a channel whose test has just made it usable
+     * for articles, when the project already chose automatic publishing and
+     * this is now the one place its articles can go.
+     *
+     * The channel form cannot offer the switch before a test has passed, and
+     * nothing offered it after — so an owner who had already said "publish
+     * automatically" was told publishing needed setting up, by a checkbox
+     * they had to find. Not for a second eligible channel (which one gets
+     * the articles is a real choice), not for a review-first project, only
+     * on the test that first makes the channel usable, and never for a
+     * channel whose owner has switched it off — not even after a connection
+     * change has reset it.
+     *
+     * `$tested` is the channel as the ping was sent. The row is read again,
+     * locked, and must still hold that same connection: an owner who edited
+     * or disabled it while the test was in flight has an untested channel,
+     * and a pass for the old one says nothing about it.
+     */
+    public function adoptProjectAutopublish(Channel $tested): void
+    {
+        $channel = Channel::query()->whereKey($tested->getKey())->lockForUpdate()->first();
+
+        if ($channel === null || ! $this->sameConnection($tested, $channel)) {
+            return;
+        }
+
+        $channel->loadMissing('project');
+        $project = $channel->project;
+
+        if ($channel->autopublish || $channel->autopublish_declined_at !== null || ! $project->autopublish
+            || ! $this->publishers->canAutopublish($channel->type) || ! $this->compatible($channel)) {
+            return;
+        }
+
+        $eligible = $project->channels()->get()->filter(fn (Channel $candidate): bool => $this->compatible($candidate));
+
+        if ($eligible->count() !== 1) {
+            return;
+        }
+
+        $channel->forceFill(['autopublish' => true])->save();
+        $this->followChannelAutopublish($channel);
+    }
+
     /** @return Collection<int, Channel> */
     public function channels(Project $project): Collection
     {
@@ -273,6 +353,20 @@ final class ArticleSchedules
         $this->require(count($matches) === 1, 'This local time is skipped or occurs twice when the clocks change. Choose another time.');
 
         return $matches[0];
+    }
+
+    /** Where the ping went and with what: type, enablement, secret and the destination keys. */
+    private function sameConnection(Channel $tested, Channel $current): bool
+    {
+        $destination = static fn (Channel $channel): array => array_intersect_key(
+            $channel->config,
+            array_flip(['endpoint', 'page_receiver_base', 'username']),
+        );
+
+        return $tested->type === $current->type
+            && $current->is_enabled
+            && $tested->getRawOriginal('secret') === $current->getRawOriginal('secret')
+            && PageReceiverClient::same($destination($tested), $destination($current));
     }
 
     /**

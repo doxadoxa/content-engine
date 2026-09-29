@@ -30,6 +30,7 @@ use Illuminate\Support\Carbon;
  * @property bool $is_enabled
  * @property bool $autopublish
  * @property Carbon|null $verified_at
+ * @property Carbon|null $autopublish_declined_at
  */
 class Channel extends Model
 {
@@ -48,6 +49,7 @@ class Channel extends Model
         'is_enabled',
         'autopublish',
         'verified_at',
+        'autopublish_declined_at',
         'token_hash',
     ];
 
@@ -105,6 +107,7 @@ class Channel extends Model
             'is_enabled' => 'boolean',
             'autopublish' => 'boolean',
             'verified_at' => 'datetime',
+            'autopublish_declined_at' => 'datetime',
         ];
     }
 }

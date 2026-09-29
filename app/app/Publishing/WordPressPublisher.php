@@ -88,15 +88,10 @@ class WordPressPublisher extends WebhookPublisher
         return true;
     }
 
-    /** @param array<string,mixed>|null $body */
-    protected function succeed(WebhookDelivery $delivery, int $attempt, int $latency, int $status, ?array $body): WebhookDelivery
+    /** A ping only succeeds here once the receiver has said it can take articles (see `acceptsResponse`). */
+    protected function confirmConnection(WebhookDelivery $delivery): void
     {
-        $result = parent::succeed($delivery, $attempt, $latency, $status, $body);
-        if (($delivery->payload_snapshot['event'] ?? '') === WebhookEvent::Ping->value) {
-            $channel = $delivery->channel;
-            $channel->forceFill(['config' => [...$channel->config, 'article_publishing_verified' => true]])->save();
-        }
-
-        return $result;
+        $channel = $delivery->channel;
+        $channel->forceFill(['config' => [...$channel->config, 'article_publishing_verified' => true]])->save();
     }
 }
