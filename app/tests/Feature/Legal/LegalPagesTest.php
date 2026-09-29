@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Legal;
 
+use App\Affiliates\Referrals;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
@@ -249,6 +250,45 @@ final class LegalPagesTest extends TestCase
             'The theme cookie is no longer called `appearance`, so the cookie policy names one that is never set.',
         );
         $this->assertContains('appearance', $published);
+    }
+
+    /*
+     * The affiliate cookies are written by Anderro's script, not by us, so the
+     * names are pinned in two places that read them — the browser module that
+     * deletes them when consent is withdrawn and the server that reads them at
+     * sign-up — and both must be what the policy publishes, under marketing.
+     * A rename on one side would leave a cookie that is set and never cleared,
+     * or a policy naming one nobody writes.
+     */
+    #[Test]
+    public function the_affiliate_cookies_are_published_as_marketing_under_the_names_the_code_uses(): void
+    {
+        $marketing = array_column(
+            array_filter(
+                (array) config('legal.cookies'),
+                static fn (array $cookie): bool => $cookie['category'] === 'marketing',
+            ),
+            'name'
+        );
+
+        $source = (string) file_get_contents(resource_path('js/lib/affiliates.ts'));
+
+        foreach ([
+            'VISITOR_COOKIE' => Referrals::VISITOR_COOKIE,
+            'REFERRAL_COOKIE' => Referrals::REFERRAL_COOKIE,
+        ] as $constant => $name) {
+            $this->assertStringContainsString(
+                "export const {$constant} = '{$name}';",
+                $source,
+                "resources/js/lib/affiliates.ts and App\\Affiliates\\Referrals disagree about {$constant}.",
+            );
+
+            $this->assertContains(
+                $name,
+                $marketing,
+                "{$name} is written by the affiliate script but is not published as a marketing cookie.",
+            );
+        }
     }
 
     #[Test]

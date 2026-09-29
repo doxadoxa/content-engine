@@ -58,8 +58,8 @@ return [
      */
     'updated' => [
         'terms' => env('LEGAL_TERMS_UPDATED', '2026-09-25'),
-        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-09-25'),
-        'cookies' => env('LEGAL_COOKIES_UPDATED', '2026-08-28'),
+        'privacy' => env('LEGAL_PRIVACY_UPDATED', '2026-09-29'),
+        'cookies' => env('LEGAL_COOKIES_UPDATED', '2026-09-29'),
     ],
 
     /*
@@ -67,7 +67,7 @@ return [
      * to the prose: fixing a typo in the cookie policy should not throw away a
      * million consent records, and adding an analytics cookie must.
      */
-    'consent_version' => env('LEGAL_CONSENT_VERSION', '2026-08-28'),
+    'consent_version' => env('LEGAL_CONSENT_VERSION', '2026-09-29'),
 
     /*
      * Every cookie this application sets, by the category the banner offers.
@@ -90,11 +90,13 @@ return [
      * writing them — is worse than not offering the toggle.
      *
      * `analytics` and `marketing` are genuinely opt-in and default to off.
-     * `marketing` is still empty — no tag manager, no advertising pixel — and
-     * the policy says exactly that rather than reserving the right in vague
-     * terms. `analytics` stopped being empty when Sentry arrived: refusing it
-     * now switches off browser performance tracing, which is the test this file
-     * sets for whether a category deserves to exist at all.
+     * `analytics` stopped being empty when Sentry arrived: refusing it switches
+     * off browser performance tracing, which is the test this file sets for
+     * whether a category deserves to exist at all. `marketing` stopped being
+     * empty with the affiliate programme: refusing it means Anderro's script is
+     * never loaded, its two cookies are never written, and nobody is told the
+     * visitor signed up — see app/Affiliates/Referrals.php. Still no tag
+     * manager and no advertising pixel, and the policy says so.
      *
      * Note that no cookie appears below for it, and that is not an oversight.
      * Sentry's browser SDK sets no cookie and writes nothing to storage in the
@@ -141,6 +143,27 @@ return [
             'purpose' => 'Remembers whether you collapsed the navigation column.',
             'retention' => '7 days',
         ],
+        /*
+         * Written on this site by Anderro's script rather than by our own
+         * code, which is why the provider names them. Only for a visitor who
+         * arrived through a partner's link and allowed marketing — see
+         * resources/js/lib/affiliates.ts, which also scopes them to this host
+         * rather than to every site under the parent domain.
+         */
+        [
+            'name' => '_anderro_vid',
+            'category' => 'marketing',
+            'provider' => 'Anderro (our affiliate network)',
+            'purpose' => 'A random identifier for this browser, set only if you arrived through a partner\'s link, so that partner can be credited if you go on to sign up.',
+            'retention' => '12 months',
+        ],
+        [
+            'name' => '_anderro_ref',
+            'category' => 'marketing',
+            'provider' => 'Anderro (our affiliate network)',
+            'purpose' => 'The code of the partner link you arrived through, so the right partner is credited.',
+            'retention' => '90 days',
+        ],
     ],
 
     /*
@@ -148,8 +171,9 @@ return [
      * "trusted partners", because a data-subject asking where their draft went
      * is entitled to the list.
      *
-     * `optional` marks a provider that only receives anything if a project
-     * connects it — Google is granted per project.
+     * `optional` marks a provider that only receives anything in some cases.
+     * `condition` says which, when it is not the default — a project connecting
+     * it, which is how Google is granted.
      */
     'subprocessors' => [
         [
@@ -187,6 +211,15 @@ return [
             'purpose' => 'Receives a report when the application fails: the error, where in our code it happened, and the identifiers of the account and project it happened under. It is not sent your content, and performance timings are only measured if you allow analytics.',
             'region' => 'European Union',
             'optional' => false,
+        ],
+        [
+            'name' => 'Anderro',
+            'purpose' => 'Runs our affiliate programme. If you arrived through a partner\'s link and allowed marketing cookies, it receives a random identifier for your browser, your email address when you sign up, and the amounts you pay us, so the partner who referred you can be paid their commission.',
+            // Not published by Anderro, and not guessed at here. Confirm it
+            // with them and replace this before relying on the policy.
+            'region' => 'Not yet confirmed',
+            'optional' => true,
+            'condition' => 'Only if a partner referred you and you allow marketing cookies',
         ],
         [
             'name' => 'Hosting and infrastructure',

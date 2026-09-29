@@ -85,7 +85,7 @@ const TOGGLES: Toggle[] = [
         key: 'marketing',
         title: 'Marketing',
         description:
-            'Would measure which campaigns bring people here. Avyo sets no advertising or marketing cookies today, and none will be set unless you allow it.',
+            "Lets us pay a partner who sent you here. If you arrived through a partner's link, our affiliate network, Anderro, sets two cookies to recognise it, and we tell Anderro when you sign up and pay. Nothing happens if nobody referred you, and nothing is set until you allow it.",
     },
 ];
 
@@ -180,7 +180,8 @@ export default function CookieConsent() {
                         <DialogDescription className="text-[13px] leading-6 text-[#6f6962] shell-dark:text-white/60">
                             Two of these are part of how the product works and
                             cannot be switched off. The other two are yours to
-                            decide, and neither sets a cookie.
+                            decide, and nothing they cover runs until you allow
+                            it.
                         </DialogDescription>
                     </DialogHeader>
 

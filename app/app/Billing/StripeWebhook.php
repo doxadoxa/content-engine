@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Billing;
 
+use App\Affiliates\Referrals;
 use App\Billing\Contracts\BillingProvider;
 use App\Enums\BillingStatus;
 use App\Enums\OnboardingStatus;
@@ -40,7 +41,11 @@ use Throwable;
  */
 class StripeWebhook
 {
-    public function __construct(private readonly Subscriptions $subscriptions, private readonly BillingProvider $provider) {}
+    public function __construct(
+        private readonly Subscriptions $subscriptions,
+        private readonly BillingProvider $provider,
+        private readonly Referrals $referrals,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $payload
@@ -82,6 +87,16 @@ class StripeWebhook
                 Log::info('Stripe event already handled; ignored', ['event' => $id, 'type' => $type]);
 
                 return;
+            }
+
+            // Money a customer paid, which a partner may be owed a share of.
+            // Here rather than in `paid()`, and on this one event type: the
+            // claim above is what stops a re-delivery reporting it twice, and
+            // whether the payment is stale, or matches a project, has nothing
+            // to do with whether it happened. `invoice.payment_succeeded`
+            // arrives for the same money and is deliberately not reported.
+            if ($type === 'invoice.paid') {
+                $this->referrals->invoicePaid($object);
             }
 
             // Resolved once, here, and never taken from the payload again. An

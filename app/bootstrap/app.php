@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\EnsureCurrentProject;
+use App\Http\Middleware\ForgetWithdrawnReferral;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\RequireAdministrator;
@@ -55,7 +56,18 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Read by the inline script in app.blade.php before React mounts, so
         // the page does not flash light before switching to dark.
-        $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
+        //
+        // The other three are written by JavaScript — the consent record by
+        // resources/js/lib/consent.ts, the other two by Anderro's script — so
+        // they were never encrypted, and the middleware would read each of
+        // them as null. App\Affiliates\Referrals needs all three.
+        $middleware->encryptCookies(except: [
+            'appearance',
+            'sidebar_state',
+            'avyo_consent',
+            '_anderro_vid',
+            '_anderro_ref',
+        ]);
 
         $middleware->web(append: [
             SecurityHeaders::class,
@@ -64,6 +76,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // route change.
             ThrottleRegistration::class,
             HandleAppearance::class,
+            // A referred customer who switched marketing off stops having their
+            // payments reported from the request that answer arrives on.
+            ForgetWithdrawnReferral::class,
             // Before Inertia, deliberately: Inertia\Middleware::handle
             // registers its shared data on the way *in*, so a project resolved
             // after it would not reach the page.

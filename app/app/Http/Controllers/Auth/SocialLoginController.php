@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Auth;
 
+use App\Affiliates\Referrals;
 use App\Auth\Exceptions\SocialLoginRefused;
 use App\Auth\SocialIdentities;
 use App\Enums\SocialLoginProvider;
@@ -49,7 +50,10 @@ class SocialLoginController extends Controller
     /** Read by the sign-in and sign-up screens. Kept here so both spell it the same. */
     public const string SESSION_ERROR = 'socialError';
 
-    public function __construct(private readonly SocialIdentities $identities) {}
+    public function __construct(
+        private readonly SocialIdentities $identities,
+        private readonly Referrals $referrals,
+    ) {}
 
     /** Off to the provider. */
     public function redirect(SocialLoginProvider $provider): SymfonyRedirect
@@ -123,6 +127,14 @@ class SocialLoginController extends Controller
         // not the one it leaves authenticated with. Fortify does this on its
         // own login path and this one has to do it for itself.
         $request->session()->regenerate();
+
+        // A sign-up, when the account did not exist before this callback, and
+        // one Fortify never sees — so it is reported here or not at all. The
+        // referral cookies came back with the browser from Google: they are
+        // `SameSite=Lax`, which a top-level redirect carries.
+        if ($user->wasRecentlyCreated) {
+            $this->referrals->signedUp($user, $request);
+        }
 
         // `intended`, so somebody who was sent to the sign-in screen by trying
         // to open a page lands on that page rather than on the dashboard.

@@ -19,7 +19,7 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Cashier\Billable;
 
 #[Fillable(['name', 'email', 'password'])]
-#[Hidden(['password', 'remember_token'])]
+#[Hidden(['password', 'remember_token', 'affiliate_referred_at'])]
 /**
  * `MustVerifyEmail`, because an unverified account is an open tab.
  *
@@ -138,6 +138,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_admin' => 'boolean',
+            'affiliate_referred_at' => 'datetime',
         ];
     }
 }

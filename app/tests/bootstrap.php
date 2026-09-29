@@ -67,6 +67,12 @@ $overrides = [
     // first to the second.
     'SENTRY_LARAVEL_DSN' => '',
     'SENTRY_DSN' => '',
+    // Off unless a test turns it on. A developer's own Anderro keys would
+    // otherwise put the affiliate script's origin into every CSP header the
+    // suite asserts on, and send real sign-up events from any test that
+    // happened to carry the cookies.
+    'ANDERRO_PUBLIC_KEY' => '',
+    'ANDERRO_SECRET_KEY' => '',
     // Reserved .test hosts are used behind Http::fake throughout the suite.
     // Literal/private addresses are still rejected by the outbound policy.
     'OUTBOUND_ALLOW_UNRESOLVED_HOSTS' => 'true',
