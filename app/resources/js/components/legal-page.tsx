@@ -3,6 +3,7 @@ import type { PropsWithChildren, ReactNode } from 'react';
 import AppLogoIcon from '@/components/app-logo-icon';
 import { openPreferences } from '@/lib/consent';
 import { login } from '@/routes';
+import { index as blog } from '@/routes/blog';
 import { cookies, privacy, terms } from '@/routes/legal';
 
 /*
@@ -146,6 +147,11 @@ export function LegalPage({
             <footer className="border-t border-[#e5e1dc] bg-white px-5 py-10 sm:px-6">
                 <div className="mx-auto flex max-w-4xl flex-col gap-6">
                     <div className="flex flex-wrap gap-x-6 gap-y-3 text-xs font-medium text-[#635e58]">
+                        {/* An anchor rather than <Link>: the blog is Blade,
+                            not an Inertia page. */}
+                        <a href={blog.url()} className="hover:text-[#17352f]">
+                            Blog
+                        </a>
                         {NAV.map((item) => (
                             <Link
                                 key={item.href}

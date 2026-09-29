@@ -303,5 +303,6 @@ Route::middleware([AuthenticatePullApi::class])
     ->get('api/content', PullContentController::class)
     ->name('api.content');
 
+require __DIR__.'/blog.php';
 require __DIR__.'/settings.php';
 require __DIR__.'/admin.php';
