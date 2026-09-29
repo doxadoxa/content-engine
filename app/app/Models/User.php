@@ -14,12 +14,13 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Cashier\Billable;
 
 #[Fillable(['name', 'email', 'password'])]
-#[Hidden(['password', 'remember_token', 'affiliate_referred_at'])]
+#[Hidden(['password', 'remember_token'])]
 /**
  * `MustVerifyEmail`, because an unverified account is an open tab.
  *
@@ -89,6 +90,17 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * The partner who referred this account, if one did, and the consent that
+     * lets us report its payments to them — see {@see AffiliateReferral}.
+     *
+     * @return HasOne<AffiliateReferral, $this>
+     */
+    public function affiliateReferral(): HasOne
+    {
+        return $this->hasOne(AffiliateReferral::class);
+    }
+
+    /**
      * Whether this account can be signed into with a password at all.
      *
      * False for somebody who has only ever come through Google, and the
@@ -138,7 +150,6 @@ class User extends Authenticatable implements MustVerifyEmail
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_admin' => 'boolean',
-            'affiliate_referred_at' => 'datetime',
         ];
     }
 }

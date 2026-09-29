@@ -1,4 +1,6 @@
 import { hasConsent, subscribe, whenGranted } from '@/lib/consent';
+import { postJson } from '@/lib/json';
+import { withdraw } from '@/routes/affiliates';
 
 /*
  * Crediting the partners who send people here.
@@ -37,6 +39,12 @@ import { hasConsent, subscribe, whenGranted } from '@/lib/consent';
  * listeners on the document and an observer on the DOM — so the teardown
  * deletes its cookies, removes what it can, and reloads, which is what
  * consent.ts says an honest teardown does when a vendor leaves no other way.
+ *
+ * **And tells the server first.** A referred customer's payments go on being
+ * reported from Stripe's side with no browser involved, so the refusal has to
+ * reach the account. The visitor id is what says which account, whether or not
+ * anybody is signed in, and it is about to be deleted — so the server is told
+ * before the cookies go, and the page waits for it (briefly) before reloading.
  */
 
 /* Both written by Anderro's script. Asserted against the cookie policy in
@@ -45,6 +53,11 @@ export const VISITOR_COOKIE = '_anderro_vid';
 export const REFERRAL_COOKIE = '_anderro_ref';
 
 const SCRIPT_SRC = 'https://track.anderro.com/a.js';
+
+/* How long a withdrawal waits for the server before deleting and reloading
+ * anyway. Long enough for a slow connection; short enough that the switch in
+ * the preferences panel never looks broken. */
+const WITHDRAW_TIMEOUT_MS = 3000;
 
 /* How long the script itself keeps a referral code. */
 const REFERRAL_MAX_AGE_SECONDS = 60 * 60 * 24 * 90;
@@ -129,6 +142,35 @@ function deleteCookies(): void {
     }
 }
 
+let forgetting: Promise<void> | null = null;
+
+/*
+ * Tell the server this browser has withdrawn, then delete the cookies. Shared,
+ * because a withdrawal triggers it twice — the consent listener below and the
+ * integration's teardown both see the same click — and one request is enough.
+ */
+function forget(): Promise<void> {
+    if (forgetting) {
+        return forgetting;
+    }
+
+    const told = hasCookie(VISITOR_COOKIE)
+        ? Promise.race([
+              postJson(withdraw.url(), {}).then(() => undefined),
+              new Promise<void>((resolve) =>
+                  setTimeout(resolve, WITHDRAW_TIMEOUT_MS),
+              ),
+          ])
+        : Promise.resolve();
+
+    forgetting = told.finally(() => {
+        deleteCookies();
+        forgetting = null;
+    });
+
+    return forgetting;
+}
+
 function load(key: string): (() => void) | void {
     if (!landingReferral && !hasCookie(REFERRAL_COOKIE)) {
         return;
@@ -165,8 +207,7 @@ function load(key: string): (() => void) | void {
     return () => {
         script.remove();
         delete window.anderro;
-        deleteCookies();
-        window.location.reload();
+        void forget().finally(() => window.location.reload());
     };
 }
 
@@ -192,7 +233,7 @@ export function initAffiliateTracking(): void {
             !hasConsent('marketing') &&
             (hasCookie(VISITOR_COOKIE) || hasCookie(REFERRAL_COOKIE))
         ) {
-            deleteCookies();
+            void forget();
         }
     };
 

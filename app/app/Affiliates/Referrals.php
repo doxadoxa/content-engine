@@ -6,8 +6,11 @@ namespace App\Affiliates;
 
 use App\Affiliates\Jobs\SendPaymentToAnderro;
 use App\Affiliates\Jobs\SendSignupToAnderro;
+use App\Models\AffiliateReferral;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Throwable;
 
 /**
  * Which sign-ups and payments a partner gets credit for, and therefore which
@@ -20,9 +23,8 @@ use Illuminate\Http\Request;
  * policy promises the opposite. So a sign-up is reported only when the browser
  * carries both of the script's cookies: the visitor id, which is what Anderro
  * links on, and the referral code, which exists only if that visitor arrived
- * through a partner's link. A payment is reported only for an account whose
- * sign-up was, and only while that account has not withdrawn the permission —
- * see {@see self::forgetIfWithdrawn()}.
+ * through a partner's link. A payment is reported only for an account with an
+ * {@see AffiliateReferral}.
  *
  * **Only with consent that is current.** The script is loaded behind the
  * `marketing` gate, so its cookies should not exist without that permission.
@@ -30,7 +32,16 @@ use Illuminate\Http\Request;
  * somebody else: cookies outlive the answer that allowed them — the consent
  * inventory is versioned, and a stale answer counts as none — so the consent
  * record is read here too, on the same terms resources/js/lib/consent.ts reads
- * it.
+ * it. And it is *kept*, on the referral, because payments arrive from Stripe
+ * with no browser attached: a renewal a year from now has to be judged against
+ * the consent as it stands then, not as it stood at sign-up. See
+ * {@see AffiliateReferral::mayReport()}, which every report — and every queued
+ * report, again, when it runs — has to pass.
+ *
+ * **Withdrawal reaches the account whether or not anybody is signed in.** A
+ * refusal from the browser the sign-up came from is matched by its visitor id
+ * ({@see self::withdrawVisitor()}); a refusal from anywhere the customer is
+ * signed in is matched by the account ({@see self::syncConsent()}).
  *
  * **The cookies are read here, not posted by a form.** They are first-party
  * cookies on our domain, so the browser sends them on every request — the
@@ -63,21 +74,30 @@ final class Referrals
         }
 
         $visitor = $this->referredVisitor($request);
+        $record = $this->consentRecord($request);
 
-        if ($visitor === null) {
+        if ($visitor === null || $record === null) {
             return;
         }
 
-        // Marked now, not when Anderro confirms. A customer who skips the trial
-        // can pay within the signup job's retry window, and a payment that
-        // found the account unmarked would be dropped for good. The cost of the
+        // Recorded now, not when Anderro confirms. A customer who skips the
+        // trial can pay within the signup job's retry window, and a payment
+        // that found no referral would be dropped for good. The cost of the
         // other order is a payment reported for a signup Anderro never
         // recorded, which it cannot attribute and ignores.
-        $user->forceFill(['affiliate_referred_at' => now()])->save();
+        AffiliateReferral::query()->updateOrCreate(
+            ['user_id' => $user->getKey()],
+            [
+                'visitor_id' => $visitor,
+                'email' => $user->email,
+                'consent_version' => (string) config('legal.consent_version'),
+                'consented_at' => $this->givenAt($record),
+            ],
+        );
 
         // After commit: the job reads the account back by id, and a worker
         // that picked it up first would find nobody.
-        SendSignupToAnderro::dispatch((int) $user->getKey(), $visitor)->afterCommit();
+        SendSignupToAnderro::dispatch((int) $user->getKey())->afterCommit();
     }
 
     /**
@@ -112,7 +132,7 @@ final class Referrals
 
         $user = User::query()->where('stripe_id', $customer)->first();
 
-        if ($user === null || $user->affiliate_referred_at === null) {
+        if ($user?->affiliateReferral?->mayReport() !== true) {
             return;
         }
 
@@ -120,27 +140,76 @@ final class Referrals
     }
 
     /**
-     * Stop reporting this account's payments if its holder has said no.
+     * Bring a signed-in customer's referral into line with the answer their
+     * browser now carries.
      *
-     * Consent is the basis for telling Anderro what a referred customer pays,
-     * and withdrawing it has to stop that — not only the script in the browser.
-     * The browser's answer lives in a cookie the server never sees change, so
-     * it is read on the way past: switching marketing off reloads the page,
-     * and the request that reload makes is where this runs. Only an explicit
-     * refusal under the current inventory counts. No record at all, or one for
-     * an older inventory, is somebody who has not been asked again yet.
+     * A refusal stops the reporting. A fresh yes — a new inventory accepted, or
+     * the twelve months renewed — resumes it, because it is the same permission
+     * given again for the same purpose. No record, or one for an older
+     * inventory, changes nothing: that is somebody who has not been asked again
+     * yet, and {@see AffiliateReferral::mayReport()} already stops reporting on
+     * a consent that has lapsed.
      */
-    public function forgetIfWithdrawn(User $user, Request $request): void
+    public function syncConsent(User $user, Request $request): void
     {
-        if ($user->affiliate_referred_at === null) {
+        $record = $this->consentRecord($request);
+
+        if ($record === null) {
             return;
         }
 
+        $referral = $user->affiliateReferral;
+
+        if ($referral === null) {
+            return;
+        }
+
+        if (($record['marketing'] ?? null) !== true) {
+            $this->revoke($referral);
+
+            return;
+        }
+
+        $givenAt = $this->givenAt($record);
+
+        if (
+            $referral->consent_version !== (string) config('legal.consent_version')
+            || $referral->consented_at === null
+            || $givenAt->greaterThan($referral->consented_at)
+        ) {
+            $referral->forceFill([
+                'consent_version' => (string) config('legal.consent_version'),
+                'consented_at' => $givenAt,
+            ])->save();
+        }
+    }
+
+    /**
+     * The browser a referral was reported from has withdrawn marketing consent,
+     * and may not be signed in to say whose account that was.
+     *
+     * Only acts on a current refusal the request itself carries, so the endpoint
+     * in front of this cannot be used to switch off somebody's reporting on
+     * their behalf by a browser that has not refused anything.
+     */
+    public function withdrawVisitor(Request $request): void
+    {
         $record = $this->consentRecord($request);
 
-        if ($record !== null && ($record['marketing'] ?? null) !== true) {
-            $user->forceFill(['affiliate_referred_at' => null])->save();
+        if ($record === null || ($record['marketing'] ?? null) === true) {
+            return;
         }
+
+        $visitor = $this->visitorIn($request);
+
+        if ($visitor === null) {
+            return;
+        }
+
+        AffiliateReferral::query()
+            ->where('visitor_id', $visitor)
+            ->get()
+            ->each(fn (AffiliateReferral $referral) => $this->revoke($referral));
     }
 
     /**
@@ -149,32 +218,41 @@ final class Referrals
      */
     public function referredVisitor(Request $request): ?string
     {
-        if (! $this->allowsMarketing($request)) {
+        if (($this->consentRecord($request)['marketing'] ?? null) !== true) {
             return null;
         }
 
-        $visitor = $request->cookie(self::VISITOR_COOKIE);
         $referral = $request->cookie(self::REFERRAL_COOKIE);
-
-        // The script writes 32 hex characters. The bounds are looser than that
-        // so a format change on their side does not silently stop crediting
-        // anybody, and tight enough that a cookie somebody typed into their
-        // browser is not forwarded to a third party as it stands.
-        if (! is_string($visitor) || preg_match('/\A[A-Za-z0-9_-]{8,64}\z/', $visitor) !== 1) {
-            return null;
-        }
 
         if (! is_string($referral) || trim($referral) === '') {
             return null;
         }
 
-        return $visitor;
+        return $this->visitorIn($request);
     }
 
-    /** Anything but an explicit `true` is a no. */
-    private function allowsMarketing(Request $request): bool
+    private function revoke(AffiliateReferral $referral): void
     {
-        return ($this->consentRecord($request)['marketing'] ?? null) === true;
+        if ($referral->consent_version === null && $referral->consented_at === null) {
+            return;
+        }
+
+        $referral->forceFill(['consent_version' => null, 'consented_at' => null])->save();
+    }
+
+    /**
+     * The script writes 32 hex characters. The bounds are looser than that so a
+     * format change on their side does not silently stop crediting anybody, and
+     * tight enough that a cookie somebody typed into their browser is not
+     * forwarded to a third party as it stands.
+     */
+    private function visitorIn(Request $request): ?string
+    {
+        $visitor = $request->cookie(self::VISITOR_COOKIE);
+
+        return is_string($visitor) && preg_match('/\A[A-Za-z0-9_-]{8,64}\z/', $visitor) === 1
+            ? $visitor
+            : null;
     }
 
     /**
@@ -198,6 +276,28 @@ final class Referrals
         }
 
         return $record;
+    }
+
+    /**
+     * When the answer was given, which is when its twelve months started. The
+     * record's own timestamp, because the browser forgets the answer a year
+     * after *that* and the server must not outlast it; never later than now,
+     * because the timestamp is written by the browser and a clock set forward
+     * would otherwise buy somebody else's consent a longer life.
+     *
+     * @param  array<string, mixed>  $record
+     */
+    private function givenAt(array $record): Carbon
+    {
+        $at = $record['at'] ?? null;
+
+        try {
+            $given = is_string($at) ? Carbon::parse($at) : null;
+        } catch (Throwable) {
+            $given = null;
+        }
+
+        return $given === null || $given->greaterThan(now()) ? now() : $given;
     }
 
     /**

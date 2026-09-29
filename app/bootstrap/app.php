@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\EnsureCurrentProject;
-use App\Http\Middleware\ForgetWithdrawnReferral;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\RequireAdministrator;
@@ -11,6 +10,7 @@ use App\Http\Middleware\RequireEntitlement;
 use App\Http\Middleware\RequireProjectOwner;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SentryContext;
+use App\Http\Middleware\SyncReferralConsent;
 use App\Http\Middleware\ThrottleRegistration;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -76,9 +76,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // route change.
             ThrottleRegistration::class,
             HandleAppearance::class,
-            // A referred customer who switched marketing off stops having their
-            // payments reported from the request that answer arrives on.
-            ForgetWithdrawnReferral::class,
+            // A referred customer's marketing answer, carried to the referral
+            // that decides whether their payments are reported.
+            SyncReferralConsent::class,
             // Before Inertia, deliberately: Inertia\Middleware::handle
             // registers its shared data on the way *in*, so a project resolved
             // after it would not reach the page.

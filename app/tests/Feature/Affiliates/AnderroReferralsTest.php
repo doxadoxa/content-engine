@@ -6,11 +6,14 @@ namespace Tests\Feature\Affiliates;
 
 use App\Affiliates\Anderro;
 use App\Affiliates\Exceptions\AffiliateEventRejected;
+use App\Affiliates\Jobs\SendPaymentToAnderro;
 use App\Affiliates\Jobs\SendSignupToAnderro;
 use App\Billing\StripeWebhook;
+use App\Models\AffiliateReferral;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Socialite\Facades\Socialite;
@@ -72,7 +75,7 @@ final class AnderroReferralsTest extends TestCase
             && $request['customerEmail'] === 'alex@example.test'
             && $request['visitorId'] === self::VISITOR);
 
-        $this->assertNotNull($this->user('alex@example.test')->affiliate_referred_at);
+        $this->assertTrue($this->user('alex@example.test')->affiliateReferral?->mayReport());
     }
 
     #[Test]
@@ -86,7 +89,7 @@ final class AnderroReferralsTest extends TestCase
         $this->withUnencryptedCookies($cookies)->register();
 
         Http::assertNothingSent();
-        $this->assertNull($this->user('alex@example.test')->affiliate_referred_at);
+        $this->assertNull($this->user('alex@example.test')->affiliateReferral);
     }
 
     #[Test]
@@ -141,7 +144,7 @@ final class AnderroReferralsTest extends TestCase
             && $request['customerEmail'] === 'sam@gmail.com'
             && $request['visitorId'] === self::VISITOR);
 
-        $this->assertNotNull($this->user('sam@gmail.com')->affiliate_referred_at);
+        $this->assertTrue($this->user('sam@gmail.com')->affiliateReferral?->mayReport());
     }
 
     #[Test]
@@ -209,11 +212,11 @@ final class AnderroReferralsTest extends TestCase
     public function a_refusal_that_will_not_change_is_not_retried(): void
     {
         [$this->status, $this->body] = [401, ['error' => 'Invalid API key']];
-        $user = User::factory()->create();
+        $user = $this->referredCustomer();
 
         // Returns rather than throwing: a thrown exception is how a queued job
         // asks to be tried again, and a revoked key will be revoked next time.
-        (new SendSignupToAnderro((int) $user->getKey(), self::VISITOR))->handle(app(Anderro::class));
+        (new SendSignupToAnderro((int) $user->getKey()))->handle(app(Anderro::class));
 
         Http::assertSentCount(1);
     }
@@ -228,8 +231,11 @@ final class AnderroReferralsTest extends TestCase
 
         $this->withUnencryptedCookies($this->referredBrowser())->register();
 
-        Queue::assertPushed(SendSignupToAnderro::class, fn (SendSignupToAnderro $job): bool => $job->visitorId === self::VISITOR);
-        $this->assertNotNull($this->user('alex@example.test')->affiliate_referred_at);
+        $user = $this->user('alex@example.test');
+
+        Queue::assertPushed(SendSignupToAnderro::class, fn (SendSignupToAnderro $job): bool => $job->userId === $user->getKey());
+        $this->assertSame(self::VISITOR, $user->affiliateReferral?->visitor_id);
+        $this->assertTrue($user->affiliateReferral->mayReport());
     }
 
     #[Test]
@@ -243,11 +249,108 @@ final class AnderroReferralsTest extends TestCase
             ->get('/cookies')
             ->assertOk();
 
-        $this->assertNull($user->fresh()?->affiliate_referred_at);
+        $this->assertFalse($this->referralOf($user)->mayReport());
 
         $this->stripe($this->paidInvoice());
 
         Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function switching_marketing_off_while_signed_out_stops_payments_too(): void
+    {
+        $this->referredCustomer();
+
+        // Signed out, on the browser the sign-up came from: what the teardown
+        // in affiliates.ts posts before it deletes the visitor cookie.
+        $this->withUnencryptedCookies($this->referredBrowser(marketing: false))
+            ->post('/affiliates/withdraw')
+            ->assertNoContent();
+
+        $this->stripe($this->paidInvoice());
+
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function the_withdrawal_endpoint_needs_the_browser_to_have_actually_refused(): void
+    {
+        $user = $this->referredCustomer();
+
+        // A browser that still allows marketing, and one whose answer is to an
+        // inventory that has moved on. Neither has said no.
+        $this->withUnencryptedCookies($this->referredBrowser())->post('/affiliates/withdraw')->assertNoContent();
+        $this->withUnencryptedCookies($this->referredBrowser(marketing: false, version: '2020-01-01'))->post('/affiliates/withdraw')->assertNoContent();
+
+        $this->assertTrue($this->referralOf($user)->mayReport());
+    }
+
+    #[Test]
+    public function consent_that_has_lapsed_stops_payments_being_reported(): void
+    {
+        // Twelve months on, the browser has forgotten the answer and will ask
+        // again. A renewal must not be reported on the strength of the old one.
+        $this->referredCustomer(consentedAt: now()->subMonths(13));
+
+        $this->stripe($this->paidInvoice());
+
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function a_new_cookie_inventory_stops_payments_until_it_is_accepted(): void
+    {
+        $user = $this->referredCustomer();
+
+        config(['legal.consent_version' => '2027-01-01']);
+
+        $this->stripe($this->paidInvoice());
+        Http::assertNothingSent();
+
+        // Accepted again, while signed in.
+        $this->actingAs($user)->withUnencryptedCookies($this->referredBrowser())->get('/cookies')->assertOk();
+
+        $this->stripe($this->paidInvoice(eventId: 'evt_after_reconsent'));
+        Http::assertSentCount(1);
+    }
+
+    #[Test]
+    public function a_queued_payment_does_not_go_out_after_consent_is_withdrawn(): void
+    {
+        $user = $this->referredCustomer();
+
+        Queue::fake();
+        $this->stripe($this->paidInvoice());
+
+        $job = null;
+        Queue::assertPushed(SendPaymentToAnderro::class, function (SendPaymentToAnderro $pushed) use (&$job): bool {
+            $job = $pushed;
+
+            return true;
+        });
+
+        // Withdrawn while the job waited in the queue.
+        $this->withUnencryptedCookies($this->referredBrowser(marketing: false))->post('/affiliates/withdraw');
+
+        $this->assertInstanceOf(SendPaymentToAnderro::class, $job);
+        $job->handle(app(Anderro::class));
+
+        $this->assertSame($user->getKey(), $job->userId);
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function payments_keep_the_address_the_sign_up_was_reported_under(): void
+    {
+        $user = $this->referredCustomer();
+
+        // Anderro attributes by address, and only knows this one.
+        $user->forceFill(['email' => 'alex@new-employer.test'])->save();
+
+        $this->stripe($this->paidInvoice());
+
+        Http::assertSent(fn (Request $request): bool => $request['type'] === 'payment'
+            && $request['customerEmail'] === 'alex@example.test');
     }
 
     #[Test]
@@ -260,18 +363,18 @@ final class AnderroReferralsTest extends TestCase
         $this->actingAs($user)->withUnencryptedCookies($this->referredBrowser())->get('/cookies')->assertOk();
         $this->actingAs($user)->withUnencryptedCookies($this->referredBrowser(marketing: false, version: '2020-01-01'))->get('/cookies')->assertOk();
 
-        $this->assertNotNull($user->fresh()?->affiliate_referred_at);
+        $this->assertTrue($this->referralOf($user)->mayReport());
     }
 
     #[Test]
     public function a_bad_minute_at_anderro_is_retried(): void
     {
         [$this->status, $this->body] = [503, ['error' => 'Unavailable']];
-        $user = User::factory()->create();
+        $user = $this->referredCustomer();
 
         $this->expectException(AffiliateEventRejected::class);
 
-        (new SendSignupToAnderro((int) $user->getKey(), self::VISITOR))->handle(app(Anderro::class));
+        (new SendSignupToAnderro((int) $user->getKey()))->handle(app(Anderro::class));
     }
 
     #[Test]
@@ -321,20 +424,35 @@ final class AnderroReferralsTest extends TestCase
                 'analytics' => false,
                 'marketing' => $marketing,
                 'v' => $version ?? (string) config('legal.consent_version'),
-                'at' => '2026-09-29T10:00:00.000Z',
+                'at' => now()->toIso8601String(),
             ]),
             '_anderro_vid' => self::VISITOR,
             '_anderro_ref' => 'partner-42',
         ];
     }
 
-    private function referredCustomer(): User
+    /** A customer whose referred sign-up was reported, with marketing consent as it was then. */
+    private function referredCustomer(?Carbon $consentedAt = null): User
     {
-        return User::factory()->create([
+        $user = User::factory()->create([
             'email' => 'alex@example.test',
             'stripe_id' => 'cus_referred',
-            'affiliate_referred_at' => now(),
         ]);
+
+        AffiliateReferral::query()->create([
+            'user_id' => $user->getKey(),
+            'visitor_id' => self::VISITOR,
+            'email' => 'alex@example.test',
+            'consent_version' => (string) config('legal.consent_version'),
+            'consented_at' => $consentedAt ?? now(),
+        ]);
+
+        return $user;
+    }
+
+    private function referralOf(User $user): AffiliateReferral
+    {
+        return AffiliateReferral::query()->where('user_id', $user->getKey())->sole();
     }
 
     /** @return array<string, mixed> */

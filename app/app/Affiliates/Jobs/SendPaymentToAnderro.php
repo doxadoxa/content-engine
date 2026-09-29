@@ -6,7 +6,7 @@ namespace App\Affiliates\Jobs;
 
 use App\Affiliates\Anderro;
 use App\Affiliates\Exceptions\AffiliateEventRejected;
-use App\Models\User;
+use App\Models\AffiliateReferral;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -21,6 +21,12 @@ use Illuminate\Foundation\Queue\Queueable;
  * failure by a distance — a refused connection or a 5xx, which are the common
  * ones, never reached it — and a commission counted twice is visible in their
  * dashboard and correctable, where one never sent is invisible. So it retries.
+ *
+ * Sent under the address the sign-up was reported with, not the account's
+ * current one: Anderro attributes payments by address, and a customer who
+ * changed theirs here would otherwise stop earning their partner anything.
+ * And consent is checked again when it runs, not only when it was queued — a
+ * delayed or retried report must not go out after somebody has said no.
  */
 final class SendPaymentToAnderro implements ShouldQueue
 {
@@ -35,14 +41,14 @@ final class SendPaymentToAnderro implements ShouldQueue
 
     public function handle(Anderro $anderro): void
     {
-        $user = User::query()->whereKey($this->userId)->first();
+        $referral = AffiliateReferral::query()->where('user_id', $this->userId)->first();
 
-        if ($user === null || ! $anderro->isConfigured()) {
+        if ($referral === null || ! $referral->mayReport() || ! $anderro->isConfigured()) {
             return;
         }
 
         try {
-            $anderro->payment($user->email, $this->amountCents);
+            $anderro->payment($referral->email, $this->amountCents);
         } catch (AffiliateEventRejected $e) {
             if ($e->isPermanent()) {
                 $this->fail($e);

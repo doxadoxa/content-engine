@@ -29,6 +29,7 @@ use App\Http\Controllers\PlanSelectionController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\SiteAuditController;
 use App\Http\Controllers\VisibilityController;
+use App\Http\Controllers\WithdrawReferralController;
 use App\Http\Middleware\AuthenticatePullApi;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -78,6 +79,16 @@ Route::get('start', PlanSelectionController::class)->name('plans.start');
 Route::get('terms', [LegalController::class, 'terms'])->name('legal.terms');
 Route::get('privacy', [LegalController::class, 'privacy'])->name('legal.privacy');
 Route::get('cookies', [LegalController::class, 'cookies'])->name('legal.cookies');
+
+/*
+ * Withdrawing marketing consent from the browser an affiliate referral came
+ * from (see `WithdrawReferralController`). Outside the auth group for the same
+ * reason as the pages above: the cookie banner is answered by people who are
+ * not signed in, and a withdrawal must count whether or not they are.
+ */
+Route::post('affiliates/withdraw', WithdrawReferralController::class)
+    ->middleware('throttle:30,1')
+    ->name('affiliates.withdraw');
 
 /*
  * Signing in with an outside account (see `SocialLoginController`).

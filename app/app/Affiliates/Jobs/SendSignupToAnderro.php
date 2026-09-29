@@ -7,7 +7,7 @@ namespace App\Affiliates\Jobs;
 use App\Affiliates\Anderro;
 use App\Affiliates\Exceptions\AffiliateEventRejected;
 use App\Affiliates\Referrals;
-use App\Models\User;
+use App\Models\AffiliateReferral;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -25,8 +25,12 @@ use Illuminate\Foundation\Queue\Queueable;
  * Retrying cannot credit a sign-up twice: Anderro deduplicates signups by
  * address per day and answers the repeat with `deduplicated: true`.
  *
- * The account was already marked as referred when this was dispatched — see
- * {@see Referrals::signedUp()} for why that is not left until Anderro answers.
+ * The referral was already recorded when this was dispatched — see
+ * {@see Referrals::signedUp()} for why that is not left until Anderro answers —
+ * and what is sent is read from it, not from the account: the address Anderro
+ * is told about has to be the one later payments are reported under. Consent is
+ * checked again here, because a retry can run ten minutes after somebody
+ * switched marketing off.
  */
 final class SendSignupToAnderro implements ShouldQueue
 {
@@ -37,18 +41,18 @@ final class SendSignupToAnderro implements ShouldQueue
     /** @var list<int> */
     public array $backoff = [60, 600];
 
-    public function __construct(public int $userId, public string $visitorId) {}
+    public function __construct(public int $userId) {}
 
     public function handle(Anderro $anderro): void
     {
-        $user = User::query()->whereKey($this->userId)->first();
+        $referral = AffiliateReferral::query()->where('user_id', $this->userId)->first();
 
-        if ($user === null || ! $anderro->isConfigured()) {
+        if ($referral === null || ! $referral->mayReport() || ! $anderro->isConfigured()) {
             return;
         }
 
         try {
-            $anderro->signup($user->email, $this->visitorId);
+            $anderro->signup($referral->email, $referral->visitor_id);
         } catch (AffiliateEventRejected $e) {
             if ($e->isPermanent()) {
                 $this->fail($e);
