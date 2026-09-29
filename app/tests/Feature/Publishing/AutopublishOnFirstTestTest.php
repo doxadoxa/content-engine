@@ -17,8 +17,10 @@ use App\Publishing\WebhookPublisher;
 use App\Publishing\WordPressPublisher;
 use App\Support\Content\ManagerContent;
 use App\Support\Tenancy\CurrentProject;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
@@ -275,6 +277,61 @@ final class AutopublishOnFirstTestTest extends TestCase
 
         $this->assertTrue($channel->refresh()->autopublish);
         $this->assertSame('active', $schedule->refresh()->status);
+    }
+
+    #[Test]
+    public function channels_already_switched_off_keep_their_no_through_the_migration(): void
+    {
+        $off = $this->webhook(['verified_at' => now(), 'autopublish' => false]);
+        $on = $this->webhook(['verified_at' => now(), 'autopublish' => true]);
+
+        $migration = require database_path('migrations/2026_09_30_100000_add_autopublish_declined_at_to_channels.php');
+        $migration->down();
+        $migration->up();
+
+        $this->assertNotNull($off->refresh()->autopublish_declined_at);
+        $this->assertNull($on->refresh()->autopublish_declined_at);
+
+        // An edit resets the connection; the re-test must not overrule an
+        // opt-out that predates the column.
+        $off->forceFill(['verified_at' => null])->save();
+        $on->delete();
+        $this->ping($off);
+
+        $this->assertFalse($off->refresh()->autopublish);
+    }
+
+    #[Test]
+    public function the_switch_is_decided_under_a_lock_held_to_the_write(): void
+    {
+        $owner = $this->owner();
+        $channel = $this->webhook(['verified_at' => now(), 'autopublish' => true]);
+
+        // A `for update` read outside a transaction of its own is released
+        // as soon as it returns; the suite's own transaction would hide that.
+        $baseline = DB::transactionLevel();
+        $levels = [];
+        DB::listen(function (QueryExecuted $query) use (&$levels): void {
+            if (str_contains($query->sql, 'for update') && str_contains($query->sql, '"channels"')) {
+                $levels[] = DB::transactionLevel();
+            }
+        });
+
+        $this->actingAs($owner)->patch(route('channels.autopublish', $channel))->assertRedirect();
+        $this->actingAs($owner)->patch(route('channels.update', $channel), [
+            'name' => $channel->name,
+            'type' => $channel->type->value,
+            'config' => ['endpoint' => 'https://website.test/blog/webhook-2'],
+            'is_enabled' => true,
+            'autopublish' => false,
+        ])->assertRedirect();
+        $channel->forceFill(['autopublish_declined_at' => null])->save();
+        $this->ping($channel);
+
+        $this->assertCount(3, $levels);
+        foreach ($levels as $level) {
+            $this->assertGreaterThan($baseline, $level);
+        }
     }
 
     private function scheduleOn(Channel $channel, User $owner, string $mode = 'automatic'): ArticleSchedule

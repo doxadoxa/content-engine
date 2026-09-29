@@ -264,31 +264,39 @@ final class ArticleSchedules
      * locked, and must still hold that same connection: an owner who edited
      * or disabled it while the test was in flight has an untested channel,
      * and a pass for the old one says nothing about it.
+     *
+     * One transaction, so the lock lasts from the read to the write. The
+     * delivery job runs outside one, and a lock taken in autocommit is gone
+     * the moment its SELECT returns — an owner switching the channel off in
+     * between would be overwritten, and the schedules they had just blocked
+     * released. The owner's side takes the same lock (ChannelController).
      */
     public function adoptProjectAutopublish(Channel $tested): void
     {
-        $channel = Channel::query()->whereKey($tested->getKey())->lockForUpdate()->first();
+        DB::transaction(function () use ($tested): void {
+            $channel = Channel::query()->whereKey($tested->getKey())->lockForUpdate()->first();
 
-        if ($channel === null || ! $this->sameConnection($tested, $channel)) {
-            return;
-        }
+            if ($channel === null || ! $this->sameConnection($tested, $channel)) {
+                return;
+            }
 
-        $channel->loadMissing('project');
-        $project = $channel->project;
+            $channel->loadMissing('project');
+            $project = $channel->project;
 
-        if ($channel->autopublish || $channel->autopublish_declined_at !== null || ! $project->autopublish
-            || ! $this->publishers->canAutopublish($channel->type) || ! $this->compatible($channel)) {
-            return;
-        }
+            if ($channel->autopublish || $channel->autopublish_declined_at !== null || ! $project->autopublish
+                || ! $this->publishers->canAutopublish($channel->type) || ! $this->compatible($channel)) {
+                return;
+            }
 
-        $eligible = $project->channels()->get()->filter(fn (Channel $candidate): bool => $this->compatible($candidate));
+            $eligible = $project->channels()->get()->filter(fn (Channel $candidate): bool => $this->compatible($candidate));
 
-        if ($eligible->count() !== 1) {
-            return;
-        }
+            if ($eligible->count() !== 1) {
+                return;
+            }
 
-        $channel->forceFill(['autopublish' => true])->save();
-        $this->followChannelAutopublish($channel);
+            $channel->forceFill(['autopublish' => true])->save();
+            $this->followChannelAutopublish($channel);
+        });
     }
 
     /** @return Collection<int, Channel> */
