@@ -31,6 +31,7 @@ use App\Support\Health\StackHealth;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use App\Visibility\VisibilityReport;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -47,20 +48,32 @@ class HomeController extends Controller
         Request $request,
         CurrentProject $current,
         StackHealth $health,
-    ): Response {
+    ): Response|RedirectResponse {
         /** @var User $user */
         $user = $request->user();
 
         $project = $current->get();
 
         if ($project === null) {
+            // "Pick one" and "make your first" are different screens, and
+            // this distinction came off the dashboard's own empty state —
+            // the one part of it worth keeping verbatim. Archived ones are
+            // nothing to pick.
+            $hasProjects = ProjectManager::live($user)->exists();
+
+            // "Make your first" is a button into the wizard, which is behind
+            // `verified`. For an address nobody has proved yet that button led
+            // one click into setting up and then straight back out to the
+            // inbox, so ask for the proof here, before offering the setup.
+            // Only with nothing to show: somebody re-proving a changed address
+            // keeps the work they already have.
+            if (! $hasProjects && ! $user->hasVerifiedEmail()) {
+                return to_route('verification.notice');
+            }
+
             return Inertia::render('home/index', [
                 'project' => null,
-                // "Pick one" and "make your first" are different screens, and
-                // this distinction came off the dashboard's own empty state —
-                // the one part of it worth keeping verbatim. Archived ones are
-                // nothing to pick.
-                'hasProjects' => ProjectManager::live($user)->exists(),
+                'hasProjects' => $hasProjects,
                 'checklist' => [],
             ]);
         }

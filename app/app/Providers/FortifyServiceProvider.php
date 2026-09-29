@@ -11,6 +11,8 @@ use App\Actions\Fortify\UpdateUserProfileInformation;
 use App\Billing\PlanSelection;
 use App\Enums\SocialLoginProvider;
 use App\Http\Controllers\Auth\SocialLoginController;
+use App\Http\Responses\RegisterResponse;
+use App\Http\Responses\VerifyEmailResponse;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -18,11 +20,21 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 use Inertia\Inertia;
+use Laravel\Fortify\Contracts\RegisterResponse as RegisterResponseContract;
+use Laravel\Fortify\Contracts\VerifyEmailResponse as VerifyEmailResponseContract;
 use Laravel\Fortify\Features;
 use Laravel\Fortify\Fortify;
 
 class FortifyServiceProvider extends ServiceProvider
 {
+    public function register(): void
+    {
+        // Proving the address comes before setting anything up, not halfway
+        // into it. See the two responses for the order this puts things in.
+        $this->app->singleton(RegisterResponseContract::class, RegisterResponse::class);
+        $this->app->singleton(VerifyEmailResponseContract::class, VerifyEmailResponse::class);
+    }
+
     public function boot(): void
     {
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
@@ -87,6 +99,9 @@ class FortifyServiceProvider extends ServiceProvider
 
         Fortify::verifyEmailView(fn (Request $request) => Inertia::render('auth/verify-email', [
             'status' => $request->session()->get('status'),
+            // Shown back, because a typo in it is the likeliest reason the
+            // mail never comes, and nobody can spot one they cannot see.
+            'email' => (string) $request->user()?->email,
         ]));
     }
 

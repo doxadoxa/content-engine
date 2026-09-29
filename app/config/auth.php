@@ -116,4 +116,19 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Email Domain Check
+    |--------------------------------------------------------------------------
+    |
+    | Whether signing up or changing an address asks DNS if the domain accepts
+    | mail, so a mistyped domain is an error on the form rather than a
+    | verification mail that never arrives. Off in the suite and in local
+    | development, which use reserved names like `.test` that the check
+    | refuses without a lookup.
+    |
+    */
+
+    'check_email_domains' => (bool) env('AUTH_CHECK_EMAIL_DOMAINS', true),
+
 ];
