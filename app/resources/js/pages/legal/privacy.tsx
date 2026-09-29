@@ -174,9 +174,18 @@ export default function Privacy({
                         <strong>legal obligation</strong>.
                     </li>
                     <li>
-                        <strong>Optional cookies</strong>, if any are ever set.
-                        Basis: <strong>your consent</strong>, which you can
-                        withdraw at any time.
+                        <strong>Optional cookies</strong>. Basis:{' '}
+                        <strong>your consent</strong>, which you can withdraw at
+                        any time.
+                    </li>
+                    <li>
+                        <strong>To pay the partners who refer customers</strong>{' '}
+                        — if you arrived through a partner&apos;s link and
+                        allowed marketing cookies, we tell our affiliate
+                        network, Anderro, your email address when you sign up
+                        and the amounts you pay us, so that partner can be paid
+                        their commission. Nobody else&apos;s sign-up or payments
+                        are shared. Basis: <strong>your consent</strong>.
                     </li>
                 </ul>
                 <p>
@@ -219,7 +228,8 @@ export default function Privacy({
                                         {provider.name}
                                         {provider.optional && (
                                             <span className="mt-1 block text-[11px] font-normal text-[#918b84]">
-                                                Only if you connect it
+                                                {provider.condition ??
+                                                    'Only if you connect it'}
                                             </span>
                                         )}
                                     </td>
@@ -349,14 +359,15 @@ export default function Privacy({
 
             <Section id="cookies" title="9. Cookies">
                 <p>
-                    {entity.product} sets only the cookies it needs to work and
-                    to remember settings you chose yourself. It runs no tag
-                    manager and no advertising pixel, and it builds no profile
-                    of you. It does report its own errors, and — if you allow
-                    analytics — time how quickly pages load; neither of those
-                    sets a cookie. The{' '}
-                    <Link href={cookiePolicy.url()}>cookie policy</Link> lists
-                    every cookie by name, and you can{' '}
+                    {entity.product} sets the cookies it needs to work and to
+                    remember settings you chose yourself. If you allow marketing
+                    cookies, our affiliate network also sets two, so a partner
+                    who referred you can be credited. It runs no tag manager and
+                    no advertising pixel, and it builds no profile of you. It
+                    does report its own errors, and — if you allow analytics —
+                    time how quickly pages load; neither of those sets a cookie.
+                    The <Link href={cookiePolicy.url()}>cookie policy</Link>{' '}
+                    lists every cookie by name, and you can{' '}
                     <button
                         type="button"
                         onClick={openPreferences}

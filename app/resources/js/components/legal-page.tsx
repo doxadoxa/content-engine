@@ -41,6 +41,8 @@ export type Subprocessor = {
     purpose: string;
     region: string;
     optional: boolean;
+    /* Why an optional provider is optional, when it is not "you connect it". */
+    condition?: string;
 };
 
 /* Generated from the routes themselves (`@/routes/legal`), so a path that

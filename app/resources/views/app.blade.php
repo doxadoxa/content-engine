@@ -11,6 +11,14 @@
              re-asks everybody rather than carrying old consent forward onto a
              list they never saw. --}}
         <meta name="consent-version" content="{{ config('legal.consent_version') }}">
+
+        {{-- The affiliate script's public key, read by resources/js/lib/affiliates.ts.
+             Absent unless both Anderro keys are configured, and even then the
+             script is not loaded until somebody allows marketing cookies. --}}
+        @php($anderro = app(\App\Affiliates\Anderro::class))
+        @if ($anderro->isConfigured())
+            <meta name="anderro-key" content="{{ $anderro->publicKey() }}">
+        @endif
         <meta name="description" content="Avyo turns brand strategy into search content and measurable organic growth.">
         <meta property="og:site_name" content="Avyo">
         <meta property="og:type" content="website">

@@ -9,6 +9,7 @@ import AppLayout from '@/layouts/app-layout';
 import AuthLayout from '@/layouts/auth-layout';
 import MarketingLayout from '@/layouts/marketing-layout';
 import SettingsLayout from '@/layouts/settings/layout';
+import { initAffiliateTracking } from '@/lib/affiliates';
 import { initSentry } from '@/lib/observability';
 
 const appName = import.meta.env.VITE_APP_NAME || 'Avyo';
@@ -20,6 +21,13 @@ const appName = import.meta.env.VITE_APP_NAME || 'Avyo';
  * and tracing is.
  */
 initSentry();
+
+/*
+ * Before Inertia takes over the address bar, because a partner's `?ref=` code is
+ * read from the address this visit landed on. Loads nothing until marketing
+ * cookies are allowed — see lib/affiliates.ts.
+ */
+initAffiliateTracking();
 
 createInertiaApp({
     title: (title) => (title ? `${title} - ${appName}` : appName),

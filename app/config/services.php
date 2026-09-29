@@ -57,6 +57,21 @@ return [
         'auth_redirect' => env('GOOGLE_AUTH_REDIRECT_URI'),
     ],
 
+    /*
+     * The affiliate network that credits partners for the customers they send
+     * us — see App\Affiliates\Anderro. Both keys or neither: with only one,
+     * nothing runs, because half a partner programme records referrals it can
+     * never pay out on.
+     *
+     * The public key is rendered into every page for the browser script. The
+     * secret key authenticates the server's sign-up and payment events and
+     * never leaves this side.
+     */
+    'anderro' => [
+        'public_key' => env('ANDERRO_PUBLIC_KEY'),
+        'secret_key' => env('ANDERRO_SECRET_KEY'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

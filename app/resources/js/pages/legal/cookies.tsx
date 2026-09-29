@@ -42,15 +42,16 @@ export default function Cookies({
         >
             <Section id="summary" title="The short version">
                 <p>
-                    {entity.product} sets {cookies.length} cookies. All of them
-                    are ours — no third party sets a cookie through this site.
-                    None of them track you, build a profile of you, or follow
-                    you to another website.
+                    {entity.product} can set {cookies.length} cookies. Most are
+                    ours alone. The exceptions are two marketing cookies our
+                    affiliate network, Anderro, sets only if a partner&apos;s
+                    link brought you here and you allow marketing: they let us
+                    pay that partner. None of them build an advertising profile
+                    of you or follow you to other websites.
                 </p>
                 <p>
                     <strong>
-                        There are currently no analytics, advertising, or
-                        marketing cookies at all.
+                        There are no analytics or advertising cookies.
                     </strong>{' '}
                     The analytics permission is still worth answering, because
                     it governs something that sets no cookie: whether we may
@@ -182,10 +183,25 @@ export default function Cookies({
                     where nobody has answered this banner yet.
                 </p>
 
-                <h3>Marketing — your choice, currently unused</h3>
+                <h3>Marketing — your choice</h3>
                 <p>
-                    Would tell us which campaigns bring people here. Nothing of
-                    the kind is installed today, and the same rule applies.
+                    Some people find {entity.product} through a partner who
+                    earns a commission for referring them. If you arrived
+                    through a partner&apos;s link and allow marketing, we load
+                    the script of our affiliate network, Anderro, from{' '}
+                    <code>track.anderro.com</code>. It writes the two cookies
+                    marked Marketing above on this site, and tells Anderro about
+                    that visit.
+                </p>
+                <p>
+                    If you then sign up, we tell Anderro your email address, and
+                    after that the amounts you pay us, so the partner can be
+                    paid. If you found us any other way, the script is never
+                    loaded and nobody is told anything. Until you say yes,
+                    neither cookie exists. Switching this off deletes both
+                    cookies, reloads the page — the only way to stop a script
+                    that is already running — and stops us reporting your
+                    payments from then on.
                 </p>
             </Section>
 

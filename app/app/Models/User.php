@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Cashier\Billable;
@@ -86,6 +87,17 @@ class User extends Authenticatable implements MustVerifyEmail
     public function oauthIdentities(): HasMany
     {
         return $this->hasMany(OauthIdentity::class);
+    }
+
+    /**
+     * The partner who referred this account, if one did, and the consent that
+     * lets us report its payments to them — see {@see AffiliateReferral}.
+     *
+     * @return HasOne<AffiliateReferral, $this>
+     */
+    public function affiliateReferral(): HasOne
+    {
+        return $this->hasOne(AffiliateReferral::class);
     }
 
     /**

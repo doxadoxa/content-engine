@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Affiliates\Anderro;
 use Closure;
 use Illuminate\Foundation\Vite;
 use Illuminate\Http\Request;
@@ -11,7 +12,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class SecurityHeaders
 {
-    public function __construct(private readonly Vite $vite) {}
+    public function __construct(private readonly Vite $vite, private readonly Anderro $anderro) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -38,6 +39,15 @@ final class SecurityHeaders
         // so the header stays exactly as strict as it was.
         foreach ($this->sentryOrigins() as $origin) {
             $connectSources[] = $origin;
+        }
+
+        // The affiliate script is loaded from Anderro's host and posts its
+        // click events back to it. Both only when it is configured — and even
+        // then nothing is fetched until somebody allows marketing cookies,
+        // which is the browser's decision to make, not the header's.
+        if ($this->anderro->isConfigured()) {
+            $scriptSources[] = Anderro::ORIGIN;
+            $connectSources[] = Anderro::ORIGIN;
         }
 
         $response->headers->set('Content-Security-Policy', implode('; ', [

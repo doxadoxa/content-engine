@@ -10,6 +10,7 @@ use App\Http\Middleware\RequireEntitlement;
 use App\Http\Middleware\RequireProjectOwner;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SentryContext;
+use App\Http\Middleware\SyncReferralConsent;
 use App\Http\Middleware\ThrottleRegistration;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -56,7 +57,18 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Read by the inline script in app.blade.php before React mounts, so
         // the page does not flash light before switching to dark.
-        $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
+        //
+        // The other three are written by JavaScript — the consent record by
+        // resources/js/lib/consent.ts, the other two by Anderro's script — so
+        // they were never encrypted, and the middleware would read each of
+        // them as null. App\Affiliates\Referrals needs all three.
+        $middleware->encryptCookies(except: [
+            'appearance',
+            'sidebar_state',
+            'avyo_consent',
+            '_anderro_vid',
+            '_anderro_ref',
+        ]);
 
         $middleware->web(append: [
             SecurityHeaders::class,
@@ -65,6 +77,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // route change.
             ThrottleRegistration::class,
             HandleAppearance::class,
+            // A referred customer's marketing answer, carried to the referral
+            // that decides whether their payments are reported.
+            SyncReferralConsent::class,
             // Before Inertia, deliberately: Inertia\Middleware::handle
             // registers its shared data on the way *in*, so a project resolved
             // after it would not reach the page.
