@@ -206,6 +206,59 @@ final class StrandedDeliveryTest extends TestCase
     }
 
     #[Test]
+    public function rows_that_only_just_fell_due_do_not_crowd_out_a_long_overdue_one(): void
+    {
+        Queue::fake();
+
+        // Behind a backlog, rows created long ago but due only recently — a
+        // retry scheduled for ten minutes back — are overdue, and not yet past
+        // patience. Taken first by creation time, they would fill the batch
+        // every minute and the row that has waited for hours would never be
+        // reached.
+        $patienceMinutes = intdiv(PublishSweepStrandedCommand::PATIENCE_SECONDS, 60);
+        $justDue = collect(range(1, 2))->map(fn (): WebhookDelivery => $this->pending(
+            minutesAgo: $patienceMinutes * 4,
+            attributes: [
+                'status' => DeliveryStatus::Retrying,
+                'attempts' => 1,
+                'next_attempt_at' => now()->subMinutes(10),
+            ],
+        ));
+        $longOverdue = $this->pending(minutesAgo: $patienceMinutes + 5);
+        DeliverWebhookJob::dispatch('some-other-delivery');
+
+        /** @var PendingCommand $pending */
+        $pending = $this->artisan('publish:sweep-stranded', ['--limit' => 2]);
+        $pending->assertSuccessful()->run();
+
+        $this->assertSame(1, $longOverdue->refresh()->sweeps);
+        $justDue->each(fn (WebhookDelivery $delivery) => $this->assertSame(0, $delivery->refresh()->sweeps));
+    }
+
+    #[Test]
+    public function the_longest_overdue_rows_are_swept_first(): void
+    {
+        Queue::fake();
+
+        // Ordered by when a row fell due, not when it was made: a retry made
+        // yesterday that fell due five minutes ago is less lost than a row
+        // made an hour ago that nobody ever attempted.
+        $recentlyDue = $this->pending(minutesAgo: 24 * 60, attributes: [
+            'status' => DeliveryStatus::Retrying,
+            'attempts' => 1,
+            'next_attempt_at' => now()->subMinutes(5),
+        ]);
+        $longOverdue = $this->pending(minutesAgo: 60);
+
+        /** @var PendingCommand $pending */
+        $pending = $this->artisan('publish:sweep-stranded', ['--limit' => 1]);
+        $pending->assertSuccessful()->run();
+
+        $this->assertSame(1, $longOverdue->refresh()->sweeps);
+        $this->assertSame(0, $recentlyDue->refresh()->sweeps);
+    }
+
+    #[Test]
     public function page_operations_waiting_on_the_lane_are_not_a_delivery_backlog(): void
     {
         Queue::fake();

@@ -99,12 +99,9 @@ class PublishSweepStrandedCommand extends Command
     {
         $limit = max(1, (int) $this->option('limit'));
 
-        $stranded = StrandedDeliveries::scope(WebhookDelivery::acrossProjects())
-            ->orderBy('created_at')
-            ->limit($limit)
-            ->get();
+        $query = StrandedDeliveries::scope(WebhookDelivery::acrossProjects());
 
-        if ($stranded->isEmpty()) {
+        if (! $query->clone()->exists()) {
             // The ordinary answer, and a success. A sweep that found nothing is
             // a queue that is working.
             $this->components->info('No delivery is stranded.');
@@ -112,18 +109,36 @@ class PublishSweepStrandedCommand extends Command
             return self::SUCCESS;
         }
 
-        if (($waiting = $backlog->waiting()) > 0) {
+        $waiting = $backlog->waiting();
+        $overdue = 0;
+
+        if ($waiting > 0) {
             // Not a failure of the sweep, and not a reason to spend one on a
             // row whose job may be among those waiting. Only rows that have
-            // outwaited any reasonable backlog go ahead. A warning rather than
-            // a notice, because a lane that stays backed up is the thing
-            // somebody should look at.
-            $patience = Carbon::now()->subSeconds(self::PATIENCE_SECONDS);
-            $overdue = $stranded->count();
-            $stranded = $stranded->filter(
-                fn (WebhookDelivery $delivery): bool => ($delivery->next_attempt_at ?? $delivery->created_at)?->lessThanOrEqualTo($patience) ?? false,
+            // outwaited any reasonable backlog go ahead. In SQL, before the
+            // limit: filtered afterwards, a batch of rows that only just fell
+            // due could fill the limit every minute and keep a row that has
+            // been overdue for hours from ever being looked at.
+            $overdue = $query->clone()->count();
+            $query->whereRaw(
+                'coalesce(next_attempt_at, created_at) <= ?',
+                [Carbon::now()->subSeconds(self::PATIENCE_SECONDS)],
             );
+        }
 
+        // Longest overdue first, measured the way StrandedDeliveries measures
+        // it — not by `created_at`, which a replayed or retrying row keeps from
+        // long before it fell due. The same expression as the partial index,
+        // so the index can hand the rows over already in order.
+        $stranded = $query
+            ->orderByRaw('coalesce(next_attempt_at, created_at)')
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        if ($waiting > 0) {
+            // A warning rather than a notice, because a lane that stays backed
+            // up is the thing somebody should look at.
             Log::warning('The publishing queue is backed up; only long-overdue deliveries were swept', [
                 'waiting_jobs' => $waiting,
                 'overdue_deliveries' => $overdue,
