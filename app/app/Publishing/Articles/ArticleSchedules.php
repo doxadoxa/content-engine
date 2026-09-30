@@ -159,7 +159,10 @@ final class ArticleSchedules
                 'local_time' => $input['local_time'], 'timezone' => $project->timezone,
                 'mode' => $mode, 'held_for_review' => $held, 'status' => 'active',
                 'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => $keep ? $schedule->delivery_id : null,
+                // Kept only for the same website: an attempt that went to the
+                // old one says nothing about the new one, and resending it
+                // there would be refused as not matching, round and round.
+                'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => $keep && WebhookDelivery::query()->whereKey($schedule->delivery_id)->value('channel_id') === $channel->id ? $schedule->delivery_id : null,
             ])->save();
 
             return $schedule;
@@ -689,13 +692,16 @@ final class ArticleSchedules
             return [null, null];
         }
         $mayHaveArrived = $previous->attempts > 0 || $previous->article_attempt_started_at !== null;
-        if (! $mayHaveArrived || ! app(ArticleDeliveryGuard::class)->snapshotMatches($previous, $item)) {
+        // A different website never had this attempt, so it gets a fresh
+        // delivery of its own, and its event comes from its own history.
+        $sameWebsite = $previous->channel_id === $schedule->channel_id;
+        if (! $mayHaveArrived || ! $sameWebsite || ! app(ArticleDeliveryGuard::class)->snapshotMatches($previous, $item)) {
             // Its identity is spent either way: a later article with the same
             // words must make a new row, not find this dead one.
             $previous->forceFill(['dispatch_key' => null])->save();
             $schedule->delivery_id = null;
 
-            return [null, $mayHaveArrived ? WebhookEvent::Updated : null];
+            return [null, $mayHaveArrived && $sameWebsite ? WebhookEvent::Updated : null];
         }
         $lock = Cache::lock('webhook-delivery:'.$previous->id, WebhookPublisher::lockSeconds());
         if (! $lock->get()) {

@@ -578,6 +578,34 @@ final class NoDeadEndsTest extends TestCase
         $this->assertSame(DeliveryStatus::Retrying, $delivery->fresh()->status);
     }
 
+    #[Test]
+    public function moving_a_waiting_article_to_another_website_sends_it_there(): void
+    {
+        [$item, $waiting] = $this->sentByAvyoAndRetrying();
+        $this->asOwner()->patch(route('channels.update', $this->channel), ['is_enabled' => '0'])->assertSessionHasNoErrors();
+        $this->retry($waiting);
+        $this->assertSame(WebhookPublisher::WAITING_FOR_RESUME, $waiting->fresh()->error);
+
+        // The owner gives up on the paused website and picks another one.
+        $other = Channel::factory()->create(['type' => ChannelType::Webhook, 'is_enabled' => true, 'secret' => 'other-secret',
+            'config' => ['endpoint' => 'https://other.test/articles'], 'verified_at' => now()]);
+        app(ArticleSchedules::class)->save($this->owner, $item->fresh(),
+            [...$this->slot(), 'expected_version' => $this->scheduleOf($item)->version, 'local_date' => now()->addDay()->toDateString(), 'channel_id' => $other->id]);
+
+        // The old attempt stays with the old website; the new one gets its own.
+        $this->assertNull($this->scheduleOf($item)->delivery_id);
+        $this->travel(2)->days();
+        $sent = app(ArticleSchedules::class)->dispatch($item->fresh());
+        $this->assertCount(1, $sent);
+        $this->assertNotSame($waiting->id, $sent[0]->id);
+        $this->assertSame($other->id, $sent[0]->channel_id);
+
+        $this->answer = 200;
+        app(WebhookPublisher::class)->attempt($sent[0]);
+        $this->assertPublished($item, $sent[0]);
+        Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://other.test/'));
+    }
+
     /** @return array{ContentItem, WebhookDelivery} */
     private function sentByAvyoAndRetrying(): array
     {

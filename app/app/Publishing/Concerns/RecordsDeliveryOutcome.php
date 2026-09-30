@@ -11,6 +11,7 @@ use App\Enums\WebhookEvent;
 use App\Http\Controllers\ApprovalController;
 use App\Models\ArticleSchedule;
 use App\Models\Channel;
+use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleDeliveryGuard;
 use App\Publishing\ConnectionFingerprint;
@@ -234,7 +235,12 @@ trait RecordsDeliveryOutcome
         // committed after the first look has settled the question, and a
         // hand-back decided before it would overwrite a person's approval.
         if (app(ArticleDeliveryGuard::class)->verdict($delivery) !== null) {
-            $dead = DB::transaction(function () use ($delivery): ?WebhookDelivery {
+            $projectId = $unit->project_id;
+            $dead = DB::transaction(function () use ($delivery, $projectId): ?WebhookDelivery {
+                // Project first, as dispatch(), mutate() and approval take
+                // it: the same order everywhere is what keeps a concurrent
+                // Approve from deadlocking against this.
+                Project::query()->whereKey($projectId)->lockForUpdate()->first();
                 ArticleSchedule::query()->where('content_item_id', $delivery->content_item_id)->lockForUpdate()->first();
                 $delivery->unsetRelation('contentItem');
                 $verdict = app(ArticleDeliveryGuard::class)->verdict($delivery);
