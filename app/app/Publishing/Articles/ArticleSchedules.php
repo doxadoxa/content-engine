@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\HeldArticles;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\PublishToChannels;
 use App\Publishing\WebhookPublisher;
@@ -141,7 +142,7 @@ final class ArticleSchedules
             $held = $input['hold'] ?? $schedule->held_for_review ?? false;
             $newlyHeld = $held && ! ($schedule->held_for_review ?? false) && $project->autopublish;
             $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
-            $this->withdrawQueued($schedule);
+            $keep = $this->withdrawQueued($schedule);
             $mode = self::modeFor($project, $held);
             // A schedule that waits for review takes back Avyo's own approval,
             // always. A person's only when the owner has just ticked "Hold"
@@ -158,42 +159,62 @@ final class ArticleSchedules
                 'local_time' => $input['local_time'], 'timezone' => $project->timezone,
                 'mode' => $mode, 'held_for_review' => $held, 'status' => 'active',
                 'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => null,
+                'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => $keep ? $schedule->delivery_id : null,
             ])->save();
 
             return $schedule;
         });
     }
 
-    public function change(ContentItem $item, int $expectedVersion, string $action): ArticleSchedule
+    /**
+     * Pause, resume or cancel one article's schedule.
+     *
+     * `$sendingBack` is the Send back button, which pauses the schedule while
+     * the article is reworked. On an article handed back after an attempt
+     * ({@see awaitOwner()}) that pause has nothing to add — it already waits
+     * for the owner, and paused it would wait on a resume its past date
+     * refuses — so it is left as it is. Anything else asked of such an
+     * article is refused: approving it or sending it back are the two ways
+     * forward, and a cancelled or resumed schedule holding an attempt that may
+     * have arrived had none.
+     */
+    public function change(ContentItem $item, int $expectedVersion, string $action, bool $sendingBack = false): ArticleSchedule
     {
-        return $this->mutate($item, function (?ArticleSchedule $schedule) use ($expectedVersion, $action): ArticleSchedule {
+        return $this->mutate($item, function (?ArticleSchedule $schedule) use ($item, $expectedVersion, $action, $sendingBack): ArticleSchedule {
             $this->version($schedule, $expectedVersion);
             abort_if($schedule === null, 404);
             $this->require(in_array($action, ['pause', 'resume', 'cancel'], true), 'Unknown scheduling action.');
             $this->require($schedule->status !== 'completed', 'This article was already published.');
+            if (self::awaitingOwnerAfterAttempt($schedule) && $this->mayHaveArrived($schedule)) {
+                if ($sendingBack && $action === 'pause') {
+                    return $schedule;
+                }
+                $this->require(false, 'Approve it or send it back instead.');
+            }
             if ($action === 'resume') {
                 $this->require($schedule->publish_at->isFuture(), 'The original time has passed. Choose a new publication time.');
             }
-            // Handed back after an attempt: nothing is on its way (the
-            // delivery is already a dead letter) and the article already waits
-            // for the owner, so pausing it — which is what sending it back
-            // asks — has nothing to add. Paused, it would wait on a resume its
-            // past date refuses. For any other change the delivery stays
-            // linked, so a later approval settles it under the same id.
-            $handedBack = self::awaitingOwnerAfterAttempt($schedule);
-            if ($handedBack && $action === 'pause') {
+            $keep = $this->withdrawQueued($schedule);
+            // Sent back while its attempt waited on the website: that attempt
+            // may have arrived, so the article waits for the owner with it
+            // still linked, exactly as a hand-back does, and their approval
+            // settles it under the same id.
+            if ($keep && $sendingBack && $action === 'pause') {
+                $item->loadMissing('project');
+                $schedule->forceFill([
+                    'status' => 'blocked', 'blocked_code' => BlockedCode::NEEDS_APPROVAL, 'blocked_reason' => self::NEEDS_APPROVAL,
+                    'approved_by_avyo' => false, 'mode' => self::modeFor($item->project, $schedule->held_for_review),
+                    'version' => $schedule->version + 1,
+                ])->save();
+
                 return $schedule;
-            }
-            if (! $handedBack) {
-                $this->withdrawQueued($schedule);
             }
             $schedule->forceFill([
                 'status' => match ($action) {
                     'pause' => 'paused', 'cancel' => 'canceled', default => 'active'
                 },
                 'version' => $schedule->version + 1, 'blocked_reason' => null, 'blocked_code' => null,
-                'delivery_id' => $handedBack ? $schedule->delivery_id : null,
+                'delivery_id' => $keep ? $schedule->delivery_id : null,
             ])->save();
 
             return $schedule;
@@ -489,13 +510,13 @@ final class ArticleSchedules
                     }
                     $at = CarbonImmutable::now()->setTimezone($project->timezone);
                     $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
-                    $this->withdrawQueued($schedule);
+                    $keep = $this->withdrawQueued($schedule);
                     $schedule->fill([
                         'channel_id' => $channel->id, 'publish_at' => $at->utc(), 'local_date' => $at->toDateString(),
                         'local_time' => $at->format('H:i'), 'timezone' => $project->timezone,
                         'mode' => self::modeFor($project, held: false), 'held_for_review' => false, 'approved_by_avyo' => false, 'status' => 'active',
                         'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                        'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => null,
+                        'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => $keep ? $schedule->delivery_id : null,
                     ])->save();
 
                     return $schedule;
@@ -590,7 +611,8 @@ final class ArticleSchedules
                 'id' => $channel->id, 'name' => $channel->name, 'type' => $channel->type->value,
             ])->all(),
             'can_schedule' => ! $item->state->isLive() && $schedule?->status !== 'completed'
-                && ($delivery === null || ($delivery->attempts === 0 && $delivery->article_attempt_started_at === null)),
+                && ($delivery === null || $delivery->status === DeliveryStatus::DeadLetter
+                    || ($delivery->attempts === 0 && $delivery->article_attempt_started_at === null)),
         ];
     }
 
@@ -668,9 +690,9 @@ final class ArticleSchedules
         }
         $mayHaveArrived = $previous->attempts > 0 || $previous->article_attempt_started_at !== null;
         if (! $mayHaveArrived || ! app(ArticleDeliveryGuard::class)->snapshotMatches($previous, $item)) {
-            if (! $mayHaveArrived) {
-                $previous->forceFill(['dispatch_key' => null])->save();
-            }
+            // Its identity is spent either way: a later article with the same
+            // words must make a new row, not find this dead one.
+            $previous->forceFill(['dispatch_key' => null])->save();
             $schedule->delivery_id = null;
 
             return [null, $mayHaveArrived ? WebhookEvent::Updated : null];
@@ -717,18 +739,53 @@ final class ArticleSchedules
         }
     }
 
-    private function withdrawQueued(ArticleSchedule $schedule): void
+    /**
+     * Take the schedule's delivery off the queue before the schedule changes,
+     * and say whether the schedule must stay linked to it.
+     *
+     * - Never attempted: dead-lettered and its identity released, unlinked.
+     * - Already a dead letter: nothing is in flight. Linked still if it was
+     *   attempted, so the next send reconciles with it (see resendAfterApproval()).
+     * - Waiting on a paused or broken website ({@see HeldArticles}): nothing is
+     *   in flight either, but it may have been attempted before the wait. It is
+     *   dead-lettered under its lock and stays linked, keeping its identity.
+     * - Anything else attempted is in flight or unsettled, and refused.
+     */
+    private function withdrawQueued(ArticleSchedule $schedule): bool
     {
         if ($schedule->delivery_id === null) {
-            return;
+            return false;
         }
         $delivery = WebhookDelivery::query()->findOrFail($schedule->delivery_id);
-        $this->require($delivery->attempts === 0 && $delivery->article_attempt_started_at === null && $delivery->status !== DeliveryStatus::Delivered,
-            'A delivery has already been attempted. Review its result before creating another publication.');
+        $this->require($delivery->status !== DeliveryStatus::Delivered, 'This article was already published.');
+        if ($delivery->status === DeliveryStatus::DeadLetter) {
+            if ($this->mayHaveArrived($schedule)) {
+                return true;
+            }
+            $delivery->forceFill(['dispatch_key' => null])->save();
+
+            return false;
+        }
+        $attempted = $delivery->attempts > 0 || $delivery->article_attempt_started_at !== null;
+        $waiting = $delivery->status === DeliveryStatus::Retrying && in_array($delivery->error, HeldArticles::waitingErrors(), true);
+        $this->require(! $attempted || $waiting, 'A delivery has already been attempted. Review its result before creating another publication.');
         $delivery->forceFill(['status' => DeliveryStatus::DeadLetter, 'next_attempt_at' => null,
             'error' => 'The publication schedule changed before this delivery was sent.'])->save();
+        if ($attempted) {
+            return true;
+        }
         // Safe to release the content identity only when no request was attempted.
         $delivery->forceFill(['dispatch_key' => null])->save();
+
+        return false;
+    }
+
+    /** Whether the schedule's delivery was attempted, and so may have reached the website. */
+    private function mayHaveArrived(ArticleSchedule $schedule): bool
+    {
+        $delivery = $schedule->delivery_id === null ? null : WebhookDelivery::query()->find($schedule->delivery_id);
+
+        return $delivery !== null && ($delivery->attempts > 0 || $delivery->article_attempt_started_at !== null);
     }
 
     private function version(?ArticleSchedule $schedule, ?int $expected): void

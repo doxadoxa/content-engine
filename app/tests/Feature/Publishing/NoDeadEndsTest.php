@@ -15,8 +15,10 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleApproval;
+use App\Publishing\Articles\ArticleDeliveryGuard;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\Articles\BlockedCode;
+use App\Publishing\Articles\PublicationStatus;
 use App\Publishing\HeldArticles;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\Jobs\ResumeHeldArticlesJob;
@@ -35,6 +37,7 @@ use Illuminate\Validation\ValidationException;
 use Mockery\Expectation;
 use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -253,9 +256,13 @@ final class NoDeadEndsTest extends TestCase
         $this->assertSame('content.updated', $sent[0]->payload_snapshot['event']);
         $this->assertSame('A better title', $sent[0]->payload_snapshot['content']['title']);
         $this->assertSame(DeliveryStatus::DeadLetter, $delivery->fresh()->status);
+        // Superseded: its identity is released and Try again is not offered.
+        $this->assertNull($delivery->fresh()->dispatch_key);
+        $this->assertFalse(PublicationStatus::canTryAgain($delivery->fresh()));
         $this->answer = 200;
         app(WebhookPublisher::class)->attempt($sent[0]);
         $this->assertPublished($item, $sent[0]);
+        $this->assertFalse(PublicationStatus::canTryAgain($delivery->fresh()));
     }
 
     #[Test]
@@ -433,6 +440,142 @@ final class NoDeadEndsTest extends TestCase
             $this->assertGreaterThan($baseline, $level);
         }
         $this->assertNull(Channel::query()->find($this->channel->id));
+    }
+
+    #[Test]
+    public function a_handed_back_attempt_cannot_be_cancelled_resumed_or_paused_into_a_corner(): void
+    {
+        [$item, $delivery] = $this->sentByAvyoAndRetrying();
+        $this->project->update(['autopublish' => false]);
+        app(ArticleSchedules::class)->followProject($this->project);
+        $this->retry($delivery);
+        $version = $this->scheduleOf($item)->version;
+
+        foreach (['cancel', 'resume', 'pause'] as $action) {
+            try {
+                app(ArticleSchedules::class)->change($item, $version, $action);
+                $this->fail("{$action} must be refused.");
+            } catch (ValidationException $refusal) {
+                $this->assertSame('Approve it or send it back instead.', $refusal->getMessage());
+            }
+        }
+        $this->assertTrue(ArticleSchedules::awaitingOwnerAfterAttempt($this->scheduleOf($item)));
+    }
+
+    #[Test]
+    public function pausing_a_handed_back_article_that_was_never_attempted_pauses_it(): void
+    {
+        $item = $this->draft();
+        $this->engineSchedule($item);
+        $this->travel(1)->hours();
+        $delivery = app(ArticleSchedules::class)->dispatch($item)[0];
+        $item->forceFill(['factcheck' => ['passed' => false]])->save();
+        app(WebhookPublisher::class)->attempt($delivery);
+        $this->assertSame(0, $delivery->fresh()->attempts);
+
+        $schedule = app(ArticleSchedules::class)->change($item, $this->scheduleOf($item)->version, 'pause');
+
+        $this->assertSame(['paused', null], [$schedule->status, $schedule->delivery_id]);
+    }
+
+    #[Test]
+    public function resuming_a_website_edited_while_paused_tests_it_and_the_passing_test_sends_the_article(): void
+    {
+        [$item, $delivery] = $this->sentByAvyoAndRetrying();
+        $this->asOwner()->patch(route('channels.update', $this->channel), ['is_enabled' => '0'])->assertSessionHasNoErrors();
+        $this->retry($delivery);
+        $this->asOwner()->patch(route('channels.update', $this->channel), ['config' => ['endpoint' => 'https://moved.test/articles']])
+            ->assertSessionHasNoErrors();
+        $this->assertNull($this->channel->fresh()->verified_at);
+
+        $this->asOwner()->patch(route('channels.update', $this->channel), ['is_enabled' => '1'])
+            ->assertInertiaFlash('toast.message', 'Resumed. Testing the connection…');
+
+        // No longer "paused": it waits for the test now running.
+        $this->assertSame(WebhookPublisher::WAITING_FOR_WEBSITE, $delivery->fresh()->error);
+        $test = WebhookDelivery::query()->whereNull('content_item_id')->latest('created_at')->firstOrFail();
+        $this->answer = 200;
+        app(WebhookPublisher::class)->attempt($test);
+        $due = $delivery->fresh()->next_attempt_at;
+        $this->assertNotNull($due);
+        app(WebhookPublisher::class)->attempt($delivery->fresh(), $due);
+        $this->assertPublished($item, $delivery);
+    }
+
+    #[Test]
+    public function an_attempt_waiting_on_a_paused_website_can_be_sent_back_and_is_published_once_approved(): void
+    {
+        [$item, $delivery] = $this->sentByAvyoAndRetrying();
+        $this->asOwner()->patch(route('channels.update', $this->channel), ['is_enabled' => '0'])->assertSessionHasNoErrors();
+        $this->retry($delivery);
+        $this->assertSame(WebhookPublisher::WAITING_FOR_RESUME, $delivery->fresh()->error);
+
+        $this->asOwner()->post(route('content.reject', $item), ['reason' => 'off_brand', 'note' => 'Warmer, please.'])
+            ->assertSessionHasNoErrors();
+
+        // Withdrawn, but still the attempt the next send reconciles with.
+        $this->assertSame(DeliveryStatus::DeadLetter, $delivery->fresh()->status);
+        $this->assertNotNull($delivery->fresh()->dispatch_key);
+        $this->assertTrue(ArticleSchedules::awaitingOwnerAfterAttempt($this->scheduleOf($item)));
+        $this->assertSame(ContentItemState::Draft, $item->fresh()->state);
+
+        $this->asOwner()->patch(route('channels.update', $this->channel), ['is_enabled' => '1'])->assertSessionHasNoErrors();
+        $this->asOwner()->post("/content/{$item->id}/approve")->assertSessionHasNoErrors();
+        $this->answer = 200;
+        app(WebhookPublisher::class)->attempt($delivery->fresh());
+
+        $this->assertPublished($item, $delivery);
+        $this->assertSame(1, WebhookDelivery::query()->where('content_item_id', $item->id)->count());
+        Http::assertSentCount(2);
+    }
+
+    #[Test]
+    public function a_pause_starts_the_broken_website_day_afresh(): void
+    {
+        [, $delivery] = $this->sentByAvyoAndRetrying();
+        $this->channel->forceFill(['verified_at' => null])->save();
+        $this->retry($delivery);
+        $this->assertSame(1, $delivery->fresh()->deferrals);
+
+        $this->channel->forceFill(['is_enabled' => false])->save();
+        $this->retry($delivery);
+
+        $this->assertSame([WebhookPublisher::WAITING_FOR_RESUME, 0], [$delivery->fresh()->error, $delivery->fresh()->deferrals]);
+    }
+
+    #[Test]
+    public function the_website_is_read_afresh_when_deciding_to_wait(): void
+    {
+        $item = $this->draft();
+        $this->engineSchedule($item);
+        $this->travel(1)->hours();
+        $delivery = app(ArticleSchedules::class)->dispatch($item)[0]->load('channel');
+        $this->assertTrue($delivery->channel->is_enabled);
+
+        Channel::query()->whereKey($this->channel->id)->update(['is_enabled' => false]);
+
+        $this->assertTrue(app(ArticleDeliveryGuard::class)->websiteUnusable($delivery));
+    }
+
+    #[Test]
+    public function the_dead_letter_and_the_hand_back_commit_together_or_not_at_all(): void
+    {
+        [, $delivery] = $this->sentByAvyoAndRetrying();
+        $this->project->update(['autopublish' => false]);
+        app(ArticleSchedules::class)->followProject($this->project);
+        ArticleSchedule::saving(function (ArticleSchedule $schedule): void {
+            if ($schedule->isDirty('blocked_code')) {
+                throw new RuntimeException('The hand-back failed.');
+            }
+        });
+
+        try {
+            $this->retry($delivery);
+            $this->fail('The hand-back was meant to fail.');
+        } catch (RuntimeException) {
+        }
+
+        $this->assertSame(DeliveryStatus::Retrying, $delivery->fresh()->status);
     }
 
     /** @return array{ContentItem, WebhookDelivery} */

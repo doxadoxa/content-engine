@@ -229,14 +229,27 @@ trait RecordsDeliveryOutcome
 
         // Dead-lettered and handed back in one transaction: an Approve landing
         // between the two would relink a delivery that was still retrying.
-        $verdict = app(ArticleDeliveryGuard::class)->verdict($delivery);
-        if ($verdict !== null) {
-            return DB::transaction(function () use ($delivery, $verdict): WebhookDelivery {
+        //
+        // Decided again under the schedule's row lock: an Approve that
+        // committed after the first look has settled the question, and a
+        // hand-back decided before it would overwrite a person's approval.
+        if (app(ArticleDeliveryGuard::class)->verdict($delivery) !== null) {
+            $dead = DB::transaction(function () use ($delivery): ?WebhookDelivery {
+                ArticleSchedule::query()->where('content_item_id', $delivery->content_item_id)->lockForUpdate()->first();
+                $delivery->unsetRelation('contentItem');
+                $verdict = app(ArticleDeliveryGuard::class)->verdict($delivery);
+                if ($verdict === null) {
+                    return null;
+                }
                 $dead = $this->deadLetter($delivery, $verdict->reason);
                 $verdict->handBack();
 
                 return $dead;
             });
+            if ($dead !== null) {
+                return $dead;
+            }
+            $unit = $delivery->contentItem ?? $unit;
         }
         $refusal = app(ArticleBusinessFacts::class)->refusal($unit);
         if ($refusal !== null) {
@@ -275,6 +288,9 @@ trait RecordsDeliveryOutcome
                 'response_code' => null,
                 'error' => self::WAITING_FOR_RESUME,
                 'next_attempt_at' => now()->addHours(self::PAUSED_WAIT_HOURS),
+                // A fresh start for the broken-website day, should it come
+                // after the owner resumes.
+                'deferrals' => 0,
             ])->save();
 
             return $delivery;

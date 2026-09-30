@@ -139,7 +139,7 @@ class ApprovalController extends Controller
     {
         $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->first();
         if ($schedule !== null && ! in_array($schedule->status, ['paused', 'canceled', 'completed'], true)) {
-            app(ArticleSchedules::class)->change($item, $schedule->version, 'pause');
+            app(ArticleSchedules::class)->change($item, $schedule->version, 'pause', sendingBack: true);
         }
 
         DB::transaction(function () use ($request, $item): void {

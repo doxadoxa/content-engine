@@ -139,20 +139,28 @@ class ChannelController extends Controller
         $wasEnabled = $channel->is_enabled;
         [$channel, $connectionChanged] = $this->applyUpdate($request, $channel);
 
-        // Resumed and working: articles held while it was paused go now, not
-        // at their next look hours away. A changed connection is tested first,
-        // and the test that passes sends them instead.
-        if (! $wasEnabled && $channel->is_enabled && ! $connectionChanged && app(ArticleSchedules::class)->compatible($channel)) {
+        // Resumed: what waited for the pause now waits for the website to
+        // work. Working, it goes now rather than at its next look hours away.
+        // Not working — the connection was edited while paused, or never
+        // passed — it is tested, and the test that passes sends it.
+        $resumed = ! $wasEnabled && $channel->is_enabled;
+        $working = app(ArticleSchedules::class)->compatible($channel);
+        if ($resumed) {
+            app(HeldArticles::class)->unpaused($channel);
+        }
+        $testing = ($connectionChanged || ($resumed && ! $working)) && $this->test($channel);
+        if ($resumed && $working && ! $connectionChanged) {
             app(HeldArticles::class)->resume($channel);
         }
 
         $message = match (true) {
-            $connectionChanged && $this->test($channel) => 'Saved. Testing the connection…',
+            $resumed && $testing => 'Resumed. Testing the connection…',
+            $testing => 'Saved. Testing the connection…',
             $wasEnabled && ! $channel->is_enabled => "Paused. Avyo won't send articles to {$channel->name} until you resume.",
-            ! $wasEnabled && $channel->is_enabled => "Resumed. Avyo sends articles to {$channel->name} again.",
+            $resumed && $working => "Resumed. Avyo sends articles to {$channel->name} again.",
+            $resumed => "Resumed. Test the connection before Avyo sends articles to {$channel->name}.",
             default => 'Saved.',
         };
-
         Inertia::flash('toast', ['type' => 'success', 'message' => $message]);
 
         return to_route('channels.index');

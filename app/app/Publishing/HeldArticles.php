@@ -31,6 +31,17 @@ final class HeldArticles
     }
 
     /**
+     * The owner resumed the website: what waited for the pause now waits for
+     * the website to work, which is what it will say until a test passes.
+     */
+    public function unpaused(Channel $channel): void
+    {
+        WebhookDelivery::acrossProjects()->where('channel_id', $channel->getKey())
+            ->where('status', DeliveryStatus::Retrying->value)->where('error', WebhookPublisher::WAITING_FOR_RESUME)
+            ->update(['error' => WebhookPublisher::WAITING_FOR_WEBSITE]);
+    }
+
+    /**
      * Make every article waiting for this website due now.
      *
      * Each gets a job carrying that time, so the job it already had finds

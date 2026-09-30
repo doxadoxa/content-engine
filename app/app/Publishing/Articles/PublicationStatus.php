@@ -216,11 +216,20 @@ final class PublicationStatus
      */
     public static function canTryAgain(WebhookDelivery $delivery, ?ArticleSchedule $schedule = null): bool
     {
-        return $delivery->status === DeliveryStatus::DeadLetter && ! DeliveryExplanation::isWithdrawn($delivery->error)
-            // Handed back to the owner on this very attempt: approving sends
-            // it again, and a replay would only be refused.
-            && ! ($schedule !== null && $schedule->delivery_id === $delivery->getKey()
-                && ArticleSchedules::awaitingOwnerAfterAttempt($schedule));
+        if ($delivery->status !== DeliveryStatus::DeadLetter || DeliveryExplanation::isWithdrawn($delivery->error)
+            || $delivery->contentItem?->state->isLive()) {
+            return false;
+        }
+        $schedule ??= $delivery->article_schedule_id === null ? null : ArticleSchedule::query()->find($delivery->article_schedule_id);
+        if ($schedule === null) {
+            return true;
+        }
+
+        // Only the attempt the schedule still follows: one superseded by a
+        // fresh delivery, or taken off it, would be refused by the replay.
+        // Nor one handed back to the owner: approving sends it again.
+        return $schedule->delivery_id === $delivery->getKey()
+            && ! ArticleSchedules::awaitingOwnerAfterAttempt($schedule);
     }
 
     /** Held while the website's connection fails its test; it goes when a test passes. */
