@@ -10,6 +10,7 @@ use App\Http\Middleware\RequireEntitlement;
 use App\Http\Middleware\RequireProjectOwner;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SentryContext;
+use App\Http\Middleware\ServeHttpsAwayFromLocalhost;
 use App\Http\Middleware\SyncReferralConsent;
 use App\Http\Middleware\ThrottleRegistration;
 use Illuminate\Foundation\Application;
@@ -47,6 +48,11 @@ return Application::configure(basePath: dirname(__DIR__))
             static fn (string $proxy): string => trim($proxy),
             explode(',', (string) Env::get('TRUSTED_PROXIES', '127.0.0.1,::1')),
         ))));
+
+        // Global, and after the proxies are trusted, so the request is https
+        // before any route middleware reads it — `signed` above all. Without
+        // it every verification link failed its signature in production.
+        $middleware->append(ServeHttpsAwayFromLocalhost::class);
 
         // A webhook sender has no session and no CSRF token to present, and
         // the POST is authenticated by the HMAC over its raw body instead — see

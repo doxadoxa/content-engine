@@ -31,6 +31,7 @@ use App\Feedback\FakeSearchConsole;
 use App\Feedback\GoogleAnalytics;
 use App\Feedback\GoogleSearchConsole;
 use App\Feedback\ModelCitationChecker;
+use App\Http\Middleware\ServeHttpsAwayFromLocalhost;
 use App\Media\AtlasSeedreamImageGeneration;
 use App\Media\Contracts\ImageGenerationProvider;
 use App\Media\FakeImageGeneration;
@@ -273,9 +274,9 @@ class AppServiceProvider extends ServiceProvider
             return;
         }
 
-        $host = $this->app->make('request')->getHost();
-
-        if (in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+        // The request itself is made https by the middleware of the same
+        // name, which runs later and is what signed URLs are checked against.
+        if (ServeHttpsAwayFromLocalhost::isLocal($this->app->make('request')->getHost())) {
             return;
         }
 
