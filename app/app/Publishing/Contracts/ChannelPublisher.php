@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Publishing\Contracts;
 
 use App\Enums\ChannelType;
+use App\Enums\WebhookEvent;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
@@ -47,8 +48,8 @@ use Carbon\CarbonInterface;
  *   is the question `ChannelController::ping()` used to ask as
  *   `$channel->type === ChannelType::Webhook`. "Can this channel be tested" is
  *   a property of its transport, not of its type spelling.
- * - {@see canAutopublish()} is the same replacement for the type check on
- *   `ChannelController::autopublish()`. A transport that cannot be left
+ * - {@see canAutopublish()} is asked before an article is approved with
+ *   nobody watching (`ArticleApproval`). A transport that cannot be left
  *   unattended says so once, here, instead of in every caller.
  *
  * What is *not* here is the whole point. No HMAC, no endpoint URL, no
@@ -72,7 +73,12 @@ interface ChannelPublisher
      * must produce one delivery, because the operator pressing publish again
      * is asking "did that go out", not "send it twice".
      */
-    public function queue(ContentItem $unit, Channel $channel): WebhookDelivery;
+    /**
+     * `$event` is normally left to the transport, which knows what this
+     * destination has already received. It is named when that history is not
+     * the whole story: an attempt that may have arrived without an answer.
+     */
+    public function queue(ContentItem $unit, Channel $channel, ?WebhookEvent $event = null): WebhookDelivery;
 
     /**
      * One attempt at one delivery. Never throws — see the class docblock.

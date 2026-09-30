@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\DeliveryStatus;
+use App\Enums\WebhookEvent;
+use App\Models\ArticleSchedule;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\PublicationStatus;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\DeliveryExplanation;
 use App\Publishing\StrandedDeliveries;
+use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -46,8 +52,21 @@ class DeliveryController extends Controller
 
         $deliveries = $query->paginate(50)->withQueryString();
 
-        $deliveries->through(function (WebhookDelivery $delivery): array {
+        $timezone = app(CurrentProject::class)->get()->timezone ?? 'UTC';
+        // The schedules pointing at a row on this page, in one query: a row
+        // handed back for the owner's approval is not one to try again.
+        $schedules = ArticleSchedule::query()
+            ->whereIn('delivery_id', collect($deliveries->items())->map(fn (WebhookDelivery $delivery): string => $delivery->getKey())->all())
+            ->get()->keyBy('delivery_id');
+        $deliveries->through(function (WebhookDelivery $delivery) use ($timezone, $schedules): array {
+            $attempt = PublicationStatus::attempt($delivery, $timezone);
+
             return [
+                // The owner's words for the row: what happened, why, and when
+                // Avyo tries again. The event and code are kept for the
+                // details toggle, where a developer looks for them.
+                ...$attempt,
+                'is_test' => ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value,
                 'id' => $delivery->getKey(),
                 'delivery_id' => $delivery->delivery_id,
                 'event' => (string) ($delivery->payload_snapshot['event'] ?? ''),
@@ -62,7 +81,8 @@ class DeliveryController extends Controller
                 'channel' => $delivery->channel->name,
                 'content' => $delivery->contentItem?->title,
                 'content_id' => $delivery->content_item_id,
-                'can_replay' => $delivery->status === DeliveryStatus::DeadLetter,
+                // Not on one that was taken back: a replay would only be refused.
+                'can_replay' => PublicationStatus::canTryAgain($delivery, $schedules->get($delivery->getKey())),
                 // A row nothing is going to attempt. `pending` reads as healthy
                 // — it is what every delivery looks like for its first second —
                 // so without this the one failure with no automatic way out is
@@ -78,7 +98,12 @@ class DeliveryController extends Controller
             'status' => is_string($status) ? $status : null,
             'statuses' => array_map(static fn (DeliveryStatus $case): array => [
                 'value' => $case->value,
-                'label' => $case->label(),
+                'label' => match ($case) {
+                    DeliveryStatus::Pending => 'Sending',
+                    DeliveryStatus::Delivered => 'Published',
+                    DeliveryStatus::Retrying => 'Retrying',
+                    DeliveryStatus::DeadLetter => PublicationStatus::FAILED,
+                },
             ], DeliveryStatus::cases()),
             'dead_letters' => WebhookDelivery::query()
                 ->where('status', DeliveryStatus::DeadLetter)
@@ -103,19 +128,46 @@ class DeliveryController extends Controller
         // twice, which is the failure §9 spends its longest paragraph
         // preventing everywhere else. `isSettled()` is the enum's own name for
         // "nothing is in flight".
-        abort_unless(
-            $delivery->status->isSettled(),
-            409,
-            'This delivery has not finished yet. Resending one that is still in flight would send it twice.',
-        );
+        //
+        // A validation error rather than a bare 409, so the refusal is said
+        // beside the button that was pressed instead of on an error page.
+        if (! $delivery->status->isSettled()) {
+            throw ValidationException::withMessages([
+                'delivery' => 'Avyo is still trying to send this. Wait for the result before trying again.',
+            ]);
+        }
 
-        $replay = $publishers->forDelivery($delivery)->replay($delivery);
+        try {
+            $publishers->forDelivery($delivery)->replay($delivery);
+        } catch (ValidationException $exception) {
+            throw ValidationException::withMessages(['delivery' => self::plain($exception->getMessage())]);
+        }
 
         Inertia::flash('toast', [
             'type' => 'success',
-            'message' => "Resent as {$replay->delivery_id}.",
+            'message' => 'Sent again.',
         ]);
 
         return back();
+    }
+
+    /** The delivery guard's refusals, in the words the rest of the product uses. */
+    private static function plain(string $message): string
+    {
+        $text = strtolower($message);
+
+        return match (true) {
+            // The replay's own refusals are already written for owners.
+            str_starts_with($message, 'This article is being sent right now.'),
+            str_starts_with($message, 'Avyo is already trying') => $message,
+            str_contains($text, 'no longer matches') => "This article's schedule changed since that attempt. Pick a new date to publish it.",
+            str_contains($text, 'changed after this delivery') => 'The article changed since that attempt. Review it, then publish it again.',
+            str_contains($text, 'no longer enabled') => "Your website connection isn't working. Check it, then try again.",
+            // Everything else in the words every other screen uses, and a
+            // plain "couldn't" for a sentence nobody has named.
+            default => ($plain = DeliveryExplanation::explain(null, $message)) === null || $plain === DeliveryExplanation::GENERIC
+                ? "Avyo couldn't send it again."
+                : $plain,
+        };
     }
 }

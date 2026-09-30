@@ -11,6 +11,7 @@ use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
+use Illuminate\Validation\Validator;
 
 class ProjectRequest extends FormRequest
 {
@@ -59,6 +60,27 @@ class ProjectRequest extends FormRequest
             'weekly_target' => ['sometimes', 'required', 'integer', 'min:1', 'max:14'],
             'minimum_volume' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:100000'],
         ];
+    }
+
+    /**
+     * A YMYL project reviews every article, so it cannot ask for automatic.
+     *
+     * Every automatic approval on one is refused ("This topic needs a person
+     * to review and approve the article"), and letting the owner choose it
+     * anyway would turn the calendar into a column of blocked articles. The
+     * onboarding step makes the same refusal silently; here it is said.
+     *
+     * @return list<callable(Validator): void>
+     */
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            $project = $this->route('project');
+
+            if ($project instanceof Project && $project->is_ymyl && $this->boolean('autopublish')) {
+                $validator->errors()->add('autopublish', 'Articles on this topic need a person to approve them, so they cannot publish automatically.');
+            }
+        }];
     }
 
     /**

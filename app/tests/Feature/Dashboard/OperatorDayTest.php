@@ -12,6 +12,8 @@ use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Enums\WebhookEvent;
+use App\Http\Controllers\DeliveryController;
+use App\Models\ArticleSchedule;
 use App\Models\AssistantThread;
 use App\Models\Channel;
 use App\Models\ContentItem;
@@ -21,7 +23,9 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\BlockedCode;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\DeliveryExplanation;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\WebhookPublisher;
 use App\Support\Content\InvalidStateTransition;
@@ -100,7 +104,7 @@ final class OperatorDayTest extends TestCase
     {
         Http::fake(['receiver.test/*' => Http::response(['public_url' => 'https://example.test/x'])]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
 
         $draft = $this->draft();
         $this->scheduleForReview($draft);
@@ -145,7 +149,7 @@ final class OperatorDayTest extends TestCase
     }
 
     #[Test]
-    public function approving_without_autopublish_stops_at_approved(): void
+    public function approving_without_a_schedule_stops_at_approved(): void
     {
         Http::fake();
 
@@ -153,8 +157,8 @@ final class OperatorDayTest extends TestCase
 
         $this->actingAs($this->operator)->post(route('content.approve', $draft));
 
-        // §5.4: auto-publish is a privilege a channel earns, and this one has
-        // not. Approval means "fit to publish", not "publish now".
+        // Approval means "fit to publish", not "publish now": with no date
+        // on the calendar there is no moment for it to go out at.
         $this->assertSame(ContentItemState::Approved, $draft->refresh()->state);
         Http::assertNothingSent();
     }
@@ -167,14 +171,13 @@ final class OperatorDayTest extends TestCase
             'manual.test/*' => Http::response(['public_url' => 'https://example.test/x']),
         ]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
 
         $manual = Channel::factory()->create([
             'type' => ChannelType::Webhook,
             'name' => 'Manual destination',
             'config' => ['endpoint' => 'https://manual.test/hook'],
             'secret' => 'manual-secret',
-            'autopublish' => false,
             'verified_at' => now(),
         ]);
 
@@ -197,13 +200,12 @@ final class OperatorDayTest extends TestCase
             'manual.test/*' => Http::response(['public_url' => 'https://example.test/x']),
         ]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
         $manual = Channel::factory()->create([
             'type' => ChannelType::Webhook,
             'name' => 'Manual destination',
             'config' => ['endpoint' => 'https://manual.test/hook'],
             'secret' => 'manual-secret',
-            'autopublish' => false,
             'verified_at' => now(),
         ]);
 
@@ -584,14 +586,16 @@ final class OperatorDayTest extends TestCase
 
         $channel = Channel::query()->where('name', 'New blog')->firstOrFail();
 
-        // Configured, but not yet proven.
-        $this->assertNull($channel->verified_at);
+        // Saving is testing: a real signed ping went out with the save and
+        // came back, so it is connected on evidence rather than on a form.
+        $this->assertNotNull($channel->verified_at);
+        $channel->forceFill(['verified_at' => null])->save();
 
+        // And the test can be sent again on its own.
         $this->actingAs($this->operator)
             ->post(route('channels.ping', $channel))
             ->assertRedirect();
 
-        // A real signed ping came back, so it is connected on evidence.
         $this->assertNotNull($channel->refresh()->verified_at);
 
         Http::assertSent(fn ($request): bool => $request->header('X-Engine-Event')[0] === 'ping');
@@ -642,19 +646,18 @@ final class OperatorDayTest extends TestCase
 
         $this->actingAs($this->operator)
             ->patch(route('channels.update', $this->channel), [
-                'name' => $this->channel->name,
+                'name' => 'Renamed blog',
                 'type' => $this->channel->type->value,
                 'config' => $this->channel->config,
-                'autopublish' => true,
                 'is_enabled' => true,
             ])
             ->assertRedirect();
 
         $this->channel->refresh();
 
-        // Toggling auto-publish should not require re-pasting a token nobody
+        // Renaming a channel should not require re-pasting a token nobody
         // can read back out of the form.
-        $this->assertTrue($this->channel->autopublish);
+        $this->assertSame('Renamed blog', $this->channel->name);
         $this->assertSame('shared-secret', $this->channel->secret);
     }
 
@@ -669,27 +672,10 @@ final class OperatorDayTest extends TestCase
                 'type' => $this->channel->type->value,
                 'config' => ['endpoint' => 'https://changed.test/hook'],
                 'is_enabled' => true,
-                'autopublish' => false,
             ])
             ->assertRedirect();
 
         $this->assertNull($this->channel->refresh()->verified_at);
-    }
-
-    #[Test]
-    public function automatic_delivery_cannot_be_enabled_before_verification(): void
-    {
-        $this->actingAs($this->operator)
-            ->patch(route('channels.autopublish', $this->channel))
-            ->assertStatus(409);
-
-        $this->channel->forceFill(['verified_at' => now()])->save();
-
-        $this->actingAs($this->operator)
-            ->patch(route('channels.autopublish', $this->channel))
-            ->assertRedirect();
-
-        $this->assertTrue($this->channel->refresh()->autopublish);
     }
 
     // ------------------------------------------------------- exit criterion 3
@@ -728,6 +714,79 @@ final class OperatorDayTest extends TestCase
 
         $this->assertSame('https://example.test/x', $unit->refresh()->public_url);
         $this->assertSame(2, WebhookDelivery::query()->count());
+    }
+
+    #[Test]
+    public function only_the_owner_can_try_a_failed_publication_again(): void
+    {
+        $unit = $this->draft();
+        $unit->forceFill(['state' => ContentItemState::Approved])->save();
+        $dead = WebhookDelivery::factory()->create([
+            'channel_id' => $this->channel->getKey(), 'content_item_id' => $unit->getKey(),
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => 500, 'delivered_at' => null,
+        ]);
+        $member = User::factory()->create();
+        $member->projects()->attach($this->project, ['role' => 'operator']);
+
+        $this->actingAs($member)->withSession(['project_id' => $this->project->getKey()])
+            ->post(route('deliveries.replay', $dead))
+            ->assertForbidden();
+
+        $this->assertSame(1, WebhookDelivery::query()->count());
+    }
+
+    #[Test]
+    public function try_again_refusals_are_said_in_the_owners_words(): void
+    {
+        $plain = new \ReflectionMethod(DeliveryController::class, 'plain');
+
+        $this->assertSame(DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING, $plain->invoke(null, DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING));
+        $this->assertSame('Approve it first. Avyo sends it again once you do.', $plain->invoke(null, ArticleSchedules::NEEDS_APPROVAL));
+        $this->assertSame("Avyo couldn't send it again.", $plain->invoke(null, 'Something nobody has named.'));
+    }
+
+    #[Test]
+    public function a_row_handed_back_for_approval_offers_no_try_again_in_the_history(): void
+    {
+        $unit = $this->draft();
+        $dead = WebhookDelivery::factory()->create([
+            'channel_id' => $this->channel->getKey(), 'content_item_id' => $unit->getKey(), 'attempts' => 1,
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'error' => ArticleSchedules::NEEDS_APPROVAL,
+            'delivered_at' => null, 'payload_snapshot' => ['event' => 'content.published'],
+        ]);
+        ArticleSchedule::query()->create(['content_item_id' => $unit->getKey(), 'channel_id' => $this->channel->getKey(),
+            'publish_at' => now()->subHour(), 'local_date' => now()->toDateString(), 'local_time' => '09:00', 'timezone' => 'UTC',
+            'mode' => 'review_first', 'held_for_review' => false, 'origin' => 'manager', 'status' => 'blocked', 'version' => 1,
+            'blocked_code' => BlockedCode::NEEDS_APPROVAL, 'blocked_reason' => ArticleSchedules::NEEDS_APPROVAL, 'delivery_id' => $dead->getKey()]);
+
+        $this->actingAs($this->operator)->get(route('deliveries.index'))->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('deliveries.data.0.id', $dead->getKey())
+                ->where('deliveries.data.0.can_replay', false)
+                ->where('deliveries.data.0.explanation', 'Approve it first. Avyo sends it again once you do.'));
+    }
+
+    #[Test]
+    public function the_publishing_history_speaks_plainly_and_says_sent_again(): void
+    {
+        Http::fake(['receiver.test/*' => Http::response(['public_url' => 'https://example.test/y'], 200)]);
+        $unit = $this->draft();
+        $unit->forceFill(['state' => ContentItemState::Approved])->save();
+        $dead = WebhookDelivery::factory()->create([
+            'channel_id' => $this->channel->getKey(), 'content_item_id' => $unit->getKey(),
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => 503, 'error' => 'receiver answered 503',
+            'delivered_at' => null, 'payload_snapshot' => ['event' => 'content.published'],
+        ]);
+
+        $this->actingAs($this->operator)->get(route('deliveries.index'))->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('deliveries.data.0.label', "Couldn't publish")
+                ->where('deliveries.data.0.tone', 'problem')
+                ->where('deliveries.data.0.explanation', 'Your website had an error (503).'));
+
+        $this->actingAs($this->operator)->post(route('deliveries.replay', $dead))
+            ->assertRedirect()->assertSessionHasNoErrors()
+            ->assertInertiaFlash('toast.message', 'Sent again.');
     }
 
     // ------------------------------------------------------- exit criterion 4
@@ -893,7 +952,7 @@ final class OperatorDayTest extends TestCase
         $at = now($this->project->timezone)->addMinute()->startOfMinute();
         app(ArticleSchedules::class)->save($this->operator, $draft, [
             'expected_version' => null, 'local_date' => $at->toDateString(), 'local_time' => $at->format('H:i'),
-            'mode' => 'review_first', 'channel_id' => $this->channel->id,
+            'hold' => true, 'channel_id' => $this->channel->id,
         ]);
         Http::assertNothingSent();
         $this->travelTo($at->utc());

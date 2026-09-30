@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Publishing\Articles\ArticleApproval;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\BlockedCode;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\PublishToChannels;
 use App\Publishing\WebhookPublisher;
@@ -51,13 +52,13 @@ final class ArticleScheduleTest extends TestCase
         parent::setUp();
         $this->travelTo(CarbonImmutable::parse('2026-09-15T08:00:00Z'));
         Queue::fake();
-        $this->project = Project::factory()->create();
+        $this->project = Project::factory()->create(['autopublish' => true]);
         app(CurrentProject::class)->set($this->project);
         $this->owner = User::factory()->create();
         $this->owner->projects()->attach($this->project, ['role' => 'owner']);
         $this->channel = Channel::factory()->create(['type' => ChannelType::Webhook,
             'config' => ['endpoint' => 'https://receiver.test/articles'], 'is_enabled' => true,
-            'verified_at' => now(), 'autopublish' => true]);
+            'verified_at' => now()]);
         $this->item = ContentItem::factory()->draft()->create(['body_html' => '<p>A useful article.</p>', 'factcheck' => ['passed' => true]]);
         $this->mock(ArticleScore::class, function (MockInterface $mock): void {
             /** @var Expectation $expectation */
@@ -87,7 +88,7 @@ final class ArticleScheduleTest extends TestCase
     #[Test]
     public function review_first_never_approves_itself_and_explicit_approval_uses_the_same_schedule(): void
     {
-        $this->schedule('review_first');
+        $this->schedule(hold: true);
         $this->travelTo(CarbonImmutable::parse('2026-09-15T09:00:00Z'));
         $this->assertSame([], app(ArticleSchedules::class)->dispatch($this->item));
         $this->assertSame(ContentItemState::Draft, $this->item->fresh()->state);
@@ -219,14 +220,16 @@ final class ArticleScheduleTest extends TestCase
     }
 
     #[Test]
-    public function channel_automatic_stop_applies_to_explicit_manager_schedules(): void
+    public function turning_the_project_to_review_first_after_queueing_prevents_the_worker_request(): void
     {
         $this->schedule();
-        $this->channel->update(['autopublish' => false]);
         $this->travelTo(CarbonImmutable::parse('2026-09-15T09:00:00Z'));
-        $this->assertSame([], app(ArticleSchedules::class)->dispatch($this->item));
-        $this->assertSame('blocked', ArticleSchedule::query()->firstOrFail()->status);
-        Queue::assertNothingPushed();
+        $delivery = app(ArticleSchedules::class)->dispatch($this->item)[0];
+        $this->project->update(['autopublish' => false]);
+        Http::fake();
+        app(WebhookPublisher::class)->attempt($delivery);
+        Http::assertNothingSent();
+        $this->assertSame(DeliveryStatus::DeadLetter, $delivery->fresh()->status);
     }
 
     #[Test]
@@ -275,10 +278,35 @@ final class ArticleScheduleTest extends TestCase
     }
 
     #[Test]
+    public function connecting_the_first_website_does_not_release_a_backlog_of_past_dates(): void
+    {
+        $this->project->update(['autopublish' => true, 'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
+        $this->channel->update(['verified_at' => null]);
+        $overdue = ContentItem::factory()->draft()->create(['body_html' => '<p>Written last week.</p>', 'factcheck' => ['passed' => true]]);
+        $upcoming = ContentItem::factory()->draft()->create(['body_html' => '<p>Due tomorrow.</p>', 'factcheck' => ['passed' => true]]);
+        $past = app(ArticleSchedules::class)->scheduleNew($overdue, now()->addHour());
+        $future = app(ArticleSchedules::class)->scheduleNew($upcoming, now()->addDays(3));
+        $this->assertNotNull($past);
+        $this->assertNotNull($future);
+
+        // The website is connected two days later.
+        $this->travel(2)->days();
+        $this->channel->update(['verified_at' => now()]);
+        /** @var PendingCommand $command */
+        $command = $this->artisan('publish:approved', ['project' => $this->project->slug]);
+        $command->assertSuccessful()->run();
+
+        $past->refresh();
+        $this->assertSame([$this->channel->id, 'blocked', BlockedCode::MISSED_DATE], [$past->channel_id, $past->status, $past->blocked_code]);
+        $this->assertSame([$this->channel->id, 'active', null], [$future->fresh()->channel_id, $future->fresh()->status, $future->fresh()->blocked_code]);
+        $this->assertSame(ContentItemState::Draft, $overdue->fresh()->state);
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
     public function new_review_first_projects_inherit_real_times_without_automatic_approval(): void
     {
         $this->project->update(['autopublish' => false, 'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
-        $this->channel->update(['autopublish' => false]);
         $new = ContentItem::factory()->draft()->create();
         $schedule = app(ArticleSchedules::class)->scheduleNew($new, now()->addHour());
         $this->assertNotNull($schedule);
@@ -406,14 +434,14 @@ final class ArticleScheduleTest extends TestCase
         $this->actingAs($member)->delete('/content/'.$this->item->id.'/schedule', ['expected_version' => 1])->assertForbidden();
     }
 
-    private function schedule(string $mode = 'automatic', ?int $expected = null, string $time = '10:00'): ArticleSchedule
+    private function schedule(bool $hold = false, ?int $expected = null, string $time = '10:00'): ArticleSchedule
     {
-        return app(ArticleSchedules::class)->save($this->owner, $this->item, $this->input($mode, $expected, $time));
+        return app(ArticleSchedules::class)->save($this->owner, $this->item, $this->input($hold, $expected, $time));
     }
 
-    /** @return array{expected_version: int|null, local_date: string, local_time: string, mode: string, channel_id: string} */
-    private function input(string $mode = 'automatic', ?int $expected = null, string $time = '10:00'): array
+    /** @return array{expected_version: int|null, local_date: string, local_time: string, hold: bool, channel_id: string} */
+    private function input(bool $hold = false, ?int $expected = null, string $time = '10:00'): array
     {
-        return ['expected_version' => $expected, 'local_date' => '2026-09-15', 'local_time' => $time, 'mode' => $mode, 'channel_id' => $this->channel->id];
+        return ['expected_version' => $expected, 'local_date' => '2026-09-15', 'local_time' => $time, 'hold' => $hold, 'channel_id' => $this->channel->id];
     }
 }

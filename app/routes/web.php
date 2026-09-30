@@ -251,11 +251,20 @@ Route::middleware(['auth'])->group(function (): void {
     // A real signed ping, which is what turns "configured" into "connected".
     Route::post('channels/{channel}/ping', [ChannelController::class, 'ping'])
         ->middleware('project.owner')->name('channels.ping');
-    Route::patch('channels/{channel}/autopublish', [ChannelController::class, 'autopublish'])
-        ->middleware('project.owner')->name('channels.autopublish');
+    Route::delete('channels/{channel}', [ChannelController::class, 'destroy'])
+        ->middleware('project.owner')->name('channels.destroy');
+    // The webhook secret, for the owner's developer: read back one press at a
+    // time (never in a page load), or replaced and re-tested.
+    Route::post('channels/{channel}/secret/reveal', [ChannelController::class, 'revealSecret'])
+        ->middleware(['project.owner', 'throttle:30,1'])->name('channels.secret.reveal');
+    Route::post('channels/{channel}/secret', [ChannelController::class, 'regenerateSecret'])
+        ->middleware(['project.owner', 'throttle:10,1'])->name('channels.secret.regenerate');
 
     Route::get('deliveries', [DeliveryController::class, 'index'])->name('deliveries.index');
-    Route::post('deliveries/{delivery}/replay', [DeliveryController::class, 'replay'])->name('deliveries.replay');
+    // Owner-only: sending an article to the website again is the same
+    // decision as publishing it, and the button is only shown to owners.
+    Route::post('deliveries/{delivery}/replay', [DeliveryController::class, 'replay'])
+        ->middleware('project.owner')->name('deliveries.replay');
 
     Route::get('metering', MeteringController::class)
         ->middleware('project.owner')->name('metering.index');

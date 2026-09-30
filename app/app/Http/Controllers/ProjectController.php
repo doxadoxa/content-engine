@@ -14,6 +14,7 @@ use App\Integrations\Google\GooglePanel;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\Pivot;
@@ -76,6 +77,9 @@ class ProjectController extends Controller
                     'article_automation_started_at' => $locked->onboarding['article_automation_started_at'] ?? now()->toIso8601String()];
             }
             $locked->update($data);
+            if ($locked->wasChanged('autopublish')) {
+                app(ArticleSchedules::class)->followProject($locked);
+            }
         });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => "{$project->name} updated."]);
@@ -263,6 +267,7 @@ class ProjectController extends Controller
             'status' => $project->status->value,
             'timezone' => $project->timezone,
             'autopublish' => $project->autopublish,
+            'is_ymyl' => $project->is_ymyl,
             'article_scheduling_enabled' => is_string($project->onboarding['article_automation_started_at'] ?? null),
             'default_locale' => $project->default_locale,
             'locales' => $project->locales,

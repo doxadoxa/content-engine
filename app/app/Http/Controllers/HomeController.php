@@ -24,6 +24,7 @@ use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Onboarding\WebsiteChecklist;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\FirstArticle;
 use App\Support\Content\ManagerContent;
 use App\Support\Engine\FirstRun;
 use App\Support\Engine\WorkInFlight;
@@ -86,6 +87,14 @@ class HomeController extends Controller
             ],
             'hasProjects' => true,
             'checklist' => WebsiteChecklist::for($project),
+            // "Get your first article live": business, website, first
+            // article. The top of this screen until the first article is out,
+            // preview included. Not deferred: for a new project it is the
+            // point of the page, and it must not paint in late.
+            'first_article' => fn (): ?array => app(FirstArticle::class)->for(
+                $project,
+                $user->projects()->whereKey($project->getKey())->wherePivot('role', 'owner')->exists(),
+            ),
 
             // The conversations, newest first — the handful worth offering a
             // route back into. The box on this screen starts a new one; the
@@ -197,13 +206,16 @@ class HomeController extends Controller
             $publication = $schedules->props($item);
 
             return ['id' => $item->id, 'title' => $item->title, 'status' => $publication['status'],
+                'presentation' => $publication['presentation'],
                 'publish_at' => $item->state->isLive() ? $item->published_at?->toIso8601String() : ($publication['schedule']['publish_at'] ?? null),
                 'reason' => $publication['schedule']['blocked_reason'] ?? null];
         };
-        $upcoming = ManagerContent::query()->whereNotIn('state', ['published', 'refreshing'])
-            ->whereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'active')->where('publish_at', '>=', now()))
+        // The same articles the "Scheduled" count counts, soonest first —
+        // including one being sent right now or already overdue, which the
+        // old "active and in the future" filter dropped from view entirely.
+        $upcoming = ManagerContent::query('scheduled')
             ->orderBy(ArticleSchedule::query()->select('publish_at')->whereColumn('content_item_id', 'content_items.id')->limit(1))
-            ->with(['articleSchedule.delivery', 'project.channels'])->limit(5)->get();
+            ->with(['articleSchedule.delivery.channel', 'project.channels'])->limit(5)->get();
 
         return [
             'mode' => $project->autopublish ? 'automatic' : 'review_first', 'timezone' => $project->timezone,
@@ -212,8 +224,8 @@ class HomeController extends Controller
             'writing' => ManagerContent::query('writing')->count(), 'needs_review' => ManagerContent::query('review')->count(),
             'scheduled' => ManagerContent::query('scheduled')->count(), 'published' => ManagerContent::query('published')->count(),
             'upcoming' => $upcoming->map($row)->values()->all(),
-            'attention' => ManagerContent::query('review')->with(['articleSchedule.delivery', 'project.channels'])->latest()->limit(5)->get()->map($row)->all(),
-            'recent' => ManagerContent::query('published')->with(['articleSchedule.delivery', 'project.channels'])->latest('published_at')->limit(4)->get()->map($row)->all(),
+            'attention' => ManagerContent::query('review')->with(['articleSchedule.delivery.channel', 'project.channels'])->latest()->limit(5)->get()->map($row)->all(),
+            'recent' => ManagerContent::query('published')->with(['articleSchedule.delivery.channel', 'project.channels'])->latest('published_at')->limit(4)->get()->map($row)->all(),
         ];
     }
 
@@ -265,9 +277,13 @@ class HomeController extends Controller
             ->inState(ContentItemState::Draft)->count();
         $articleApprovals = ContentItem::query()
             ->inState(ContentItemState::Approved)->count();
-        $dead = WebhookDelivery::query()
-            ->where('status', DeliveryStatus::DeadLetter->value)
-            ->whereNotNull('content_item_id')
+        // Articles, not rows: an article whose last attempt failed and that
+        // has not gone out since. A replayed original stays a dead letter
+        // for ever, so counting rows kept this number up after the fix.
+        $dead = ContentItem::query()
+            ->whereNotIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value])
+            ->whereIn('id', WebhookDelivery::query()->select('content_item_id')->whereNotNull('content_item_id')->where('status', DeliveryStatus::DeadLetter->value))
+            ->whereNotIn('id', WebhookDelivery::query()->select('content_item_id')->whereNotNull('content_item_id')->whereIn('status', [DeliveryStatus::Delivered->value, DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value]))
             ->count();
 
         return [

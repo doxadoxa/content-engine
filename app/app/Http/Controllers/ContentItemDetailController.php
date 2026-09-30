@@ -13,6 +13,7 @@ use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\PublicationStatus;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
 use Illuminate\Http\Request;
@@ -32,7 +33,7 @@ class ContentItemDetailController extends Controller
 
     public function __invoke(Request $request, ContentItem $item): Response
     {
-        $item->load(['localeVariants', 'assets', 'articleSchedule.delivery', 'project.channels']);
+        $item->load(['localeVariants', 'assets', 'articleSchedule.delivery.channel', 'project.channels']);
 
         $brief = $item->brand_brief_id === null
             ? null
@@ -97,9 +98,14 @@ class ContentItemDetailController extends Controller
                 ])->values()->all(),
             'deliveries' => WebhookDelivery::query()
                 ->where('content_item_id', $item->getKey())
+                ->with('channel')
                 ->latest()
                 ->get()
                 ->map(fn (WebhookDelivery $delivery): array => [
+                    // Plain status, the reason in words, and the next try —
+                    // the identifiers stay for the details toggle.
+                    ...PublicationStatus::attempt($delivery, $item->project->timezone),
+                    'channel' => $delivery->channel?->name,
                     'id' => $delivery->getKey(),
                     'delivery_id' => $delivery->delivery_id,
                     'status' => $delivery->status->value,

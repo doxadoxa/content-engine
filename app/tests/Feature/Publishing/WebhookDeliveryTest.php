@@ -375,11 +375,12 @@ final class WebhookDeliveryTest extends TestCase
     }
 
     #[Test]
-    public function the_console_publishes_approved_content_to_automatic_channels(): void
+    public function the_console_publishes_approved_content_on_an_automatic_project(): void
     {
         Http::fake(['receiver.test/*' => Http::response([])]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->project->forceFill(['autopublish' => true])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
 
         $unit = ContentItem::factory()->draft()->create(['slug' => 'via-console', 'factcheck' => ['passed' => true]]);
         $unit->approve();

@@ -1,7 +1,10 @@
 import { Head, Link, router, usePoll } from '@inertiajs/react';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
-import { publicationLabels } from '@/components/article-publication';
-import type { ArticlePublication } from '@/components/article-publication';
+import { PublicationBadge } from '@/components/article-publication';
+import type {
+    ArticlePublication,
+    PublicationPresentation,
+} from '@/components/article-publication';
 import { ContentActions } from '@/components/content-actions';
 import type { ArticleWorkflow } from '@/components/content-actions';
 import { ContextualAssistant } from '@/components/contextual-assistant';
@@ -374,13 +377,17 @@ function MobileAgenda({ units, today }: { units: Unit[]; today: string }) {
  * summary and the squares under it can never disagree.
  */
 function StateCounts({ units }: { units: Unit[] }) {
-    const counts = new Map<string, { label: string; count: number }>();
+    const counts = new Map<
+        string,
+        { presentation: PublicationPresentation; count: number }
+    >();
 
     for (const unit of units) {
-        const seen = counts.get(unit.publication.status);
+        const presentation = unit.publication.presentation;
+        const seen = counts.get(presentation.label);
 
-        counts.set(unit.publication.status, {
-            label: publicationLabels[unit.publication.status],
+        counts.set(presentation.label, {
+            presentation,
             count: (seen?.count ?? 0) + 1,
         });
     }
@@ -391,11 +398,14 @@ function StateCounts({ units }: { units: Unit[] }) {
 
     return (
         <div className="flex flex-wrap items-center gap-1.5">
-            {[...counts.entries()].map(([state, { label, count }]) => (
-                <StatePill
-                    key={state}
-                    state={state}
-                    label={`${count} ${label}`}
+            {[...counts.entries()].map(([label, { presentation, count }]) => (
+                <PublicationBadge
+                    key={label}
+                    presentation={{
+                        ...presentation,
+                        label: `${count} ${label.toLowerCase()}`,
+                        detail: null,
+                    }}
                 />
             ))}
         </div>
@@ -485,83 +495,42 @@ function UnitCard({
             <span className="line-clamp-3 text-sm leading-snug font-medium">
                 {unit.title}
             </span>
-            <StatePill
-                state={unit.publication.status}
-                label={publicationLabels[unit.publication.status]}
-            />
-            <span className="text-xs leading-5 text-muted-foreground">
+            <PublicationBadge presentation={unit.publication.presentation} />
+            <span
+                className="line-clamp-3 text-xs leading-5 text-muted-foreground"
+                title={publicationTiming(unit, pastSuggestion)}
+            >
                 {publicationTiming(unit, pastSuggestion)}
             </span>
         </Link>
     );
 }
 
+/**
+ * The card's second line. When something needs a person, or is going wrong,
+ * that is the line: the reason, not the time it was meant to go out.
+ */
 function publicationTiming(unit: Unit, pastSuggestion: boolean) {
     const schedule = unit.publication.schedule;
+    const status = unit.publication.presentation;
+
+    if (['attention', 'problem', 'progress'].includes(status.tone)) {
+        return status.detail ?? status.label;
+    }
 
     if (schedule === null) {
         if (!isSuggestedDate(unit)) {
-            return publicationLabels[unit.publication.status];
+            return status.detail ?? status.label;
         }
 
         return pastSuggestion
-            ? 'Suggested date in the past · choose a new date to schedule'
-            : 'Suggested date · not scheduled to publish';
+            ? 'Suggested date has passed. Pick a new date to schedule it.'
+            : 'Suggested date. Not scheduled yet.';
     }
 
     return schedule.status === 'active'
-        ? `${schedule.local_time} · ${schedule.mode === 'automatic' ? 'Automatic' : 'Review first'}`
-        : `${schedule.local_time} · ${publicationLabels[unit.publication.status]}`;
-}
-
-/**
- * Where a unit has got to, as a dot and a word.
- *
- * Colour alone would not say it — a monochrome screen, or anybody who does not
- * distinguish amber from green, reads the word.
- */
-function StatePill({ state, label }: { state: string; label: string }) {
-    const tone =
-        {
-            published:
-                'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-            scheduled: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
-            needs_review:
-                'border-amber-500/40 text-amber-700 dark:text-amber-400',
-            planned: 'border-amber-500/40 text-amber-700 dark:text-amber-400',
-            writing:
-                'border-violet-500/40 text-violet-600 dark:text-violet-400',
-            publishing:
-                'border-violet-500/40 text-violet-600 dark:text-violet-400',
-            blocked: 'border-rose-500/40 text-rose-700 dark:text-rose-400',
-            paused: 'border-amber-500/40 text-amber-700 dark:text-amber-400',
-            canceled: 'border-muted-foreground/30 text-muted-foreground',
-            unscheduled: 'border-muted-foreground/30 text-muted-foreground',
-        }[state] ?? 'border-muted-foreground/30 text-muted-foreground';
-
-    const dot =
-        {
-            published: 'bg-emerald-500',
-            scheduled: 'bg-sky-500',
-            needs_review: 'bg-amber-500',
-            planned: 'bg-amber-500',
-            writing: 'bg-violet-500',
-            publishing: 'bg-violet-500',
-            blocked: 'bg-rose-500',
-            paused: 'bg-amber-500',
-        }[state] ?? 'bg-muted-foreground/50';
-
-    return (
-        <span
-            className={`inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase ${tone}`}
-        >
-            <span
-                className={`size-1.5 rounded-full ${dot}`}
-                aria-hidden="true"
-            />
-            {label}
-        </span>
-    );
+        ? `${schedule.local_time} · ${schedule.mode === 'automatic' ? 'Publishes automatically' : 'Waits for your approval'}`
+        : `${schedule.local_time} · ${status.label}`;
 }
 
 function EmptyMonth() {

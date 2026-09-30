@@ -7,7 +7,9 @@ namespace App\Support\Content;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\StrandedDeliveries;
 use Illuminate\Database\Eloquent\Builder;
 
 /** Shared filters keep dashboard counts and their content links consistent. */
@@ -18,8 +20,7 @@ final class ManagerContent
     {
         $opted = is_string($project->onboarding['article_automation_started_at'] ?? null);
         $channels = app(ArticleSchedules::class)->channels($project);
-        $eligible = $project->autopublish ? $channels->where('autopublish', true) : $channels;
-        $ready = $opted && $eligible->count() === 1 && $project->status->value === 'active';
+        $ready = $opted && $channels->count() === 1 && $project->status->value === 'active';
         // Somebody who chose "decide later" in setup made a decision, and it
         // was one we offered. Telling them their publishing setup is missing
         // is nagging them for an answer they gave.
@@ -29,15 +30,14 @@ final class ManagerContent
             $project->status->value !== 'active' => 'Content work is paused. Resume the business when you are ready.',
             $channels->isEmpty() && $later => 'Articles are waiting in your calendar. Connect your website whenever you are ready, or copy each one across yourself.',
             $channels->isEmpty() => 'Connect and test your website so scheduled articles can go live.',
-            $eligible->isEmpty() => 'Enable automatic publishing for your website, or choose review first.',
-            $eligible->count() > 1 => 'You have more than one eligible website. Choose the destination on each article’s schedule.',
-            $project->autopublish => 'Avyo checks articles before publishing. You can review first or pause individual articles in Calendar.',
+            $channels->count() > 1 => 'You have more than one website connected. Choose where each article goes on its schedule.',
+            $project->autopublish => 'Avyo checks each article and publishes it on schedule. You can hold any article for your review, or pause it in Calendar.',
             default => 'New articles get a calendar date and wait for your approval before publishing.',
         };
 
         return ['mode' => $project->autopublish ? 'automatic' : 'review_first', 'opted_in' => $opted,
             'ready' => $ready, 'timezone' => $project->timezone, 'message' => $message,
-            'action' => ! $opted || $project->status->value !== 'active' ? '/projects/'.$project->id.'/edit#article-publishing' : ($eligible->count() === 1 ? '/calendar' : '/channels'),
+            'action' => ! $opted || $project->status->value !== 'active' ? '/projects/'.$project->id.'/edit#article-publishing' : ($channels->count() === 1 ? '/calendar' : '/channels'),
             'action_label' => ! $opted ? 'Choose publishing preference' : ($project->status->value !== 'active' ? 'Resume content work' : ($ready ? 'Manage schedule' : ($later && $channels->isEmpty() ? 'Connect my website' : 'Set up website publishing')))];
     }
 
@@ -54,10 +54,26 @@ final class ManagerContent
                     ->orWhereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('mode', 'review_first')->whereNotIn('status', ['paused', 'canceled', 'completed']))
                     ->orWhere(fn (Builder $unchecked) => $unchecked->where(fn (Builder $check) => $check->whereNull('factcheck')->orWhereJsonDoesntContain('factcheck', ['passed' => true]))->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')))
                     ->orWhere(fn (Builder $sensitive) => $sensitive->whereHas('project', fn (Builder $project) => $project->where('is_ymyl', true))->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')))))
-                ->orWhereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'blocked')->orWhere(fn (Builder $failed) => $failed->where('status', 'dispatching')->whereHas('delivery', fn (Builder $delivery) => $delivery->where('status', 'dead_letter'))))),
-            'scheduled' => $query->whereNotIn('state', ['published', 'refreshing'])->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')->orWhere(fn (Builder $sending) => $sending->where('status', 'dispatching')->whereDoesntHave('delivery', fn (Builder $delivery) => $delivery->where('status', 'dead_letter')))),
+                ->orWhereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'blocked')->orWhere(fn (Builder $failed) => $failed->where('status', 'dispatching')->whereIn('delivery_id', self::troubled())))),
+            // Only what is on course: waiting for its date, or being sent
+            // right now. A delivery that is retrying, stuck or failed was
+            // counted here as "Scheduled" while nothing was happening; it is
+            // in `review` instead, where somebody will look at it.
+            'scheduled' => $query->whereNotIn('state', ['published', 'refreshing'])->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')->orWhere(fn (Builder $sending) => $sending->where('status', 'dispatching')->where(fn (Builder $clear) => $clear->whereNull('delivery_id')->orWhereNotIn('delivery_id', self::troubled())))),
             'published' => $query->whereIn('state', ['published', 'refreshing']),
             default => $query,
         };
+    }
+
+    /**
+     * The deliveries that are not simply on their way: failed, retrying, or
+     * pending past the point {@see StrandedDeliveries} calls stuck.
+     *
+     * @return Builder<WebhookDelivery>
+     */
+    private static function troubled(): Builder
+    {
+        return WebhookDelivery::query()->select('id')->where(fn (Builder $any) => $any->whereIn('status', ['dead_letter', 'retrying'])
+            ->orWhere(fn (Builder $stuck) => StrandedDeliveries::scope($stuck)));
     }
 }

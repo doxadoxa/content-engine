@@ -419,7 +419,7 @@ final class EngineTickTest extends TestCase
     {
         $this->inProject($project, function () use ($draft): void {
             $draft->update(['factcheck' => ['passed' => true]]);
-            $channel = Channel::factory()->create(['verified_at' => now(), 'autopublish' => true]);
+            $channel = Channel::factory()->create(['verified_at' => now()]);
             app(ArticleSchedules::class)->scheduleNew($draft, now()->addDay(), $channel);
         });
     }

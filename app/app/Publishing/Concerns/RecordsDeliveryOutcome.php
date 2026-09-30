@@ -10,10 +10,15 @@ use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
 use App\Http\Controllers\ApprovalController;
 use App\Models\ArticleSchedule;
+use App\Models\Channel;
+use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleDeliveryGuard;
+use App\Publishing\ConnectionFingerprint;
+use App\Publishing\HeldArticles;
 use App\Publishing\WebhookPublisher;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -36,6 +41,14 @@ use Illuminate\Support\Facades\Log;
  */
 trait RecordsDeliveryOutcome
 {
+    public const string WAITING_FOR_WEBSITE = "Waiting for your website: its connection isn't working. Avyo sends this article as soon as a test passes.";
+
+    /** The owner paused the website. Waits as long as the pause lasts: Resume sends it. */
+    public const string WAITING_FOR_RESUME = 'Waiting for your website: it is paused. Avyo sends this article as soon as you resume it.';
+
+    /** What a delivery that waited a day for a broken website says when it gives up. */
+    public const string WEBSITE_STAYED_BROKEN = "Your website's connection stayed broken for a day, so this article wasn't sent. Test the connection on the Website page, then use Try again.";
+
     /**
      * How many times a delivery may be put off before it is a dead letter.
      *
@@ -48,6 +61,12 @@ trait RecordsDeliveryOutcome
      * sliding window it is eight windows.
      */
     private const int MAX_DEFERRALS = 8;
+
+    /** How long an article waits between looks at a website that isn't working: a day, over the deferral limit. */
+    private const int WEBSITE_WAIT_HOURS = 3;
+
+    /** Between looks at a paused website. Resume sends it at once; this is only the fallback. */
+    private const int PAUSED_WAIT_HOURS = 12;
 
     /** How this transport names itself in the dead-letter log. */
     abstract protected function transportName(): string;
@@ -74,9 +93,13 @@ trait RecordsDeliveryOutcome
             'next_attempt_at' => null,
             'error' => null,
             'sweeps' => 0,
+            'deferrals' => 0,
         ])->save();
 
-        if (($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value) {
+        // Only a test of the connection as it is now. One signed with a
+        // secret or sent to an address the owner has since replaced says
+        // nothing about the new one.
+        if ($this->isCurrentTest($delivery)) {
             $delivery->channel->forceFill(['verified_at' => now()])->save();
         }
 
@@ -90,7 +113,8 @@ trait RecordsDeliveryOutcome
     }
 
     /**
-     * One rung of §6.2's published ladder, or the end of it.
+     * One rung of §6.2's published ladder, or the end of it — straight to the
+     * end for a `ping`.
      *
      * The ladder lives in config and is walked here rather than being left to
      * the queue, because a receiver operator plans around "1m → 5m → 30m → 2h →
@@ -113,7 +137,13 @@ trait RecordsDeliveryOutcome
         /** @var list<int> $ladder */
         $ladder = config('publishing.backoff', []);
 
-        if ($attempt >= count($ladder)) {
+        // A test is a question somebody is waiting on, not an article that
+        // has to arrive eventually. Put on the ladder it read "Testing…" for
+        // twelve hours while the owner waited to be told what was wrong; one
+        // attempt, answered now, is what the connect screen needs.
+        $isTest = ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value;
+
+        if ($isTest || $attempt >= count($ladder)) {
             return $this->deadLetter($delivery, $error, $attempt, $latency, $status);
         }
 
@@ -127,6 +157,8 @@ trait RecordsDeliveryOutcome
             'error' => $error,
             'next_attempt_at' => now()->addSeconds($delay),
             'sweeps' => 0,
+            // A real attempt ends any wait: the next outage gets its own day.
+            'deferrals' => 0,
         ])->save();
 
         return $delivery;
@@ -196,8 +228,36 @@ trait RecordsDeliveryOutcome
             return null;
         }
 
-        $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
-            ?? app(ArticleBusinessFacts::class)->refusal($unit);
+        // Dead-lettered and handed back in one transaction: an Approve landing
+        // between the two would relink a delivery that was still retrying.
+        //
+        // Decided again under the schedule's row lock: an Approve that
+        // committed after the first look has settled the question, and a
+        // hand-back decided before it would overwrite a person's approval.
+        if (app(ArticleDeliveryGuard::class)->verdict($delivery) !== null) {
+            $projectId = $unit->project_id;
+            $dead = DB::transaction(function () use ($delivery, $projectId): ?WebhookDelivery {
+                // Project first, as dispatch(), mutate() and approval take
+                // it: the same order everywhere is what keeps a concurrent
+                // Approve from deadlocking against this.
+                Project::query()->whereKey($projectId)->lockForUpdate()->first();
+                ArticleSchedule::query()->where('content_item_id', $delivery->content_item_id)->lockForUpdate()->first();
+                $delivery->unsetRelation('contentItem');
+                $verdict = app(ArticleDeliveryGuard::class)->verdict($delivery);
+                if ($verdict === null) {
+                    return null;
+                }
+                $dead = $this->deadLetter($delivery, $verdict->reason);
+                $verdict->handBack();
+
+                return $dead;
+            });
+            if ($dead !== null) {
+                return $dead;
+            }
+            $unit = $delivery->contentItem ?? $unit;
+        }
+        $refusal = app(ArticleBusinessFacts::class)->refusal($unit);
         if ($refusal !== null) {
             return $this->deadLetter($delivery, $refusal);
         }
@@ -213,14 +273,44 @@ trait RecordsDeliveryOutcome
             ContentItemState::Refreshing,
         ];
 
-        if (in_array($unit->state, $sendable, true)) {
-            return null;
+        if (! in_array($unit->state, $sendable, true)) {
+            return $this->deadLetter(
+                $delivery,
+                'The unit was sent back for rework before this delivery went out, so it was not sent.',
+            );
         }
 
-        return $this->deadLetter(
-            $delivery,
-            'The unit was sent back for rework before this delivery went out, so it was not sent.',
-        );
+        // A website that is paused or failed its last test is a wait, not a
+        // verdict: the article waits without spending an attempt, and Resume
+        // or a passing test sends it on ({@see HeldArticles::resume()}).
+        // Dead-lettering it here left "the connection isn't working" on the
+        // article long after the connection was fixed.
+        //
+        // A pause is the owner's own choice and lasts as long as they like,
+        // so it does not spend the day a broken website is given.
+        if (app(ArticleDeliveryGuard::class)->websiteUnusable($delivery) && ! $delivery->channel->is_enabled) {
+            $delivery->forceFill([
+                'status' => DeliveryStatus::Retrying,
+                'response_code' => null,
+                'error' => self::WAITING_FOR_RESUME,
+                'next_attempt_at' => now()->addHours(self::PAUSED_WAIT_HOURS),
+                // A fresh start for the broken-website day, should it come
+                // after the owner resumes.
+                'deferrals' => 0,
+            ])->save();
+
+            return $delivery;
+        }
+        if (app(ArticleDeliveryGuard::class)->websiteUnusable($delivery)) {
+            return $this->defer(
+                $delivery,
+                now()->addHours(self::WEBSITE_WAIT_HOURS),
+                self::WAITING_FOR_WEBSITE,
+                self::WEBSITE_STAYED_BROKEN,
+            );
+        }
+
+        return null;
     }
 
     /** Persist the possibility of a remote effect before crossing the transport boundary. */
@@ -254,7 +344,42 @@ trait RecordsDeliveryOutcome
             'next_attempt_at' => null,
         ])->save();
 
+        // A failed test is the website's current answer, so it stops being
+        // used until a test passes. Otherwise the page says "Couldn't
+        // connect" while articles keep being sent to it — the two would
+        // disagree about the one question the page exists to answer.
+        if ($this->isCurrentTest($delivery)) {
+            $channel = $delivery->channel;
+            $channel->forceFill([
+                'verified_at' => null,
+                'config' => [...$channel->config, 'article_publishing_verified' => false],
+            ])->save();
+        }
+
         return $delivery;
+    }
+
+    /**
+     * Whether this delivery is a test of the website connection as it is
+     * now — the only kind whose answer may change `verified_at`.
+     *
+     * And the newest test of it: two tests of an unchanged connection can
+     * finish in either order, and the one the owner pressed last is the
+     * answer they are waiting for. An older one finishing later would
+     * otherwise undo it — clear a pass, or verify over a failure and send
+     * the articles held for it. ConnectionHealth reads the newest test too.
+     */
+    protected function isCurrentTest(WebhookDelivery $delivery): bool
+    {
+        if (($delivery->payload_snapshot['event'] ?? null) !== WebhookEvent::Ping->value) {
+            return false;
+        }
+
+        $channel = $delivery->channel;
+
+        return $channel instanceof Channel
+            && ConnectionFingerprint::stillCurrent($delivery, $channel->refresh())
+            && ! $this->newerTestExists($delivery);
     }
 
     /**
@@ -278,5 +403,17 @@ trait RecordsDeliveryOutcome
     protected function elapsed(int|float $startedAt): int
     {
         return (int) ((hrtime(true) - $startedAt) / 1_000_000);
+    }
+
+    private function newerTestExists(WebhookDelivery $delivery): bool
+    {
+        return WebhookDelivery::query()
+            ->where('channel_id', $delivery->channel_id)
+            ->whereNull('content_item_id')
+            ->where('payload_snapshot->event', WebhookEvent::Ping->value)
+            ->whereKeyNot($delivery->getKey())
+            ->where(fn ($query) => $query->where('created_at', '>', $delivery->created_at)
+                ->orWhere(fn ($same) => $same->where('created_at', $delivery->created_at)->where('id', '>', $delivery->getKey())))
+            ->exists();
     }
 }

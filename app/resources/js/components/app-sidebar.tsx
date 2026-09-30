@@ -1,5 +1,12 @@
 import { Link, usePage } from '@inertiajs/react';
-import { Search, CalendarDays, FileText, House, Sparkles } from 'lucide-react';
+import {
+    Search,
+    CalendarDays,
+    FileText,
+    Globe,
+    House,
+    Sparkles,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
 import { ProjectSwitcher } from '@/components/project-switcher';
@@ -18,6 +25,7 @@ import { openPreferences } from '@/lib/consent';
 import { dashboard } from '@/routes';
 import { index as factsIndex } from '@/routes/business-facts';
 import { index as calendarIndex } from '@/routes/calendar';
+import { index as channelsIndex } from '@/routes/channels';
 import { index as contentIndex } from '@/routes/content';
 import { index as feedbackIndex } from '@/routes/feedback';
 import { index as homeIndex } from '@/routes/home';
@@ -78,6 +86,15 @@ export function AppSidebar() {
                                     '/proposals',
                                     '/approvals',
                                 ]}
+                            />
+                            {/* Where articles go. Still /channels underneath,
+                                and "Website" everywhere a person reads it. */}
+                            <NavLink
+                                href={channelsIndex().url}
+                                icon={Globe}
+                                label="Website"
+                                current={url}
+                                also={['/deliveries']}
                             />
                             <NavLink
                                 href={performanceIndex().url}

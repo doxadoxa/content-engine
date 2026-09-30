@@ -917,8 +917,8 @@ function Steps({
                                     <div className="mt-2">
                                         <Field
                                             id="endpoint"
-                                            label="The address your developer gave you"
-                                            hint="We send a signed test request when you finish. If your site answers with anything other than success, nothing publishes and your dashboard says so."
+                                            label="Webhook address"
+                                            hint="Avyo tests it when you finish. If the test fails, Home tells you why. The secret your developer needs is on the Website page."
                                         >
                                             <Input
                                                 id="endpoint"
@@ -926,7 +926,8 @@ function Steps({
                                                 onChange={(e) =>
                                                     setEndpoint(e.target.value)
                                                 }
-                                                placeholder="https://example.com/api/content-engine"
+                                                type="url"
+                                                placeholder="https://example.com/avyo/webhook"
                                             />
                                         </Field>
                                     </div>
@@ -978,7 +979,7 @@ function Steps({
                                 <Field
                                     id="publishing-mode"
                                     label="Once an article is written"
-                                    hint="You can change this at any time, and pause any single article."
+                                    hint="You can change this at any time, and hold any single article for your review."
                                 >
                                     <Select
                                         value={
@@ -1100,8 +1101,8 @@ const DESTINATIONS: {
     },
     {
         value: 'custom',
-        label: 'Something else',
-        detail: 'Your web developer gives you an address we send finished articles to.',
+        label: 'Webhook',
+        detail: 'Your site or developer receives articles at an address.',
     },
 ];
 

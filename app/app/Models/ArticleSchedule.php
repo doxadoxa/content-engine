@@ -20,11 +20,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $local_time
  * @property string $timezone
  * @property string $mode
+ * @property bool $held_for_review
+ * @property bool $approved_by_avyo
  * @property string $status
  * @property string $origin
  * @property int|null $requested_by
  * @property int $version
  * @property string|null $blocked_reason
+ * @property string|null $blocked_code
  * @property string|null $delivery_id
  * @property ContentItem $contentItem
  * @property WebhookDelivery|null $delivery
@@ -50,6 +53,6 @@ class ArticleSchedule extends Model
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['publish_at' => 'immutable_datetime', 'version' => 'integer'];
+        return ['publish_at' => 'immutable_datetime', 'version' => 'integer', 'held_for_review' => 'boolean', 'approved_by_avyo' => 'boolean'];
     }
 }

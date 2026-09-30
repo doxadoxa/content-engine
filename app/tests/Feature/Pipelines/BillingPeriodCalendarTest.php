@@ -209,7 +209,7 @@ final class BillingPeriodCalendarTest extends TestCase
     public function test_missed_automatic_date_requires_a_new_date_before_any_approval(): void
     {
         $project = $this->project();
-        Channel::factory()->create(['type' => ChannelType::Webhook, 'config' => ['endpoint' => 'https://receiver.test/articles'], 'verified_at' => now(), 'autopublish' => true, 'is_enabled' => true]);
+        Channel::factory()->create(['type' => ChannelType::Webhook, 'config' => ['endpoint' => 'https://receiver.test/articles'], 'verified_at' => now(), 'is_enabled' => true]);
         $this->schedule($project, $this->ideas(1));
         $schedule = ArticleSchedule::query()->firstOrFail();
         $item = $schedule->contentItem;
@@ -264,7 +264,7 @@ final class BillingPeriodCalendarTest extends TestCase
     public function test_worker_blocks_a_missed_unattempted_slot_but_preserves_an_uncertain_receipt(): void
     {
         $project = $this->project();
-        $channel = Channel::factory()->create(['type' => ChannelType::Webhook, 'config' => ['endpoint' => 'https://receiver.test/articles'], 'verified_at' => now(), 'autopublish' => true, 'is_enabled' => true]);
+        $channel = Channel::factory()->create(['type' => ChannelType::Webhook, 'config' => ['endpoint' => 'https://receiver.test/articles'], 'verified_at' => now(), 'is_enabled' => true]);
         $this->schedule($project, $this->ideas(1));
         $schedule = ArticleSchedule::query()->firstOrFail();
         $item = $schedule->contentItem;

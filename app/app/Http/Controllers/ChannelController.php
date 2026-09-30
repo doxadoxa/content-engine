@@ -8,22 +8,34 @@ use App\Billing\Entitlements;
 use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
 use App\Http\Requests\ChannelRequest;
+use App\Models\ArticleSchedule;
 use App\Models\Channel;
+use App\Models\PagePublicationOperation;
 use App\Models\Project;
+use App\Models\SitePage;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\ConnectionHealth;
+use App\Publishing\ConnectionSecret;
+use App\Publishing\HeldArticles;
 use App\Publishing\Pages\PageReceiverClient;
 use App\Support\Tenancy\CurrentProject;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * Channels: the list, and the connection wizard §7 asks for.
+ * The website page: connect a website, see whether it works, fix it if not.
  *
- * The wizard is URL → secret → a real `ping`, and the third step is the point.
+ * Still "channels" in the code and the URL, and "your website" everywhere a
+ * person reads. Connecting is URL → a real `ping`, in one press; the secret
+ * is Avyo's to make and the owner's to read back for their developer.
  * A channel that has never been pinged is configuration somebody typed; a
  * channel with a `verified_at` is a connection that answered. Saying
  * "connected" on the strength of a saved form is how an operator discovers on
@@ -34,18 +46,18 @@ class ChannelController extends Controller
     public function __construct(
         private readonly CurrentProject $current,
         private readonly Entitlements $entitlements,
+        private readonly ChannelPublisherRegistry $publishers,
     ) {}
 
     public function index(): Response
     {
-        $channels = Channel::query()
-            ->withExists(['deliveries as test_pending' => fn ($query) => $query
-                ->whereNull('content_item_id')
-                ->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])])
-            ->orderBy('name')
-            ->get();
+        $channels = Channel::query()->orderBy('created_at')->orderBy('name')->get();
+        $project = $this->current->get();
+        $limit = $project instanceof Project ? $this->entitlements->for($project)->limit('channels') : null;
 
         return Inertia::render('channels/index', [
+            // Whether "Connect another website" leads anywhere on this plan.
+            'can_connect_another' => $limit === null || $channels->count() < $limit,
             'channels' => $channels->map(fn (Channel $channel): array => [
                 'id' => $channel->id,
                 'name' => $channel->name,
@@ -54,22 +66,29 @@ class ChannelController extends Controller
                 'is_enabled' => $channel->is_enabled,
                 // Whether a secret exists, never the secret. The model hides
                 // the attribute too; this is the deliberate, redacted answer.
+                // An owner reads it through `revealSecret`, one press at a
+                // time, rather than in every page load.
                 'has_secret' => $channel->hasSecret(),
                 'native_config' => ['page_receiver_base' => $channel->config['page_receiver_base'] ?? '', 'username' => $channel->config['username'] ?? '', 'endpoint' => $channel->config['endpoint'] ?? ''],
-                'autopublish' => $channel->autopublish,
                 'can_schedule_articles' => app(ArticleSchedules::class)->compatible($channel),
+                'can_test' => $this->testable($channel),
                 'verified_at' => $channel->verified_at?->toIso8601String(),
-                'test_pending' => (bool) $channel->getAttribute('test_pending'),
+                'health' => $health = ConnectionHealth::for($channel),
+                'test_pending' => $health['state'] === 'testing',
                 'target' => $this->target($channel),
                 'created_at' => $channel->created_at?->toIso8601String(),
             ])->all(),
-            'types' => array_map(static fn (ChannelType $type): array => [
-                'value' => $type->value,
-                'label' => $type->label(),
-            ], ChannelType::cases()),
         ]);
     }
 
+    /**
+     * Connect a website, and test it in the same press.
+     *
+     * The test used to be a separate button in a table cell, and a website
+     * that had never been tested looked the same as one that had been and
+     * failed. Now saving is testing: the page comes back saying "Testing…",
+     * then either "Connected" or what went wrong.
+     */
     public function store(ChannelRequest $request): RedirectResponse
     {
         // The plan's channel limit, enforced where a channel is made.
@@ -88,18 +107,28 @@ class ChannelController extends Controller
             ->count() >= $limit) {
             throw ValidationException::withMessages([
                 'name' => $limit === 1
-                    ? 'This plan connects one publishing channel. A larger plan connects more.'
-                    : "This plan connects {$limit} publishing channels. A larger plan connects more.",
+                    ? 'Your plan connects one website. Remove the current one first, or move to a larger plan.'
+                    : "Your plan connects {$limit} websites. Remove one first, or move to a larger plan.",
             ]);
         }
 
         $attributes = $request->safe()->all();
         unset($attributes['config']['article_publishing_verified']);
-        $channel = Channel::query()->create($attributes);
+        $attributes['config'] = $this->normalisedConfig($attributes['config'] ?? []);
+
+        if ($request->enum('type', ChannelType::class) === ChannelType::Webhook && blank($attributes['secret'] ?? null)) {
+            $attributes['secret'] = ConnectionSecret::generate();
+        }
+
+        // Refreshed so the column defaults — `is_enabled` above all — are
+        // what the test below reads, not the attributes that were posted.
+        $channel = Channel::query()->create($attributes)->refresh();
+
+        $testing = $this->test($channel);
 
         Inertia::flash('toast', [
             'type' => 'success',
-            'message' => $channel->type === ChannelType::WordPress ? "{$channel->name} added. Send a test delivery to verify article publishing." : "{$channel->name} added. Send a test delivery or bind a compatible tracked page to confirm it answers.",
+            'message' => $testing ? "{$channel->name} added. Testing the connection…" : "{$channel->name} added.",
         ]);
 
         return to_route('channels.index');
@@ -107,22 +136,121 @@ class ChannelController extends Controller
 
     public function update(ChannelRequest $request, Channel $channel): RedirectResponse
     {
-        // Read again under the lock a passing test takes before it switches
-        // automatic publishing on (ArticleSchedules::adoptProjectAutopublish),
-        // so the two decide one after the other and on the same row — not on
-        // the copy route binding loaded before either started.
-        $channel = DB::transaction(fn (): Channel => $this->applyUpdate(
-            $request,
-            Channel::query()->whereKey($channel->getKey())->lockForUpdate()->firstOrFail(),
-        ));
+        $wasEnabled = $channel->is_enabled;
+        [$channel, $connectionChanged] = $this->applyUpdate($request, $channel);
 
-        Inertia::flash('toast', ['type' => 'success', 'message' => "{$channel->name} updated."]);
+        // Resumed: what waited for the pause now waits for the website to
+        // work. Working, it goes now rather than at its next look hours away.
+        // Not working — the connection was edited while paused, or never
+        // passed — it is tested, and the test that passes sends it.
+        $resumed = ! $wasEnabled && $channel->is_enabled;
+        $working = app(ArticleSchedules::class)->compatible($channel);
+        if ($resumed) {
+            app(HeldArticles::class)->unpaused($channel);
+        }
+        $testing = ($connectionChanged || ($resumed && ! $working)) && $this->test($channel);
+        if ($resumed && $working && ! $connectionChanged) {
+            app(HeldArticles::class)->resume($channel);
+        }
+
+        $message = match (true) {
+            $resumed && $testing => 'Resumed. Testing the connection…',
+            $testing => 'Saved. Testing the connection…',
+            $wasEnabled && ! $channel->is_enabled => "Paused. Avyo won't send articles to {$channel->name} until you resume.",
+            $resumed && $working => "Resumed. Avyo sends articles to {$channel->name} again.",
+            $resumed => "Resumed. Test the connection before Avyo sends articles to {$channel->name}.",
+            default => 'Saved.',
+        };
+        Inertia::flash('toast', ['type' => 'success', 'message' => $message]);
 
         return to_route('channels.index');
     }
 
     /**
-     * Step three of the wizard: a real signed `ping` to the real endpoint.
+     * Remove a website connection, and its delivery log with it.
+     *
+     * Refused where removing would lose something that is not only history:
+     * an article on its way to this website right now; an article whose last
+     * attempt may have arrived without Avyo hearing back, whose delivery row
+     * is the receipt identity a retry reconciles against — deleted, the same
+     * article could be published twice once a website is connected again; and
+     * existing-page updates recorded against it.
+     *
+     * Articles scheduled for this website go back to waiting for one, rather
+     * than keeping a schedule that points at a delivery that no longer exists
+     * and saying "Sending…" for ever.
+     */
+    public function destroy(Channel $channel): RedirectResponse
+    {
+        // Checked and done under the project's row lock — the one
+        // ArticleSchedules::dispatch() takes before it queues an article — so
+        // an article cannot be put on its way to this website between the
+        // checks and the delete.
+        DB::transaction(function () use ($channel): void {
+            Project::query()->whereKey($channel->project_id)->lockForUpdate()->firstOrFail();
+
+            $articleDeliveries = fn () => $channel->deliveries()->where(fn ($query) => $query
+                ->whereNotNull('content_item_id')->orWhereNotNull('article_schedule_id'));
+
+            if ($articleDeliveries()->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])->exists()) {
+                throw ValidationException::withMessages([
+                    'channel' => 'An article is on its way to this website. Try again once it has been sent, or pause the website instead.',
+                ]);
+            }
+
+            // Uncertain: the request went out and no answer said "not
+            // published". A 4xx other than 409 did say so; no answer, a 5xx or
+            // an unexpected 2xx did not. "Went out" is a spent attempt as well
+            // as the start stamp: only scheduled articles are stamped, and an
+            // article published by hand that timed out is just as uncertain.
+            $uncertain = $articleDeliveries()
+                ->where('status', DeliveryStatus::DeadLetter->value)
+                ->where(fn ($query) => $query->whereNotNull('article_attempt_started_at')->orWhere('attempts', '>', 0))
+                ->where(fn ($query) => $query->whereNull('response_code')
+                    ->orWhere('response_code', '<', 400)->orWhere('response_code', '>=', 500)->orWhere('response_code', 409))
+                ->exists();
+
+            if ($uncertain) {
+                throw ValidationException::withMessages([
+                    'channel' => "An article may have reached this website without Avyo hearing back. Send it again from the article first, so it isn't published twice, or pause the website instead.",
+                ]);
+            }
+
+            if (PagePublicationOperation::query()->where('channel_id', $channel->getKey())->exists()) {
+                throw ValidationException::withMessages([
+                    'channel' => 'Page updates have been published through this website, so it cannot be removed. Pause it instead.',
+                ]);
+            }
+
+            $waiting = [
+                'status' => 'blocked',
+                'blocked_reason' => ArticleSchedules::NO_WEBSITE,
+                'channel_id' => null,
+                'delivery_id' => null,
+                'version' => DB::raw('version + 1'),
+                'updated_at' => now(),
+            ];
+
+            if (Schema::hasColumn('article_schedules', 'blocked_code')) {
+                $waiting['blocked_code'] = 'no_website';
+            }
+
+            ArticleSchedule::query()
+                ->where('channel_id', $channel->getKey())
+                ->whereIn('status', ['active', 'dispatching', 'blocked'])
+                ->update($waiting);
+
+            SitePage::query()->where('channel_id', $channel->getKey())->update(['channel_id' => null]);
+            $channel->delete();
+        });
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => "{$channel->name} removed."]);
+
+        return to_route('channels.index');
+    }
+
+    /**
+     * A real signed `ping` to the real endpoint.
      *
      * The question asked here used to be `type === Webhook`, which was the
      * right answer to the wrong question. Whether a channel can be tested is a
@@ -130,80 +258,129 @@ class ChannelController extends Controller
      * same button — so the registry is asked instead, and it answers no both
      * for a type nothing can deliver to and for a transport with no dry run.
      */
-    public function ping(Channel $channel, ChannelPublisherRegistry $publishers, CurrentProject $current): RedirectResponse
+    public function ping(Channel $channel): RedirectResponse
     {
-        abort_unless($publishers->canPing($channel->type), 409, 'This kind of channel cannot receive a test delivery.');
+        abort_unless($this->publishers->canPing($channel->type), 409, 'This kind of connection cannot be tested.');
+        abort_if($this->current->get() === null, 409, 'Pick a project first.');
 
-        $project = $current->get();
-
-        abort_if($project === null, 409, 'Pick a project first.');
-
-        // No content unit needed: a ping carries only the envelope and the
-        // signature (§3 of the contract), and a channel is normally connected
-        // before the project has written anything at all.
-        $publishers->for($channel->type)->ping($channel, $project);
-
-        Inertia::flash('toast', [
-            'type' => 'info',
-            'message' => "Test queued for {$channel->name}. It will show Connected after the receiver answers.",
-        ]);
+        $this->test($channel);
 
         return back();
     }
 
-    public function autopublish(Channel $channel, ChannelPublisherRegistry $publishers): RedirectResponse
+    /**
+     * The webhook secret, for the owner to hand to their developer.
+     *
+     * JSON on request rather than a page prop, so it is in no page load, no
+     * Inertia history entry and no prefetch; POST, so no cache or link
+     * preview ever holds it.
+     */
+    public function revealSecret(Request $request, Channel $channel): JsonResponse
     {
-        abort_unless($publishers->canAutopublish($channel->type), 409, 'This kind of channel cannot publish automatically.');
+        abort_unless($channel->type === ChannelType::Webhook && $channel->hasSecret(), 404);
 
-        // Under the same lock as a passing test's switch (see update()).
-        $enable = DB::transaction(function () use ($channel): bool {
-            $channel = Channel::query()->whereKey($channel->getKey())->lockForUpdate()->firstOrFail();
-            $enable = ! $channel->autopublish;
+        Log::info('A webhook secret was revealed', [
+            'channel' => $channel->getKey(),
+            'project' => $channel->project_id,
+            'user' => $request->user()?->getKey(),
+        ]);
 
-            abort_if($enable && ! app(ArticleSchedules::class)->compatible($channel), 409, 'Test this channel successfully before enabling automatic publishing.');
+        return response()
+            ->json(['secret' => (string) $channel->secret])
+            ->header('Cache-Control', 'no-store');
+    }
 
-            $channel->forceFill(['autopublish' => $enable, 'autopublish_declined_at' => $enable ? null : now()])->save();
-            app(ArticleSchedules::class)->followChannelAutopublish($channel);
+    /**
+     * Replace the webhook secret, and test with the new one.
+     *
+     * The website stops accepting articles until its developer has the new
+     * secret, so the connection is unverified from this moment and the test
+     * says so if it has not been updated yet.
+     */
+    public function regenerateSecret(Channel $channel): RedirectResponse
+    {
+        abort_unless($channel->type === ChannelType::Webhook, 404);
 
-            return $enable;
-        });
+        $channel->forceFill([
+            'secret' => ConnectionSecret::generate(),
+            'verified_at' => null,
+            'config' => [...$channel->config, 'article_publishing_verified' => false],
+        ])->save();
+
+        $this->test($channel);
 
         Inertia::flash('toast', [
             'type' => 'success',
-            'message' => $enable
-                ? "{$channel->name} will accept explicitly scheduled automatic articles."
-                : "{$channel->name} now waits for an explicit publish action.",
+            'message' => 'New secret created. Update it on your website; Avyo is testing the connection.',
         ]);
 
-        return back();
+        return to_route('channels.index');
     }
 
-    private function applyUpdate(ChannelRequest $request, Channel $channel): Channel
+    /**
+     * Send a test if this connection can take one. True when one was sent.
+     *
+     * A paused connection is not tested: its answer would say "Connected"
+     * about a website Avyo is not sending to.
+     */
+    private function test(Channel $channel): bool
+    {
+        $project = $this->current->get();
+
+        if (! $project instanceof Project || ! $channel->is_enabled || ! $this->testable($channel)) {
+            return false;
+        }
+
+        $this->publishers->for($channel->type)->ping($channel, $project);
+
+        return true;
+    }
+
+    /**
+     * Whether a test has somewhere to go: a transport with a dry run, and the
+     * address that transport sends articles to — the webhook address, or the
+     * WordPress site. An existing-page address alone receives no articles.
+     */
+    private function testable(Channel $channel): bool
+    {
+        $address = match ($channel->type) {
+            ChannelType::Webhook => $channel->config['endpoint'] ?? null,
+            ChannelType::WordPress => $channel->config['page_receiver_base'] ?? null,
+            default => null,
+        };
+
+        return is_string($address) && trim($address) !== '' && $this->publishers->canPing($channel->type);
+    }
+
+    /**
+     * @return array{Channel, bool} The channel, and whether the connection itself changed.
+     */
+    private function applyUpdate(ChannelRequest $request, Channel $channel): array
     {
         // A blank secret means "leave it alone", not "clear it". An operator
-        // toggling auto-publish should not have to re-paste a token they
-        // cannot read back out of the form.
+        // renaming a channel should not have to re-paste a token they cannot
+        // read back out of the form.
         $changes = $request->safe()->all();
 
         if (($changes['secret'] ?? null) === null) {
             unset($changes['secret']);
         }
 
+        // The forms send only the keys they show, so what was posted is laid
+        // over what is stored rather than replacing it: editing the webhook
+        // address must not drop the existing-page address saved beside it.
+        if (array_key_exists('config', $changes)) {
+            unset($changes['config']['article_publishing_verified']);
+            $changes['config'] = [...$channel->config, ...$this->normalisedConfig($changes['config'])];
+        }
+
         $connectionChanged = (string) ($changes['type'] ?? $channel->type->value) !== $channel->type->value
             || (array_key_exists('config', $changes)
-                && ! PageReceiverClient::same(array_intersect_key($changes['config'], array_flip(['endpoint', 'page_receiver_base', 'username'])), array_intersect_key($channel->config, array_flip(['endpoint', 'page_receiver_base', 'username']))))
+                && ! PageReceiverClient::same(self::connectionKeys($changes['config']), self::connectionKeys($channel->config)))
             || array_key_exists('secret', $changes);
-
-        // The owner's answer, kept apart from the flag: a connection change
-        // below resets `autopublish` without anyone having said no, and a
-        // passing test may switch it back on only if nobody has.
-        if (array_key_exists('autopublish', $changes) && (bool) $changes['autopublish'] !== $channel->autopublish) {
-            $changes['autopublish_declined_at'] = $changes['autopublish'] ? null : now();
-        }
 
         if ($connectionChanged) {
             $changes['verified_at'] = null;
-            $changes['autopublish'] = false;
             $changes['config'] = array_merge($changes['config'] ?? $channel->config, ['article_publishing_verified' => false]);
         }
 
@@ -211,14 +388,51 @@ class ChannelController extends Controller
             $changes['config']['article_publishing_verified'] = ($channel->config['article_publishing_verified'] ?? false) === true;
         }
 
-        $wasAutomatic = $channel->autopublish;
         $channel->update($changes);
 
-        if ($channel->autopublish !== $wasAutomatic) {
-            app(ArticleSchedules::class)->followChannelAutopublish($channel);
+        return [$channel, $connectionChanged];
+    }
+
+    /**
+     * The parts of a connection's config that decide where it connects.
+     *
+     * Missing, null and '' are the same answer — "none" — and must compare
+     * equal. The settings form always posts `page_receiver_base`, empty for
+     * most websites, while a connection made by onboarding has no such key;
+     * compared raw, the first save of an unrelated field read as a new
+     * address and threw the website's verification away.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<string, string|null>
+     */
+    private static function connectionKeys(array $config): array
+    {
+        $keys = [];
+
+        foreach (['endpoint', 'page_receiver_base', 'username'] as $key) {
+            $value = $config[$key] ?? null;
+            $keys[$key] = is_string($value) && trim($value) !== '' ? trim($value) : null;
         }
 
-        return $channel;
+        return $keys;
+    }
+
+    /**
+     * Blank connection fields stored as absent rather than as ''.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<string, mixed>
+     */
+    private function normalisedConfig(array $config): array
+    {
+        foreach (['endpoint', 'page_receiver_base', 'username'] as $key) {
+            if (array_key_exists($key, $config)) {
+                $value = $config[$key];
+                $config[$key] = is_string($value) && trim($value) !== '' ? trim($value) : null;
+            }
+        }
+
+        return $config;
     }
 
     /**

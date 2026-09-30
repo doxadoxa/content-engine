@@ -22,7 +22,9 @@ use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\ConnectionSecret;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Contracts\Cache\Lock;
@@ -477,9 +479,19 @@ class OnboardingController extends Controller
             default => [],
         };
 
-        if ($changes !== []) {
-            $project->forceFill($changes)->save();
+        if ($changes === []) {
+            return;
         }
+
+        // Setup can be walked through again on a project that already has a
+        // calendar, and the answer applies to the articles already on it.
+        DB::transaction(function () use ($project, $changes): void {
+            $project->forceFill($changes)->save();
+
+            if ($project->wasChanged('autopublish')) {
+                app(ArticleSchedules::class)->followProject($project);
+            }
+        });
     }
 
     /**
@@ -619,14 +631,35 @@ class OnboardingController extends Controller
             || Channel::query()->where('name', '!=', 'Website')->count() < $limit;
 
         if ($endpoint !== '' && $fits) {
+            // Avyo makes the secret, and the owner reads it back on the
+            // website page to hand to their developer. A pasted one wins, and
+            // an existing connection keeps the one its website already has.
+            $existing = Channel::query()->where('name', 'Website')->first();
+            $pasted = trim((string) ($answers['webhook_secret'] ?? ''));
+            $secret = match (true) {
+                $pasted !== '' => $pasted,
+                $existing?->hasSecret() === true => (string) $existing->secret,
+                default => ConnectionSecret::generate(),
+            };
+
+            // A different address or secret is a different connection: what
+            // the old one proved does not carry over, and the test below
+            // decides again.
+            $changed = $existing === null
+                || $existing->type !== ChannelType::Webhook
+                || ($existing->config['endpoint'] ?? null) !== $endpoint
+                || $existing->secret !== $secret;
+
             $website = Channel::query()->updateOrCreate(
                 ['name' => 'Website'],
                 [
                     'type' => ChannelType::Webhook,
-                    'config' => ['endpoint' => $endpoint],
-                    'secret' => (string) ($answers['webhook_secret'] ?? Str::random(48)),
+                    'config' => $changed
+                        ? [...($existing->config ?? []), 'endpoint' => $endpoint, 'article_publishing_verified' => false]
+                        : ($existing->config ?? []),
+                    'secret' => $secret,
                     'is_enabled' => true,
-                    'autopublish' => $project->autopublish,
+                    ...($changed ? ['verified_at' => null] : []),
                 ],
             );
 

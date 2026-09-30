@@ -1,14 +1,21 @@
-import { Deferred, Head, Link, usePoll } from '@inertiajs/react';
+import { Deferred, Head, Link, usePage, usePoll } from '@inertiajs/react';
 import {
     ArrowRight,
     CalendarDays,
     Check,
     CheckCircle2,
+    ExternalLink,
     FileText,
     Loader2,
     Sparkles,
     TriangleAlert,
 } from 'lucide-react';
+import {
+    PublicationActionButton,
+    PublicationBadge,
+    PublishNowButton,
+} from '@/components/article-publication';
+import type { PublicationPresentation } from '@/components/article-publication';
 import { ContentActions } from '@/components/content-actions';
 import type { ArticleWorkflow } from '@/components/content-actions';
 import { DashboardCharts, ManagerResults } from '@/components/manager-results';
@@ -55,9 +62,36 @@ type Article = {
     id: string;
     title: string;
     status: string;
+    presentation: PublicationPresentation;
     publish_at: string | null;
     reason: string | null;
 };
+/** "Get your first article live". See `App\Publishing\Articles\FirstArticle`. */
+type FirstStepLink = { label: string; href: string };
+type FirstStep = {
+    key: 'business' | 'website' | 'publish';
+    label: string;
+    state: 'done' | 'current' | 'todo';
+    detail: string | null;
+    action: FirstStepLink | null;
+    health?: string | null;
+    article?: {
+        id: string;
+        title: string;
+        presentation: PublicationPresentation | null;
+    } | null;
+    can_publish?: boolean;
+    reason?: string | null;
+    fix?: FirstStepLink | null;
+};
+type FirstArticle =
+    | { state: 'in_progress'; done: number; steps: FirstStep[] }
+    | {
+          state: 'live';
+          article: { id: string; title: string; url: string | null };
+          steps: [];
+      };
+type Needs = { dead_deliveries: number };
 type Dashboard = {
     mode: 'automatic' | 'review_first';
     workflow: ArticleWorkflow;
@@ -91,6 +125,8 @@ type Props = {
     preview?: Preview | null;
     hasProjects: boolean;
     checklist: Step[];
+    first_article?: FirstArticle | null;
+    needs?: Needs;
     work?: Work;
     journey?: Journey | null;
     manager?: Dashboard;
@@ -103,6 +139,8 @@ export default function Home({
     preview,
     hasProjects,
     checklist,
+    first_article: firstArticle,
+    needs,
     work,
     journey,
     manager,
@@ -120,7 +158,15 @@ export default function Home({
      * itself", and a step that never ticks over would make that a lie.
      */
     usePoll(15000, {
-        only: ['preview', 'work', 'journey', 'manager', 'checklist', 'results'],
+        only: [
+            'preview',
+            'work',
+            'journey',
+            'manager',
+            'checklist',
+            'results',
+            'first_article',
+        ],
     });
     const planning =
         work?.active.some((run) =>
@@ -228,6 +274,7 @@ export default function Home({
                         </>
                     }
                 />
+                {firstArticle && <FirstArticlePanel first={firstArticle} />}
                 {preview && <PreviewPanel preview={preview} />}
                 {shownJourney && (
                     <>
@@ -355,6 +402,26 @@ export default function Home({
                                         link="Review content"
                                     />
                                     <div className="divide-y">
+                                        {(needs?.dead_deliveries ?? 0) > 0 && (
+                                            <p className="flex items-start gap-2 bg-rose-50/40 px-5 py-3 text-sm dark:bg-rose-950/20">
+                                                <TriangleAlert
+                                                    className="mt-0.5 size-4 shrink-0 text-rose-700 dark:text-rose-400"
+                                                    aria-hidden="true"
+                                                />
+                                                <span>
+                                                    {needs?.dead_deliveries ===
+                                                    1
+                                                        ? '1 article couldn’t be sent to your website.'
+                                                        : `${needs?.dead_deliveries} articles couldn’t be sent to your website.`}{' '}
+                                                    <Link
+                                                        href="/deliveries"
+                                                        className="underline underline-offset-4"
+                                                    >
+                                                        Open publishing history
+                                                    </Link>
+                                                </span>
+                                            </p>
+                                        )}
                                         {manager.attention.length ? (
                                             manager.attention.map((article) => (
                                                 <ArticleRow
@@ -544,6 +611,265 @@ function PreviewPanel({ preview }: { preview: Preview }) {
                 </div>
             )}
         </section>
+    );
+}
+
+/**
+ * "Get your first article live" — the three steps the owner named: set up the
+ * business, connect the website, publish the first article. The top of Home
+ * until the first article is out, then one line of success for a day.
+ */
+function FirstArticlePanel({ first }: { first: FirstArticle }) {
+    const { auth } = usePage().props;
+    const owner = auth.project?.role === 'owner';
+
+    if (first.state === 'live') {
+        return (
+            <section
+                className={`${workspacePanelClass} flex flex-wrap items-center gap-3 px-5 py-4`}
+                aria-label="Your first article"
+            >
+                <CheckCircle2
+                    className="size-5 shrink-0 text-emerald-700 dark:text-emerald-400"
+                    aria-hidden="true"
+                />
+                <p className="min-w-0 flex-1 text-sm">
+                    <span className="font-medium">
+                        Your first article is live.
+                    </span>{' '}
+                    <span className="text-muted-foreground">
+                        {first.article.title}
+                    </span>
+                </p>
+                {first.article.url ? (
+                    <Button asChild size="sm" variant="outline">
+                        <a
+                            href={first.article.url}
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            View on your site
+                            <ExternalLink
+                                className="size-3.5"
+                                aria-hidden="true"
+                            />
+                            <span className="sr-only">
+                                {' '}
+                                (opens in a new tab)
+                            </span>
+                        </a>
+                    </Button>
+                ) : (
+                    <Button asChild size="sm" variant="outline">
+                        <Link href={`/content/${first.article.id}`}>
+                            Open the article
+                        </Link>
+                    </Button>
+                )}
+            </section>
+        );
+    }
+
+    const current = first.steps.find((step) => step.state === 'current');
+    const article = first.steps.find((step) => step.key === 'publish')?.article;
+
+    return (
+        <section
+            className={`${workspacePanelClass} p-5 sm:p-6`}
+            aria-labelledby="first-article-title"
+        >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2
+                        id="first-article-title"
+                        className="text-lg font-semibold text-balance"
+                    >
+                        Get your first article live
+                    </h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                        Three steps. After that, Avyo publishes on your
+                        schedule.
+                    </p>
+                </div>
+                <p className="rounded-full border px-3 py-1 text-xs text-muted-foreground tabular-nums">
+                    {first.done} of {first.steps.length} done
+                </p>
+            </div>
+            <ol className="mt-5 grid gap-3 lg:grid-cols-3">
+                {first.steps.map((step, index) => (
+                    <li
+                        key={step.key}
+                        aria-current={
+                            step.state === 'current' ? 'step' : undefined
+                        }
+                        className={`flex min-w-0 flex-col gap-2 rounded-xl border p-4 ${step.state === 'current' ? 'border-foreground/25 bg-muted/30' : ''}`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <StepMarker state={step.state} number={index + 1} />
+                            <p
+                                className={`text-sm font-medium ${step.state === 'todo' ? 'text-muted-foreground' : ''}`}
+                            >
+                                <span className="sr-only">
+                                    {
+                                        {
+                                            done: 'Done',
+                                            current: 'Current step',
+                                            todo: 'Not started',
+                                        }[step.state]
+                                    }
+                                    :{' '}
+                                </span>
+                                {step.label}
+                            </p>
+                        </div>
+                        {step.detail && (
+                            <p className="text-sm leading-6 text-pretty text-muted-foreground">
+                                {step.detail}
+                            </p>
+                        )}
+                        {step.key === 'publish' ? (
+                            <PublishStep step={step} owner={owner} />
+                        ) : (
+                            step.action &&
+                            step.state !== 'done' && (
+                                <Button
+                                    asChild
+                                    size="sm"
+                                    className="mt-1 self-start"
+                                >
+                                    <Link href={step.action.href}>
+                                        {step.action.label}
+                                    </Link>
+                                </Button>
+                            )
+                        )}
+                    </li>
+                ))}
+            </ol>
+            {/* Polled: a stable region says each change once. */}
+            <p className="sr-only" role="status" aria-live="polite">
+                {current
+                    ? `Next: ${current.label}.${current.key === 'publish' && article?.presentation ? ` ${article.presentation.label}.` : ''}`
+                    : ''}
+            </p>
+        </section>
+    );
+}
+
+function StepMarker({
+    state,
+    number,
+}: {
+    state: FirstStep['state'];
+    number: number;
+}) {
+    if (state === 'done') {
+        return (
+            <span
+                className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sage text-white"
+                aria-hidden="true"
+            >
+                <Check className="size-3.5" strokeWidth={3} />
+            </span>
+        );
+    }
+
+    return (
+        <span
+            className={`flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums ${state === 'current' ? 'border-foreground/40 text-foreground' : 'text-muted-foreground'}`}
+            aria-hidden="true"
+        >
+            {number}
+        </span>
+    );
+}
+
+/** The third step: the article, its status, and "Publish now" — or why not yet. */
+function PublishStep({ step, owner }: { step: FirstStep; owner: boolean }) {
+    const article = step.article ?? null;
+    const status = article?.presentation ?? null;
+    const underway =
+        status !== null &&
+        [
+            'sending',
+            'retrying',
+            'delayed',
+            'waiting_website',
+            'failed',
+            'withdrawn',
+        ].includes(status.key);
+    // Refused without a reason worth showing: the status's own next step
+    // is the answer, not a button the server would turn down.
+    const quietlyRefused =
+        !underway && !step.can_publish && !step.reason && article !== null;
+    const reasonId = `first-article-reason-${article?.id ?? 'none'}`;
+
+    return (
+        <div className="flex flex-col gap-2">
+            {article && (
+                <Link
+                    href={`/content/${article.id}`}
+                    className="rounded-sm text-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                >
+                    {article.title}
+                </Link>
+            )}
+            {status && (
+                <>
+                    <PublicationBadge presentation={status} />
+                    {status.detail && (
+                        <p className="text-sm leading-6 text-muted-foreground">
+                            {status.detail}
+                        </p>
+                    )}
+                </>
+            )}
+            {underway || quietlyRefused ? (
+                <div className="flex flex-wrap gap-2">
+                    <PublicationActionButton
+                        action={status?.action ?? null}
+                        owner={owner}
+                    />
+                    <PublicationActionButton
+                        action={status?.secondary ?? null}
+                        owner={owner}
+                        variant="outline"
+                    />
+                </div>
+            ) : step.can_publish && article ? (
+                <div className="self-start">
+                    <PublishNowButton itemId={article.id} />
+                </div>
+            ) : (
+                <>
+                    <Button
+                        type="button"
+                        size="sm"
+                        className="self-start"
+                        disabled
+                        aria-describedby={step.reason ? reasonId : undefined}
+                    >
+                        Publish now
+                    </Button>
+                    {step.reason && (
+                        <p
+                            id={reasonId}
+                            className="text-sm text-muted-foreground"
+                        >
+                            {step.reason}{' '}
+                            {step.fix && (
+                                <Link
+                                    href={step.fix.href}
+                                    className="font-medium underline underline-offset-4"
+                                >
+                                    {step.fix.label}
+                                </Link>
+                            )}
+                        </p>
+                    )}
+                </>
+            )}
+        </div>
     );
 }
 
@@ -793,7 +1119,7 @@ function PublishingStatus({ manager }: { manager: Dashboard }) {
             </div>
             <div className="border-t pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5">
                 <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Next scheduled article
+                    Next article
                 </p>
                 {next ? (
                     <Link
@@ -801,15 +1127,10 @@ function PublishingStatus({ manager }: { manager: Dashboard }) {
                         className="mt-1 block text-sm font-medium hover:underline"
                     >
                         {next.title}
-                        {next.publish_at && (
-                            <span className="mt-1 block text-xs font-normal text-muted-foreground">
-                                {next.status.replaceAll('_', ' ')} ·{' '}
-                                {formatPublishAt(
-                                    next.publish_at,
-                                    manager.timezone,
-                                )}
-                            </span>
-                        )}
+                        <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                            {next.presentation.detail ??
+                                next.presentation.label}
+                        </span>
                     </Link>
                 ) : (
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -866,41 +1187,31 @@ function Count({
         </Link>
     );
 }
-function ArticleRow({
-    article,
-    timezone,
-}: {
-    article: Article;
-    timezone: string;
-}) {
+function ArticleRow({ article }: { article: Article; timezone: string }) {
+    const status = article.presentation;
+
     return (
         <Link
             href={`/content/${article.id}`}
-            className="flex items-start gap-3 px-5 py-4 transition-colors hover:bg-muted/30"
+            className="flex items-start gap-3 px-5 py-4 transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
         >
-            <FileText className="mt-1 size-4 shrink-0 text-muted-foreground" />
+            <FileText
+                className="mt-1 size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+            />
             <div className="min-w-0">
                 <p className="text-sm font-medium">{article.title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                    {article.status.replaceAll('_', ' ')}
-                    {article.publish_at &&
-                        ` · ${formatPublishAt(article.publish_at, timezone)}`}
-                </p>
-                {article.reason && (
-                    <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-                        {article.reason}
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <PublicationBadge presentation={status} />
+                </div>
+                {status.detail && (
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {status.detail}
                     </p>
                 )}
             </div>
         </Link>
     );
-}
-function formatPublishAt(date: string, timezone: string) {
-    return `${new Date(date).toLocaleString(undefined, {
-        timeZone: timezone,
-        dateStyle: 'medium',
-        timeStyle: 'short',
-    })} (${timezone})`;
 }
 function WorkPanel({ work }: { work?: Work }) {
     if (

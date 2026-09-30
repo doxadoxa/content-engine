@@ -144,7 +144,7 @@ final class ManagerWorkspaceTest extends TestCase
             ->assertJsonPath('props.manager.workflow.ready', false)->assertJsonPath('props.manager.workflow.opted_in', false);
         $this->project->update(['onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
         $this->withHeaders($this->partial('manager'))->get('/home')->assertOk()->assertJsonPath('props.manager.workflow.ready', false);
-        Channel::factory()->create(['type' => 'webhook', 'config' => ['endpoint' => 'https://website.test/hook'], 'verified_at' => now(), 'is_enabled' => true, 'autopublish' => true, 'secret' => 'test-secret']);
+        Channel::factory()->create(['type' => 'webhook', 'config' => ['endpoint' => 'https://website.test/hook'], 'verified_at' => now(), 'is_enabled' => true, 'secret' => 'test-secret']);
         $this->withHeaders($this->partial('manager'))->get('/home')->assertOk()->assertJsonPath('props.manager.workflow.ready', true);
     }
 

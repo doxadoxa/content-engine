@@ -160,7 +160,7 @@ final class ChannelPublisherRegistryTest extends TestCase
     }
 
     #[Test]
-    public function automatic_publishing_selects_only_verified_channels_that_opted_in(): void
+    public function automatic_publishing_goes_only_to_the_scheduled_channel(): void
     {
         $channels = $this->aChannelOfEveryKind();
         $this->unit->forceFill(['state' => ContentItemState::Approved, 'published_at' => null, 'factcheck' => ['passed' => true]])->save();
@@ -171,8 +171,8 @@ final class ChannelPublisherRegistryTest extends TestCase
             'mode' => 'automatic', 'origin' => 'manager', 'status' => 'active', 'version' => 1,
         ]);
 
-        // Unattended, so both halves matter: somebody turned it on, and the
-        // connection has answered at least once.
+        // Unattended, so only where the schedule says — never every channel
+        // that happens to be switched on.
         $this->assertSame(
             $this->idsOf($channels['auto']),
             $this->channelsReached($this->publishing()->publishAutomatically($this->unit)),
@@ -245,12 +245,11 @@ final class ChannelPublisherRegistryTest extends TestCase
     private function aChannelOfEveryKind(): array
     {
         return [
-            'auto' => $this->webhook('Automatic', ['verified_at' => now(), 'autopublish' => true]),
+            'auto' => $this->webhook('Automatic', ['verified_at' => now()]),
             'verified' => $this->webhook('Verified', ['verified_at' => now()]),
             'unverified' => $this->webhook('Never tested'),
             'disabled' => $this->webhook('Switched off', [
                 'verified_at' => now(),
-                'autopublish' => true,
                 'is_enabled' => false,
             ]),
             'pull' => Channel::factory()->create([
@@ -258,7 +257,6 @@ final class ChannelPublisherRegistryTest extends TestCase
                 'type' => ChannelType::PullApi,
                 'config' => [],
                 'verified_at' => now(),
-                'autopublish' => true,
             ]),
         ];
     }

@@ -14,7 +14,6 @@ use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Pages\RegisterPublishedArticle;
 use App\Publishing\Articles\ArticleDeliveryGuard;
-use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\Concerns\RecordsDeliveryOutcome;
 use App\Publishing\Contracts\ChannelPublisher;
 use App\Publishing\Jobs\DeliverWebhookJob;
@@ -26,6 +25,7 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
@@ -119,6 +119,8 @@ class WebhookPublisher implements ChannelPublisher
             'delivery_id' => $deliveryId,
             'status' => DeliveryStatus::Pending->value,
             'payload_snapshot' => WebhookPayload::ping($project, $deliveryId),
+            // Its answer counts only while the connection is still this one.
+            'connection_fingerprint' => ConnectionFingerprint::of($channel),
         ]);
 
         DeliverWebhookJob::dispatch($delivery->getKey())->afterCommit();
@@ -192,17 +194,31 @@ class WebhookPublisher implements ChannelPublisher
     {
         if ($delivery->article_schedule_id !== null) {
             $lock = Cache::lock('webhook-delivery:'.$delivery->id, self::lockSeconds());
-            abort_unless($lock->get(), 409, 'This publication is still being delivered.');
+            // Refusals are validation errors on `delivery`, not bare 409s: the
+            // owner pressed "Try again" and has to be told, beside the button,
+            // why nothing happened.
+            if (! $lock->get()) {
+                throw ValidationException::withMessages(['delivery' => 'This article is being sent right now. Wait for the result before trying again.']);
+            }
             try {
                 $delivery->refresh();
                 if ($delivery->status === DeliveryStatus::Delivered) {
                     return $delivery;
                 }
-                abort_unless($delivery->status === DeliveryStatus::DeadLetter, 409, 'This delivery is already waiting for a result.');
+                if ($delivery->status !== DeliveryStatus::DeadLetter) {
+                    throw ValidationException::withMessages(['delivery' => 'Avyo is already trying to send this article. Wait for the result before trying again.']);
+                }
                 // An uncertain website outcome must be reconciled with its original receipt identity.
-                $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
-                    ?? ($delivery->contentItem === null ? null : app(ArticleBusinessFacts::class)->refusal($delivery->contentItem));
-                abort_if($refusal !== null, 409, $refusal ?? '');
+                $verdict = app(ArticleDeliveryGuard::class)->verdict($delivery);
+                $verdict?->handBack();
+                $refusal = $verdict->reason
+                    ?? ($delivery->contentItem === null ? null : app(ArticleBusinessFacts::class)->refusal($delivery->contentItem))
+                    ?? (! app(ArticleDeliveryGuard::class)->websiteUnusable($delivery) ? null : ($delivery->channel->is_enabled
+                        ? DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING
+                        : DeliveryExplanation::REPLAY_WEBSITE_PAUSED));
+                if ($refusal !== null) {
+                    throw ValidationException::withMessages(['delivery' => $refusal]);
+                }
                 // Due now, and stamped so: the row keeps its original
                 // `created_at`, and StrandedDeliveries ages a pending row from
                 // when it was due. Left null, a replay of a week-old delivery
@@ -303,22 +319,15 @@ class WebhookPublisher implements ChannelPublisher
      */
     protected function succeed(WebhookDelivery $delivery, int $attempt, int $latency, int $status, ?array $body): WebhookDelivery
     {
-        $ping = ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value;
-        $schedules = app(ArticleSchedules::class);
-
-        // Asked before the ping marks anything, so only the test that first
-        // makes the channel usable for articles can switch on automatic
-        // publishing — a re-test is not a second chance to overrule an owner.
-        $usableBefore = $ping && $schedules->compatible($delivery->channel);
+        // Asked before settling: settling is what writes `verified_at`.
+        $confirms = $this->isCurrentTest($delivery);
 
         $this->settleDelivered($delivery, $attempt, $latency, $status);
 
-        if ($ping) {
+        if ($confirms) {
             $this->confirmConnection($delivery);
-
-            if (! $usableBefore) {
-                $schedules->adoptProjectAutopublish($delivery->channel);
-            }
+            // The website works again: send what was waiting for it.
+            app(HeldArticles::class)->resume($delivery->channel);
         }
 
         $this->recordPublicUrl($delivery, $body);
@@ -428,7 +437,7 @@ class WebhookPublisher implements ChannelPublisher
         $endpoint = $this->endpoint($channel);
 
         if ($endpoint === '') {
-            return $this->deadLetter($delivery, 'The channel has no endpoint configured.');
+            return $this->deadLetter($delivery, 'No address is set for this website. Add one on the Website page.');
         }
 
         $body = (string) json_encode($delivery->payload_snapshot, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

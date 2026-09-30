@@ -35,6 +35,7 @@ export type ProjectFormValues = {
     research_seeds: string[];
     minimum_volume: number | null;
     autopublish: boolean;
+    is_ymyl: boolean;
     article_scheduling_enabled: boolean;
 };
 
@@ -196,7 +197,10 @@ export function ProjectForm({
                                             <SelectValue placeholder="Choose how new articles publish" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="automatic">
+                                            <SelectItem
+                                                value="automatic"
+                                                disabled={project?.is_ymyl}
+                                            >
                                                 Publish automatically on
                                                 schedule
                                             </SelectItem>
@@ -206,11 +210,9 @@ export function ProjectForm({
                                         </SelectContent>
                                     </Select>
                                     <p className="text-sm text-muted-foreground">
-                                        Save your preference to apply it to new
-                                        articles. Existing articles keep their
-                                        individual schedules. Your website
-                                        connection must be ready before anything
-                                        publishes.
+                                        {project?.is_ymyl
+                                            ? 'Articles on this topic need a person to approve them, so they always wait for your review.'
+                                            : 'Applies to every article that has not been sent yet, except any you have held for your review. Your website must be connected and tested before anything publishes.'}
                                     </p>
                                     <InputError message={errors.autopublish} />
                                 </div>

@@ -39,6 +39,7 @@ use Illuminate\Support\Str;
  * @property string|null $error
  * @property Carbon|null $delivered_at
  * @property Carbon|null $next_attempt_at
+ * @property string|null $connection_fingerprint Which connection a test was sent to; null on article deliveries.
  */
 class WebhookDelivery extends Model
 {
@@ -67,6 +68,7 @@ class WebhookDelivery extends Model
         'error',
         'delivered_at',
         'next_attempt_at',
+        'connection_fingerprint',
     ];
 
     protected $attributes = [
