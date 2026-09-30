@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Publishing\Articles\ArticleApproval;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\BlockedCode;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\PublishToChannels;
 use App\Publishing\WebhookPublisher;
@@ -273,6 +274,32 @@ final class ArticleScheduleTest extends TestCase
         $this->assertSame(2, $schedule->fresh()->version);
         $this->assertSame([], app(ArticleSchedules::class)->dispatch($new));
         $this->assertSame(1, ArticleSchedule::query()->count());
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function connecting_the_first_website_does_not_release_a_backlog_of_past_dates(): void
+    {
+        $this->project->update(['autopublish' => true, 'onboarding' => ['article_automation_started_at' => now()->toIso8601String()]]);
+        $this->channel->update(['verified_at' => null]);
+        $overdue = ContentItem::factory()->draft()->create(['body_html' => '<p>Written last week.</p>', 'factcheck' => ['passed' => true]]);
+        $upcoming = ContentItem::factory()->draft()->create(['body_html' => '<p>Due tomorrow.</p>', 'factcheck' => ['passed' => true]]);
+        $past = app(ArticleSchedules::class)->scheduleNew($overdue, now()->addHour());
+        $future = app(ArticleSchedules::class)->scheduleNew($upcoming, now()->addDays(3));
+        $this->assertNotNull($past);
+        $this->assertNotNull($future);
+
+        // The website is connected two days later.
+        $this->travel(2)->days();
+        $this->channel->update(['verified_at' => now()]);
+        /** @var PendingCommand $command */
+        $command = $this->artisan('publish:approved', ['project' => $this->project->slug]);
+        $command->assertSuccessful()->run();
+
+        $past->refresh();
+        $this->assertSame([$this->channel->id, 'blocked', BlockedCode::MISSED_DATE], [$past->channel_id, $past->status, $past->blocked_code]);
+        $this->assertSame([$this->channel->id, 'active', null], [$future->fresh()->channel_id, $future->fresh()->status, $future->fresh()->blocked_code]);
+        $this->assertSame(ContentItemState::Draft, $overdue->fresh()->state);
         Queue::assertNothingPushed();
     }
 

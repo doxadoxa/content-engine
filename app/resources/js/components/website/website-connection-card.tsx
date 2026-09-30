@@ -158,7 +158,8 @@ function HealthStatus({ health }: { health: ConnectionHealth }) {
                 )}
                 {health.state === 'failed' && (
                     <p className="mt-1 text-sm text-foreground/80">
-                        Fix it on your website, then test again.
+                        Avyo won't send articles until a test passes. Fix it on
+                        your website, then test again.
                         {checkedAt && (
                             <span className="text-muted-foreground">
                                 {' '}

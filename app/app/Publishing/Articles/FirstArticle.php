@@ -185,7 +185,7 @@ final class FirstArticle
     {
         $base = fn () => ContentItem::query()->where('project_id', $project->getKey())
             ->whereNotIn('state', [ContentItemState::Published->value, ContentItemState::Refreshing->value])
-            ->with(['articleSchedule.delivery', 'project.channels']);
+            ->with(['articleSchedule.delivery.channel', 'project.channels']);
         $publishAt = '(select publish_at from article_schedules where article_schedules.content_item_id = content_items.id limit 1)';
 
         return $base()->whereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'dispatching'))->oldest('created_at')->first()

@@ -8,6 +8,7 @@ use App\Billing\Entitlements;
 use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
 use App\Http\Requests\ChannelRequest;
+use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\PagePublicationOperation;
 use App\Models\Project;
@@ -23,6 +24,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -151,21 +153,41 @@ class ChannelController extends Controller
     /**
      * Remove a website connection, and its delivery log with it.
      *
-     * Refused in the two cases where removing would lose something that is
-     * not only history: an article on its way to this website right now, and
-     * existing-page updates recorded against it, which point at the
-     * connection that made them.
+     * Refused where removing would lose something that is not only history:
+     * an article on its way to this website right now; an article whose last
+     * attempt may have arrived without Avyo hearing back, whose delivery row
+     * is the receipt identity a retry reconciles against — deleted, the same
+     * article could be published twice once a website is connected again; and
+     * existing-page updates recorded against it.
+     *
+     * Articles scheduled for this website go back to waiting for one, rather
+     * than keeping a schedule that points at a delivery that no longer exists
+     * and saying "Sending…" for ever.
      */
     public function destroy(Channel $channel): RedirectResponse
     {
-        $inFlight = $channel->deliveries()
-            ->whereNotNull('content_item_id')
-            ->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])
-            ->exists();
+        $articleDeliveries = fn () => $channel->deliveries()->where(fn ($query) => $query
+            ->whereNotNull('content_item_id')->orWhereNotNull('article_schedule_id'));
 
-        if ($inFlight) {
+        if ($articleDeliveries()->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])->exists()) {
             throw ValidationException::withMessages([
                 'channel' => 'An article is on its way to this website. Try again once it has been sent, or pause the website instead.',
+            ]);
+        }
+
+        // Uncertain: the request went out and no answer said "not
+        // published". A 4xx other than 409 did say so; no answer, a 5xx or
+        // an unexpected 2xx did not.
+        $uncertain = $articleDeliveries()
+            ->where('status', DeliveryStatus::DeadLetter->value)
+            ->whereNotNull('article_attempt_started_at')
+            ->where(fn ($query) => $query->whereNull('response_code')
+                ->orWhere('response_code', '<', 400)->orWhere('response_code', '>=', 500)->orWhere('response_code', 409))
+            ->exists();
+
+        if ($uncertain) {
+            throw ValidationException::withMessages([
+                'channel' => "An article may have reached this website without Avyo hearing back. Send it again from the article first, so it isn't published twice, or pause the website instead.",
             ]);
         }
 
@@ -176,6 +198,24 @@ class ChannelController extends Controller
         }
 
         DB::transaction(function () use ($channel): void {
+            $waiting = [
+                'status' => 'blocked',
+                'blocked_reason' => ArticleSchedules::NO_WEBSITE,
+                'channel_id' => null,
+                'delivery_id' => null,
+                'version' => DB::raw('version + 1'),
+                'updated_at' => now(),
+            ];
+
+            if (Schema::hasColumn('article_schedules', 'blocked_code')) {
+                $waiting['blocked_code'] = 'no_website';
+            }
+
+            ArticleSchedule::query()
+                ->where('channel_id', $channel->getKey())
+                ->whereIn('status', ['active', 'dispatching', 'blocked'])
+                ->update($waiting);
+
             SitePage::query()->where('channel_id', $channel->getKey())->update(['channel_id' => null]);
             $channel->delete();
         });

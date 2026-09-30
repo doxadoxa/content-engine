@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Publishing;
 
+use App\Enums\ChannelType;
 use App\Publishing\DeliveryExplanation;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -31,6 +32,22 @@ final class DeliveryExplanationTest extends TestCase
     public function a_failure_is_said_in_words_an_owner_can_act_on(?int $status, ?string $error, string $expected): void
     {
         $this->assertStringContainsString($expected, (string) DeliveryExplanation::explain($status, $error));
+    }
+
+    #[Test]
+    public function wordpress_refusing_the_login_points_at_the_login_not_a_secret(): void
+    {
+        foreach ([401, 403] as $status) {
+            $this->assertSame(
+                "WordPress refused Avyo's login ({$status}). Check the username and application password.",
+                DeliveryExplanation::explain($status, "receiver refused with {$status}", ChannelType::WordPress),
+            );
+        }
+
+        // Everything else about a WordPress failure reads as before, and a
+        // webhook's refusal is still about the secret.
+        $this->assertSame('Your website had an error (503).', DeliveryExplanation::explain(503, null, ChannelType::WordPress));
+        $this->assertStringContainsString("rejected Avyo's signature", (string) DeliveryExplanation::explain(401, null, ChannelType::Webhook));
     }
 
     #[Test]

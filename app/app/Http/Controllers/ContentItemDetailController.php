@@ -33,7 +33,7 @@ class ContentItemDetailController extends Controller
 
     public function __invoke(Request $request, ContentItem $item): Response
     {
-        $item->load(['localeVariants', 'assets', 'articleSchedule.delivery', 'project.channels']);
+        $item->load(['localeVariants', 'assets', 'articleSchedule.delivery.channel', 'project.channels']);
 
         $brief = $item->brand_brief_id === null
             ? null

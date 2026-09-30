@@ -215,7 +215,7 @@ class HomeController extends Controller
         // old "active and in the future" filter dropped from view entirely.
         $upcoming = ManagerContent::query('scheduled')
             ->orderBy(ArticleSchedule::query()->select('publish_at')->whereColumn('content_item_id', 'content_items.id')->limit(1))
-            ->with(['articleSchedule.delivery', 'project.channels'])->limit(5)->get();
+            ->with(['articleSchedule.delivery.channel', 'project.channels'])->limit(5)->get();
 
         return [
             'mode' => $project->autopublish ? 'automatic' : 'review_first', 'timezone' => $project->timezone,
@@ -224,8 +224,8 @@ class HomeController extends Controller
             'writing' => ManagerContent::query('writing')->count(), 'needs_review' => ManagerContent::query('review')->count(),
             'scheduled' => ManagerContent::query('scheduled')->count(), 'published' => ManagerContent::query('published')->count(),
             'upcoming' => $upcoming->map($row)->values()->all(),
-            'attention' => ManagerContent::query('review')->with(['articleSchedule.delivery', 'project.channels'])->latest()->limit(5)->get()->map($row)->all(),
-            'recent' => ManagerContent::query('published')->with(['articleSchedule.delivery', 'project.channels'])->latest('published_at')->limit(4)->get()->map($row)->all(),
+            'attention' => ManagerContent::query('review')->with(['articleSchedule.delivery.channel', 'project.channels'])->latest()->limit(5)->get()->map($row)->all(),
+            'recent' => ManagerContent::query('published')->with(['articleSchedule.delivery.channel', 'project.channels'])->latest('published_at')->limit(4)->get()->map($row)->all(),
         ];
     }
 

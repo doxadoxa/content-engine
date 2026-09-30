@@ -61,6 +61,8 @@ final class ArticleSchedules
 
     public const string STILL_WRITING = 'The article is still being prepared.';
 
+    public const string ON_ITS_WAY = "It's already on its way.";
+
     public const string PREVIOUS_FAILED = 'The previous delivery needs attention. It will not be repeated with a new identity.';
 
     public function __construct(private readonly ChannelPublisherRegistry $publishers, private readonly Entitlements $entitlements) {}
@@ -101,6 +103,7 @@ final class ArticleSchedules
                 'timezone' => $project->timezone, 'mode' => self::modeFor($project, held: false), 'held_for_review' => false, 'origin' => 'engine',
                 'status' => $target === null ? 'blocked' : 'active', 'version' => 1,
                 'blocked_reason' => $target === null ? ($targets->isEmpty() ? self::NO_WEBSITE : self::CHOOSE_WEBSITE) : null,
+                'blocked_code' => $target === null ? ($targets->isEmpty() ? BlockedCode::NO_WEBSITE : BlockedCode::CHOOSE_WEBSITE) : null,
             ]);
         });
     }
@@ -136,12 +139,16 @@ final class ArticleSchedules
             $held = $input['hold'] ?? $schedule->held_for_review ?? false;
             $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
             $this->withdrawQueued($schedule);
+            $mode = self::modeFor($project, $held);
+            if ($mode === 'review_first') {
+                $this->returnToReview($schedule, $item);
+            }
             $schedule->fill([
                 'channel_id' => $channel->id, 'publish_at' => $at, 'local_date' => $input['local_date'],
                 'local_time' => $input['local_time'], 'timezone' => $project->timezone,
-                'mode' => self::modeFor($project, $held), 'held_for_review' => $held, 'status' => 'active',
+                'mode' => $mode, 'held_for_review' => $held, 'status' => 'active',
                 'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                'blocked_reason' => null, 'delivery_id' => null,
+                'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => null,
             ])->save();
 
             return $schedule;
@@ -163,7 +170,7 @@ final class ArticleSchedules
                 'status' => match ($action) {
                     'pause' => 'paused', 'cancel' => 'canceled', default => 'active'
                 },
-                'version' => $schedule->version + 1, 'blocked_reason' => null, 'delivery_id' => null,
+                'version' => $schedule->version + 1, 'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => null,
             ])->save();
 
             return $schedule;
@@ -180,11 +187,20 @@ final class ArticleSchedules
      * went on asking to publish automatically.
      *
      * Only schedules nothing has been sent for, and never a held one — the
-     * owner asked for that article to wait whatever the project does. A block
-     * is lifted along with the change, whatever it said: every reason the
-     * mode decides is now out of date, and one that is still true is written
-     * again by {@see dispatch()} the next time the article is due. A schedule
-     * with no website stays blocked, since that is still the whole story.
+     * owner asked for that article to wait whatever the project does.
+     *
+     * Going review-first also takes back what Avyo approved on its own: the
+     * engine approves a few days ahead, and "Let me review first" has to mean
+     * those too, not only the drafts it had not reached yet. They go back to
+     * waiting for the owner; their allowance was already counted and is not
+     * counted again when the owner approves them.
+     *
+     * Blocks are lifted with the change, since every reason the mode decides
+     * is now out of date and one that is still true is written again by
+     * {@see dispatch()}. Two stay: a schedule with no website, which is still
+     * the whole story, and one whose date has passed. Lifting that would send
+     * a backlog of stale articles the minute the switch moved, so it waits for
+     * a new date instead.
      */
     public function followProject(Project $project): void
     {
@@ -193,12 +209,30 @@ final class ArticleSchedules
             ->where('held_for_review', false)->where('mode', '!=', $mode)
             ->whereNull('delivery_id')->whereNotIn('status', ['completed', 'dispatching']);
 
-        $drifted()->where('status', 'blocked')->whereNotNull('channel_id')
-            ->update(['status' => 'active', 'blocked_reason' => null]);
+        if ($mode === 'review_first') {
+            foreach ($drifted()->where('approved_by_avyo', true)->get() as $schedule) {
+                $this->returnToReview($schedule, ContentItem::acrossProjects()->findOrFail($schedule->content_item_id));
+                $schedule->save();
+            }
+        }
+
+        $lift = fn () => $drifted()->where('status', 'blocked')->whereNotNull('channel_id')
+            ->where(fn ($code) => $code->whereNull('blocked_code')->orWhere('blocked_code', '!=', BlockedCode::MISSED_DATE));
+        $lift()->where('publish_at', '<=', now())
+            ->update(['blocked_reason' => self::MISSED_DATE, 'blocked_code' => BlockedCode::MISSED_DATE]);
+        $lift()->update(['status' => 'active', 'blocked_reason' => null, 'blocked_code' => null]);
         $drifted()->update(['mode' => $mode, 'version' => DB::raw('version + 1'), 'updated_at' => now()]);
     }
 
-    /** Give engine schedules with nowhere to go the project's one usable website, once there is one. */
+    /**
+     * Give engine schedules with nowhere to go the project's one usable website, once there is one.
+     *
+     * Only the ones still to come become active. A new customer's calendar
+     * fills while they are still connecting their website, and releasing
+     * every date that passed meanwhile would publish a backlog the minute the
+     * test succeeds. Those wait for a new date, as in {@see followProject()};
+     * "Publish now" is how the owner sends one straight away.
+     */
     public function resolveTargets(Project $project): void
     {
         DB::transaction(function () use ($project): void {
@@ -209,10 +243,13 @@ final class ArticleSchedules
             }
             $target = $channels->first();
             assert($target instanceof Channel);
-            ArticleSchedule::query()->where('origin', 'engine')
-                ->whereNull('channel_id')->whereIn('status', ['active', 'blocked'])->whereNull('delivery_id')
-                ->update(['channel_id' => $target->id, 'status' => 'active', 'blocked_reason' => null,
-                    'version' => DB::raw('version + 1'), 'updated_at' => now()]);
+            $waiting = fn () => ArticleSchedule::acrossProjects()->where('project_id', $fresh->getKey())->where('origin', 'engine')
+                ->whereNull('channel_id')->whereIn('status', ['active', 'blocked'])->whereNull('delivery_id');
+            $attach = ['channel_id' => $target->id, 'version' => DB::raw('version + 1'), 'updated_at' => now()];
+
+            $waiting()->where('publish_at', '<=', now())
+                ->update([...$attach, 'status' => 'blocked', 'blocked_reason' => self::MISSED_DATE, 'blocked_code' => BlockedCode::MISSED_DATE]);
+            $waiting()->update([...$attach, 'status' => 'active', 'blocked_reason' => null, 'blocked_code' => null]);
         });
     }
 
@@ -234,47 +271,66 @@ final class ArticleSchedules
             if ($schedule === null || ! in_array($schedule->status, ['active', 'blocked'], true) || $schedule->publish_at->isFuture()) {
                 return [];
             }
+            // A missed date is answered with a new date, not by the next tick:
+            // the article would otherwise go out whenever the block happened
+            // to clear, days after anybody expected it.
+            if ($schedule->status === 'blocked' && $schedule->blocked_code === BlockedCode::MISSED_DATE) {
+                return [];
+            }
             $item->refresh()->loadMissing('project');
             $this->entitlements->forget($project);
-            $reason = null;
+            [$reason, $code] = [null, null];
             if ($this->missedAutomaticDate($schedule, $project)) {
-                $reason = self::MISSED_DATE;
-            } elseif ($project->status !== ProjectStatus::Active || ! $this->entitlements->for($project)->mayPublish()) {
-                $reason = self::PAUSED;
+                [$reason, $code] = [self::MISSED_DATE, BlockedCode::MISSED_DATE];
+            } elseif ($project->status !== ProjectStatus::Active) {
+                [$reason, $code] = [self::PAUSED, BlockedCode::PROJECT_PAUSED];
+            } elseif (! $this->entitlements->for($project)->mayPublish()) {
+                [$reason, $code] = [self::PAUSED, BlockedCode::PLAN];
             }
             $channel = $schedule->channel_id === null ? null : Channel::query()->find($schedule->channel_id);
-            if ($reason === null && ($channel === null || ! $this->compatible($channel))) {
-                $reason = self::WEBSITE_UNUSABLE;
+            if ($reason === null && $channel === null) {
+                [$reason, $code] = $this->channels($project)->isEmpty()
+                    ? [self::NO_WEBSITE, BlockedCode::NO_WEBSITE] : [self::CHOOSE_WEBSITE, BlockedCode::CHOOSE_WEBSITE];
+            } elseif ($reason === null && ! $this->compatible($channel)) {
+                [$reason, $code] = [self::WEBSITE_UNUSABLE, BlockedCode::WEBSITE_PAUSED];
             }
-            // Asked of the project as well as the schedule, so a schedule that
-            // somehow missed followProject() waits for a person rather than
-            // blocking an article a person has already approved.
+            // Avyo's approval only stands where nobody has to look. A schedule
+            // that reviews first (held, or the project reviews everything)
+            // waits for a person even if Avyo got to the draft earlier.
+            if ($schedule->mode === 'review_first' && $schedule->approved_by_avyo) {
+                $this->returnToReview($schedule, $item);
+                $schedule->save();
+            }
+            // Avyo approves only for an automatic schedule on a project that
+            // still publishes automatically; everything else waits for a person.
             if ($reason === null && $item->state === ContentItemState::Draft && $schedule->mode === 'automatic' && $project->autopublish) {
                 try {
                     app(ArticleApproval::class)->approve($item, automatic: true);
+                    $schedule->refresh();
                 } catch (ValidationException $exception) {
-                    $reason = $exception->getMessage();
+                    [$reason, $code] = [$exception->getMessage(), $exception instanceof ArticleRefusal ? $exception->blockedCode : BlockedCode::OTHER];
                 }
             }
             if ($reason === null && $item->state !== ContentItemState::Approved) {
-                $reason = $item->state === ContentItemState::Draft ? self::NEEDS_APPROVAL : self::STILL_WRITING;
+                [$reason, $code] = $item->state === ContentItemState::Draft
+                    ? [self::NEEDS_APPROVAL, BlockedCode::NEEDS_APPROVAL] : [self::STILL_WRITING, BlockedCode::OTHER];
             }
             if ($reason !== null) {
-                $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => $reason])->save();
+                $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => $reason, 'blocked_code' => $code])->save();
 
                 return [];
             }
             assert($channel instanceof Channel);
             $delivery = app(PublishToChannels::class)->publishToSelected($item, $channel);
             if ($delivery === null || $delivery->status === DeliveryStatus::DeadLetter) {
-                $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => self::PREVIOUS_FAILED])->save();
+                $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => self::PREVIOUS_FAILED, 'blocked_code' => BlockedCode::PREVIOUS_DELIVERY])->save();
 
                 return [];
             }
             $delivery->forceFill(['article_schedule_id' => $schedule->id, 'article_schedule_version' => $schedule->version])->save();
             $schedule->forceFill([
                 'status' => $delivery->status === DeliveryStatus::Delivered ? 'completed' : 'dispatching',
-                'delivery_id' => $delivery->id, 'blocked_reason' => null,
+                'delivery_id' => $delivery->id, 'blocked_reason' => null, 'blocked_code' => null,
             ])->save();
 
             return [$delivery];
@@ -304,65 +360,74 @@ final class ArticleSchedules
      * The owner pressing "Publish now" is the approval, so a finished draft is
      * approved on the way — through {@see ArticleApproval}, so the business
      * facts, the score, the plan and the allowance are asked exactly as they
-     * are for the Approve button. The schedule is then moved to this minute
-     * and handed to {@see dispatch()}, which is the one path that sends an
+     * are for the Approve button — and an article Avyo had approved becomes
+     * one a person approved. The schedule is then moved to this minute and
+     * handed to {@see dispatch()}, which is the one path that sends an
      * article: its row locks and its `dispatching` status are what keep the
      * scheduler from sending the same article a second time afterwards.
      *
+     * All of it is one transaction, taken behind the project's row lock
+     * first. A press that ends up refused leaves nothing behind — no spent
+     * allowance, no schedule moved to "now", no hold released — and a second
+     * press made while the first is still working waits for it, then hears
+     * that the article is already on its way.
+     *
      * Refusals come back as a validation error on `publish`, in words the
-     * owner can act on, and are asked before the approval so a press that
-     * cannot publish does not spend an article from the allowance.
+     * owner can act on.
      */
     public function publishNow(User $actor, ContentItem $item): ArticleSchedule
     {
         abort_unless($actor->projects()->whereKey($item->project_id)->wherePivot('role', 'owner')->exists(), 403);
-        $item->refresh()->loadMissing('project');
-        $project = $item->project;
-        $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->with('delivery')->first();
-        $refusal = $this->publishNowRefusal($item, $schedule);
-        if ($refusal !== null) {
-            throw ValidationException::withMessages(['publish' => $refusal]);
-        }
 
-        if ($item->state === ContentItemState::Draft) {
-            try {
-                app(ArticleApproval::class)->approve($item);
-            } catch (ValidationException $exception) {
-                throw ValidationException::withMessages(['publish' => $exception->getMessage()]);
+        return DB::transaction(function () use ($actor, $item): ArticleSchedule {
+            $project = Project::query()->whereKey($item->project_id)->lockForUpdate()->firstOrFail();
+            $item->refresh()->loadMissing('project');
+            $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->with('delivery')->first();
+            $refusal = $this->publishNowRefusal($item, $schedule);
+            if ($refusal !== null) {
+                throw ValidationException::withMessages(['publish' => $refusal]);
             }
-        }
 
-        $this->mutate($item, function (?ArticleSchedule $schedule) use ($actor, $item, $project): ArticleSchedule {
-            $channel = $this->target($project, $schedule);
-            $sent = $schedule?->delivery_id === null ? null : WebhookDelivery::query()->find($schedule->delivery_id);
-            if ($channel === null || $schedule?->status === 'completed'
-                || ($schedule?->status === 'dispatching' && $sent?->status !== DeliveryStatus::DeadLetter)) {
-                throw ValidationException::withMessages(['publish' => 'This article changed in another window. Reload the page and try again.']);
+            if ($item->state === ContentItemState::Draft) {
+                try {
+                    app(ArticleApproval::class)->approve($item);
+                } catch (ValidationException $exception) {
+                    throw ValidationException::withMessages(['publish' => $exception->getMessage()]);
+                }
             }
-            $at = CarbonImmutable::now()->setTimezone($project->timezone);
-            $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
-            $this->withdrawQueued($schedule);
-            $schedule->fill([
-                'channel_id' => $channel->id, 'publish_at' => $at->utc(), 'local_date' => $at->toDateString(),
-                'local_time' => $at->format('H:i'), 'timezone' => $project->timezone,
-                'mode' => self::modeFor($project, held: false), 'held_for_review' => false, 'status' => 'active',
-                'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                'blocked_reason' => null, 'delivery_id' => null,
-            ])->save();
+
+            $this->mutate($item, function (?ArticleSchedule $schedule) use ($actor, $item, $project): ArticleSchedule {
+                $channel = $this->target($project, $schedule);
+                if ($channel === null) {
+                    throw ValidationException::withMessages(['publish' => 'Choose which website this article should go to first.']);
+                }
+                $at = CarbonImmutable::now()->setTimezone($project->timezone);
+                $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
+                $this->withdrawQueued($schedule);
+                $schedule->fill([
+                    'channel_id' => $channel->id, 'publish_at' => $at->utc(), 'local_date' => $at->toDateString(),
+                    'local_time' => $at->format('H:i'), 'timezone' => $project->timezone,
+                    'mode' => self::modeFor($project, held: false), 'held_for_review' => false, 'approved_by_avyo' => false, 'status' => 'active',
+                    'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
+                    'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => null,
+                ])->save();
+
+                return $schedule;
+            });
+
+            $this->dispatch($item);
+            $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->firstOrFail();
+            if ($schedule->status === 'blocked') {
+                $item->unsetRelation('articleSchedule');
+                $presentation = PublicationStatus::for($item->refresh(), $schedule->load('delivery'));
+
+                // Thrown inside the transaction, so the approval and the moved
+                // schedule above are rolled back with it.
+                throw ValidationException::withMessages(['publish' => $presentation['detail'] ?? (string) $schedule->blocked_reason]);
+            }
 
             return $schedule;
         });
-
-        $this->dispatch($item);
-        $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->firstOrFail();
-        if ($schedule->status === 'blocked') {
-            $item->unsetRelation('articleSchedule');
-            $presentation = PublicationStatus::for($item->refresh(), $schedule->load('delivery'));
-
-            throw ValidationException::withMessages(['publish' => $presentation['detail'] ?? (string) $schedule->blocked_reason]);
-        }
-
-        return $schedule;
     }
 
     /**
@@ -379,7 +444,7 @@ final class ArticleSchedules
         return match (true) {
             $item->state->isLive(), $schedule?->status === 'completed' => 'This article is already live on your website.',
             ! in_array($item->state, [ContentItemState::Draft, ContentItemState::Approved], true) => 'This article is still being written. You can publish it once it is ready.',
-            $schedule?->status === 'dispatching' && $delivery?->status !== DeliveryStatus::DeadLetter => 'This article is already on its way to your website.',
+            $schedule?->status === 'dispatching' && $delivery?->status !== DeliveryStatus::DeadLetter => self::ON_ITS_WAY,
             $delivery !== null && ($delivery->attempts > 0 || $delivery->article_attempt_started_at !== null) => "The last attempt didn't go through. Use Try again on the article instead.",
             $this->channels($project)->isEmpty() => 'Connect your website first.',
             $this->target($project, $schedule) === null => 'Choose which website this article should go to first.',
@@ -392,7 +457,7 @@ final class ArticleSchedules
     /** @return array<string, mixed> */
     public function props(ContentItem $item): array
     {
-        $item->loadMissing(['articleSchedule.delivery', 'project.channels']);
+        $item->loadMissing(['articleSchedule.delivery.channel', 'project.channels']);
         $schedule = $item->articleSchedule;
         $delivery = $schedule?->delivery_id === null ? null : $schedule->delivery;
         $status = match (true) {
@@ -423,7 +488,7 @@ final class ArticleSchedules
                 'available' => $refusal === null,
                 // Only the refusals worth showing beside a button: the others
                 // are already the whole story in `presentation`.
-                'reason' => in_array($refusal, [null, 'This article is already live on your website.', 'This article is already on its way to your website.', "The last attempt didn't go through. Use Try again on the article instead."], true) ? null : $refusal,
+                'reason' => in_array($refusal, [null, 'This article is already live on your website.', self::ON_ITS_WAY, "The last attempt didn't go through. Use Try again on the article instead."], true) ? null : $refusal,
             ],
             'default_mode' => self::modeFor($item->project, held: false),
             'schedule' => $schedule === null ? null : [
@@ -431,6 +496,7 @@ final class ArticleSchedules
                 'publish_at' => $schedule->publish_at->toIso8601String(), 'local_date' => $schedule->publish_at->setTimezone($item->project->timezone)->toDateString(),
                 'local_time' => $schedule->publish_at->setTimezone($item->project->timezone)->format('H:i'), 'timezone' => $item->project->timezone, 'channel_id' => $schedule->channel_id,
                 'blocked_reason' => $schedule->blocked_reason ?? ($status === 'blocked' ? $delivery?->error : null),
+                'blocked_code' => $schedule->blocked_code,
             ],
             'channels' => $this->channels($item->project)->map(fn (Channel $channel): array => [
                 'id' => $channel->id, 'name' => $channel->name, 'type' => $channel->type->value,
@@ -467,6 +533,23 @@ final class ArticleSchedules
         $chosen = $schedule?->channel_id === null ? null : $usable->firstWhere('id', $schedule->channel_id);
 
         return $chosen ?? ($usable->count() === 1 ? $usable->first() : null);
+    }
+
+    /**
+     * Take back an approval Avyo gave on its own, for a schedule that now
+     * waits for a person. Only while nothing has been sent; the allowance
+     * record stays, so the owner's approval does not count the article again.
+     * The caller saves the schedule.
+     */
+    private function returnToReview(ArticleSchedule $schedule, ContentItem $item): void
+    {
+        if (! $schedule->approved_by_avyo || $schedule->delivery_id !== null) {
+            return;
+        }
+        if ($item->state === ContentItemState::Approved) {
+            $item->returnForRework();
+        }
+        $schedule->approved_by_avyo = false;
     }
 
     /**

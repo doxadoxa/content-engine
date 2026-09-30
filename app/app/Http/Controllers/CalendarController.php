@@ -49,7 +49,7 @@ class CalendarController extends Controller
         $until = $month->copy()->addMonth()->utc();
 
         $units = ContentItem::query()
-            ->with(['localeVariants', 'articleSchedule.delivery', 'project.channels'])
+            ->with(['localeVariants', 'articleSchedule.delivery.channel', 'project.channels'])
             ->where(fn ($query) => $query
                 ->whereHas('articleSchedule', fn ($schedule) => $schedule->where('status', '!=', 'canceled')->where('publish_at', '>=', $from)->where('publish_at', '<', $until))
                 ->orWhere(fn ($planned) => $planned->whereDoesntHave('articleSchedule')->whereBetween('scheduled_for', [$month->toDateString(), $month->copy()->endOfMonth()->toDateString()])))
@@ -84,7 +84,7 @@ class CalendarController extends Controller
             'unscheduled' => ContentItem::query()
                 ->where(fn ($query) => $query->where(fn ($unscheduled) => $unscheduled->whereDoesntHave('articleSchedule')->whereNull('scheduled_for'))->orWhereHas('articleSchedule', fn ($schedule) => $schedule->where('status', 'canceled')))
                 ->whereNotIn('state', ['published', 'refreshing'])
-                ->with(['localeVariants', 'articleSchedule.delivery', 'project.channels'])
+                ->with(['localeVariants', 'articleSchedule.delivery.channel', 'project.channels'])
                 ->orderByDesc('topic_volume')
                 ->limit(25)
                 ->get()

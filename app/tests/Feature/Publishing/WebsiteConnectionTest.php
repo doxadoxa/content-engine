@@ -6,13 +6,18 @@ namespace Tests\Feature\Publishing;
 
 use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
+use App\Models\ArticleSchedule;
 use App\Models\Channel;
+use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\ConnectionHealth;
 use App\Publishing\ConnectionSecret;
+use App\Publishing\DeliveryExplanation;
 use App\Publishing\WebhookPayload;
 use App\Publishing\WebhookPublisher;
 use App\Support\Tenancy\CurrentProject;
@@ -296,6 +301,178 @@ final class WebsiteConnectionTest extends TestCase
 
         $this->assertSame(0, Channel::query()->count());
         $this->assertSame(0, WebhookDelivery::query()->count());
+    }
+
+    #[Test]
+    public function a_website_with_an_article_on_its_way_is_not_removed(): void
+    {
+        $channel = $this->webhook();
+        $this->articleDelivery($channel, ['status' => DeliveryStatus::Retrying->value]);
+
+        $this->as($this->owner)->delete(route('channels.destroy', $channel))
+            ->assertSessionHasErrors(['channel' => 'An article is on its way to this website. Try again once it has been sent, or pause the website instead.']);
+
+        $this->assertTrue(Channel::query()->whereKey($channel->id)->exists());
+    }
+
+    #[Test]
+    public function a_website_that_may_have_received_an_article_unheard_is_not_removed(): void
+    {
+        // Sent, and no answer came back: the row is the receipt identity a
+        // retry reconciles against, and deleting it risks a second copy.
+        $channel = $this->webhook();
+        $delivery = $this->articleDelivery($channel, [
+            'status' => DeliveryStatus::DeadLetter->value,
+            'article_attempt_started_at' => now(),
+            'response_code' => null,
+            'error' => 'cURL error 28: Operation timed out',
+        ]);
+
+        $this->as($this->owner)->delete(route('channels.destroy', $channel))
+            ->assertSessionHasErrors('channel');
+
+        $this->assertTrue(WebhookDelivery::query()->whereKey($delivery->id)->exists());
+
+        // A clear refusal is not uncertain: nothing was published.
+        $delivery->forceFill(['response_code' => 401])->save();
+
+        $this->as($this->owner)->delete(route('channels.destroy', $channel))
+            ->assertSessionHasNoErrors();
+        $this->assertFalse(Channel::query()->whereKey($channel->id)->exists());
+    }
+
+    #[Test]
+    public function removing_a_website_sends_its_scheduled_articles_back_to_waiting_for_one(): void
+    {
+        $channel = $this->webhook(['verified_at' => now()]);
+        $delivery = $this->articleDelivery($channel, ['status' => DeliveryStatus::Delivered->value]);
+        $sending = $this->schedule($channel, ['status' => 'dispatching', 'delivery_id' => $delivery->id, 'version' => 3]);
+        $waiting = $this->schedule($channel, ['status' => 'active']);
+        $done = $this->schedule($channel, ['status' => 'completed']);
+
+        $this->as($this->owner)->delete(route('channels.destroy', $channel))
+            ->assertSessionHasNoErrors();
+
+        foreach ([$sending, $waiting] as $schedule) {
+            $schedule->refresh();
+            $this->assertSame('blocked', $schedule->status);
+            $this->assertSame(ArticleSchedules::NO_WEBSITE, $schedule->blocked_reason);
+            $this->assertNull($schedule->delivery_id);
+            $this->assertNull($schedule->channel_id);
+        }
+
+        $this->assertSame(4, $sending->version);
+        $this->assertSame('completed', $done->refresh()->status);
+    }
+
+    #[Test]
+    public function a_failed_test_stops_the_website_being_used_until_one_passes(): void
+    {
+        Http::fake(['receiver.test/*' => Http::sequence()
+            ->push('down', 503)
+            ->push(['ok' => true])]);
+        $channel = $this->webhook(['verified_at' => now()->subDay()]);
+        $this->assertTrue(app(ArticleSchedules::class)->compatible($channel));
+
+        $this->as($this->owner)->post(route('channels.ping', $channel))->assertRedirect();
+
+        // The page says "Couldn't connect", and articles agree: none go.
+        $channel->refresh();
+        $this->assertNull($channel->verified_at);
+        $this->assertFalse(app(ArticleSchedules::class)->compatible($channel));
+
+        $this->as($this->owner)->post(route('channels.ping', $channel))->assertRedirect();
+
+        $this->assertTrue(app(ArticleSchedules::class)->compatible($channel->refresh()));
+    }
+
+    #[Test]
+    public function a_late_test_of_the_old_secret_does_not_verify_the_new_one(): void
+    {
+        Queue::fake();
+        Http::fake(['receiver.test/*' => Http::response(['ok' => true])]);
+        $channel = $this->webhook();
+
+        $old = app(WebhookPublisher::class)->ping($channel, $this->project);
+
+        // The owner replaces the secret before the old test has run.
+        $this->as($this->owner)->post(route('channels.secret.regenerate', $channel));
+        $new = WebhookDelivery::query()->whereKeyNot($old->id)->sole();
+
+        app(WebhookPublisher::class)->attempt($old);
+
+        $this->assertSame(DeliveryStatus::Delivered, $old->refresh()->status);
+        $this->assertNull($channel->refresh()->verified_at);
+
+        app(WebhookPublisher::class)->attempt($new);
+
+        $this->assertNotNull($channel->refresh()->verified_at);
+    }
+
+    #[Test]
+    public function a_late_failure_of_the_old_address_does_not_fail_the_new_one(): void
+    {
+        Queue::fake();
+        // The new test passes; the old one, arriving later, is refused.
+        Http::fake(['moved.test/*' => Http::sequence()->push(['ok' => true])->push('gone', 404)]);
+        $channel = $this->webhook();
+        $old = app(WebhookPublisher::class)->ping($channel, $this->project);
+
+        $this->as($this->owner)->patch(route('channels.update', $channel), ['config' => ['endpoint' => 'https://moved.test/hook']]);
+        $new = WebhookDelivery::query()->whereKeyNot($old->id)->sole();
+        app(WebhookPublisher::class)->attempt($new);
+        $this->assertNotNull($channel->refresh()->verified_at);
+
+        // The old test finishes late and fails. It was a test of the old
+        // address, so its failure says nothing about the new one.
+        app(WebhookPublisher::class)->attempt($old);
+
+        $this->assertSame(DeliveryStatus::DeadLetter, $old->refresh()->status);
+        $this->assertNotNull($channel->refresh()->verified_at);
+        $this->as($this->owner)->get(route('channels.index'))
+            ->assertInertia(fn (AssertableInertia $page) => $page->where('channels.0.health.state', 'connected'));
+    }
+
+    #[Test]
+    public function wordpress_refusing_the_login_is_explained_as_a_login(): void
+    {
+        Http::fake(['example.test/*' => Http::response(['code' => 'rest_forbidden'], 401)]);
+        $wordpress = Channel::factory()->create([
+            'name' => 'WordPress',
+            'type' => ChannelType::WordPress,
+            'config' => ['page_receiver_base' => 'https://example.test/wp-json/avyo/v1', 'username' => 'editor'],
+            'secret' => 'app password',
+        ]);
+
+        $this->as($this->owner)->post(route('channels.ping', $wordpress))->assertRedirect();
+
+        $ping = WebhookDelivery::query()->sole();
+        $expected = "WordPress refused Avyo's login (401). Check the username and application password.";
+        $this->assertSame($expected, DeliveryExplanation::for($ping));
+        $this->assertSame($expected, ConnectionHealth::for($wordpress->refresh())['detail']);
+    }
+
+    /** @param  array<string, mixed>  $attributes */
+    private function articleDelivery(Channel $channel, array $attributes): WebhookDelivery
+    {
+        return WebhookDelivery::query()->create([
+            'channel_id' => $channel->id,
+            'content_item_id' => ContentItem::factory()->create()->id,
+            'delivery_id' => WebhookPayload::newDeliveryId(),
+            'payload_snapshot' => ['event' => 'content.published', 'content' => []],
+            ...$attributes,
+        ]);
+    }
+
+    /** @param  array<string, mixed>  $attributes */
+    private function schedule(Channel $channel, array $attributes): ArticleSchedule
+    {
+        return ArticleSchedule::query()->create([
+            'content_item_id' => ContentItem::factory()->create()->id, 'channel_id' => $channel->id,
+            'publish_at' => now(), 'local_date' => now()->toDateString(), 'local_time' => '09:00',
+            'timezone' => 'UTC', 'mode' => 'automatic', 'origin' => 'manager', 'status' => 'active', 'version' => 1,
+            ...$attributes,
+        ]);
     }
 
     /** @param  array<string, mixed>  $attributes */

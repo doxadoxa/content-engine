@@ -22,6 +22,7 @@ use App\Models\PipelineRun;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
+use App\Models\WebhookDelivery;
 use App\Onboarding\Contracts\SiteReader;
 use App\Onboarding\FakeSiteReader;
 use App\Onboarding\ProjectLaunch;
@@ -700,6 +701,40 @@ final class OnboardingWizardTest extends TestCase
         $this->assertSame(OnboardingStatus::Launching, $project->fresh()?->onboarding_status);
         $this->assertSame(['Blog'], Channel::acrossProjects()->pluck('name')->all());
         Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function a_new_address_from_the_wizard_is_tested_again_rather_than_trusted(): void
+    {
+        config(['billing.default_plan' => 'growth']);
+        Queue::fake();
+
+        $operator = User::factory()->create();
+        $project = Project::factory()->onboarding()->unbilled()->create([
+            'site_analysis' => ['description' => 'A Lisbon cleaning business.'],
+            'onboarding' => ['channels' => [
+                'destination' => 'custom',
+                'webhook_endpoint' => 'https://cleaningpoint.pt/api/new-content',
+            ]],
+        ]);
+        $operator->projects()->attach($project, ['role' => 'owner']);
+
+        // Connected and tested at the old address.
+        $website = app(CurrentProject::class)->run($project, fn () => Channel::factory()->create([
+            'name' => 'Website', 'type' => ChannelType::Webhook, 'secret' => 'kept-secret',
+            'config' => ['endpoint' => 'https://cleaningpoint.pt/api/content'], 'verified_at' => now(),
+        ]));
+
+        $this->actingAs($operator)
+            ->withHeaders(['X-Inertia' => 'true'])
+            ->post("/onboarding/{$project->getKey()}/launch");
+
+        $website = Channel::acrossProjects()->whereKey($website->id)->firstOrFail();
+        $this->assertSame('https://cleaningpoint.pt/api/new-content', $website->config['endpoint']);
+        $this->assertSame('kept-secret', $website->secret);
+        // What the old address proved does not carry over; the test decides.
+        $this->assertNull($website->verified_at);
+        $this->assertSame(1, WebhookDelivery::acrossProjects()->where('channel_id', $website->id)->count());
     }
 
     #[Test]

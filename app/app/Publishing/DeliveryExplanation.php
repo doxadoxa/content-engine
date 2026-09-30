@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Publishing;
 
+use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
 use App\Models\WebhookDelivery;
 
@@ -26,13 +27,17 @@ final class DeliveryExplanation
             return null;
         }
 
-        return self::explain($delivery->response_code, $delivery->error);
+        return self::explain($delivery->response_code, $delivery->error, $delivery->channel?->type);
     }
 
-    public static function explain(?int $status, ?string $error): ?string
+    /**
+     * The same, from the parts. `$type` is optional: without it a refusal
+     * is explained as a webhook's, which is what most websites are.
+     */
+    public static function explain(?int $status, ?string $error, ?ChannelType $type = null): ?string
     {
         if ($status !== null) {
-            return self::forStatus($status);
+            return self::forStatus($status, $type);
         }
 
         if ($error === null || trim($error) === '') {
@@ -42,8 +47,14 @@ final class DeliveryExplanation
         return self::forTransport($error) ?? $error;
     }
 
-    private static function forStatus(int $status): string
+    private static function forStatus(int $status, ?ChannelType $type): string
     {
+        // WordPress signs in with a username and an application password;
+        // there is no Avyo secret on that side to go and check.
+        if ($type === ChannelType::WordPress && in_array($status, [401, 403], true)) {
+            return "WordPress refused Avyo's login ({$status}). Check the username and application password.";
+        }
+
         return match (true) {
             $status === 401, $status === 403 => "Your website rejected Avyo's signature ({$status}). Check that the secret on your website matches the one Avyo shows for this connection.",
             $status === 404, $status === 410 => "Nothing answered at that address ({$status}). Check the webhook address.",

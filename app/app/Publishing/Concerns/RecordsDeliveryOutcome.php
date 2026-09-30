@@ -10,8 +10,10 @@ use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
 use App\Http\Controllers\ApprovalController;
 use App\Models\ArticleSchedule;
+use App\Models\Channel;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleDeliveryGuard;
+use App\Publishing\ConnectionFingerprint;
 use App\Publishing\WebhookPublisher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -76,7 +78,10 @@ trait RecordsDeliveryOutcome
             'sweeps' => 0,
         ])->save();
 
-        if (($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value) {
+        // Only a test of the connection as it is now. One signed with a
+        // secret or sent to an address the owner has since replaced says
+        // nothing about the new one.
+        if ($this->isCurrentTest($delivery)) {
             $delivery->channel->forceFill(['verified_at' => now()])->save();
         }
 
@@ -261,7 +266,35 @@ trait RecordsDeliveryOutcome
             'next_attempt_at' => null,
         ])->save();
 
+        // A failed test is the website's current answer, so it stops being
+        // used until a test passes. Otherwise the page says "Couldn't
+        // connect" while articles keep being sent to it — the two would
+        // disagree about the one question the page exists to answer.
+        if ($this->isCurrentTest($delivery)) {
+            $channel = $delivery->channel;
+            $channel->forceFill([
+                'verified_at' => null,
+                'config' => [...$channel->config, 'article_publishing_verified' => false],
+            ])->save();
+        }
+
         return $delivery;
+    }
+
+    /**
+     * Whether this delivery is a test of the website connection as it is
+     * now — the only kind whose answer may change `verified_at`.
+     */
+    protected function isCurrentTest(WebhookDelivery $delivery): bool
+    {
+        if (($delivery->payload_snapshot['event'] ?? null) !== WebhookEvent::Ping->value) {
+            return false;
+        }
+
+        $channel = $delivery->channel;
+
+        return $channel instanceof Channel
+            && ConnectionFingerprint::stillCurrent($delivery, $channel->refresh());
     }
 
     /**

@@ -642,13 +642,24 @@ class OnboardingController extends Controller
                 default => ConnectionSecret::generate(),
             };
 
+            // A different address or secret is a different connection: what
+            // the old one proved does not carry over, and the test below
+            // decides again.
+            $changed = $existing === null
+                || $existing->type !== ChannelType::Webhook
+                || ($existing->config['endpoint'] ?? null) !== $endpoint
+                || $existing->secret !== $secret;
+
             $website = Channel::query()->updateOrCreate(
                 ['name' => 'Website'],
                 [
                     'type' => ChannelType::Webhook,
-                    'config' => ['endpoint' => $endpoint],
+                    'config' => $changed
+                        ? [...($existing->config ?? []), 'endpoint' => $endpoint, 'article_publishing_verified' => false]
+                        : ($existing->config ?? []),
                     'secret' => $secret,
                     'is_enabled' => true,
+                    ...($changed ? ['verified_at' => null] : []),
                 ],
             );
 

@@ -14,11 +14,13 @@ use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\BlockedCode;
 use App\Publishing\Articles\PublicationStatus;
 use App\Support\Tenancy\CurrentProject;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -165,7 +167,7 @@ final class PublicationStatusTest extends TestCase
     }
 
     #[Test]
-    public function each_blocked_reason_links_to_its_own_fix(): void
+    public function rows_without_a_code_fall_back_to_their_sentence(): void
     {
         $cases = [
             [ArticleSchedules::NO_WEBSITE, 'failed', 'connect', '/channels'],
@@ -173,6 +175,7 @@ final class PublicationStatusTest extends TestCase
             [ArticleSchedules::PAUSED, 'waiting', 'plan', '/billing'],
             ['The fact check has not passed. Review the article before publishing.', 'waiting', 'review', '/content/'],
             ['An active plan or available publication grace is required.', 'waiting', 'plan', '/billing'],
+            ['No articles remain in this period. The draft stays saved.', 'waiting', 'plan', '/billing'],
             [ArticleSchedules::CHOOSE_WEBSITE, 'waiting', 'reschedule', '#publication'],
         ];
 
@@ -186,6 +189,118 @@ final class PublicationStatusTest extends TestCase
             $this->assertSame($kind, $status['action']['kind'] ?? null, $reason);
             $this->assertStringContainsString($href, (string) ($status['action']['href'] ?? ''), $reason);
             $this->assertStringNotContainsString('delivery', strtolower((string) $status['detail']), $reason);
+        }
+    }
+
+    /** @return array<string, array{0: string, 1: string, 2: string, 3: string|null, 4: string|null, 5: string}> */
+    public static function codes(): array
+    {
+        // code => [key, label, action label, action kind, href fragment, detail fragment]
+        return [
+            'no_website' => [BlockedCode::NO_WEBSITE, 'failed', "Couldn't publish", 'Check website connection', '/channels', "connection isn't working"],
+            'choose_website' => [BlockedCode::CHOOSE_WEBSITE, 'waiting', 'Waiting for you', 'Choose a website', '#publication', 'Choose which website'],
+            'missed_date' => [BlockedCode::MISSED_DATE, 'waiting', 'Waiting for you', 'Pick a new date', '#publication', 'Its date passed'],
+            'plan' => [BlockedCode::PLAN, 'waiting', 'Waiting for you', 'Choose a plan', '/billing', "Your plan doesn't include publishing yet."],
+            'allowance_used' => [BlockedCode::ALLOWANCE_USED, 'waiting', 'Waiting for you', 'Choose a plan', '/billing', "You've used this period's articles. It will publish when your allowance renews, or choose a bigger plan."],
+            'project_paused' => [BlockedCode::PROJECT_PAUSED, 'paused', 'Paused', 'Resume content work', '/edit', 'Content work is paused'],
+            'needs_approval' => [BlockedCode::NEEDS_APPROVAL, 'waiting', 'Waiting for you', 'Approve', '/approve', 'Approve it to publish now.'],
+            'fact_check' => [BlockedCode::FACT_CHECK, 'waiting', 'Waiting for you', 'Review article', '/content/', 'The fact check found something'],
+            'score' => [BlockedCode::SCORE, 'waiting', 'Waiting for you', 'Review article', '/content/', 'This draft needs attention: add a picture.'],
+            'business_facts' => [BlockedCode::BUSINESS_FACTS, 'waiting', 'Waiting for you', 'Review article', '/content/', 'This draft needs attention: add a picture.'],
+            'website_paused' => [BlockedCode::WEBSITE_PAUSED, 'paused', 'Paused', 'Open website connection', '/channels', 'Your website connection is paused. Resume it to publish.'],
+            'previous_delivery' => [BlockedCode::PREVIOUS_DELIVERY, 'failed', "Couldn't publish", 'Try again', '/replay', 'Your website had an error (500).'],
+            'other' => [BlockedCode::OTHER, 'failed', "Couldn't publish", null, null, 'This draft needs attention: add a picture.'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('codes')]
+    public function each_blocked_code_has_its_own_words_and_fix(string $code, string $key, string $label, ?string $action, ?string $href, string $detail): void
+    {
+        $item = $this->article(ContentItemState::Draft);
+        // The stored sentence says something else on purpose: the code wins.
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'blocked', 'blocked_code' => $code,
+            'blocked_reason' => 'This draft needs attention: add a picture.']);
+        if ($code === BlockedCode::PREVIOUS_DELIVERY) {
+            $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => 500, 'error' => 'receiver answered 500', 'delivered_at' => null]);
+        }
+
+        $status = $this->present($item);
+
+        $this->assertSame([$key, $label], [$status['key'], $status['label']]);
+        $this->assertSame($action, $status['action']['label'] ?? null);
+        if ($href !== null) {
+            $this->assertStringContainsString($href, (string) ($status['action']['href'] ?? ''));
+        }
+        $this->assertStringContainsString($detail, (string) $status['detail']);
+    }
+
+    #[Test]
+    public function other_without_a_sentence_is_still_being_prepared(): void
+    {
+        $item = $this->article(ContentItemState::Generating);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'blocked', 'blocked_code' => BlockedCode::OTHER,
+            'blocked_reason' => ArticleSchedules::STILL_WRITING]);
+
+        $status = $this->present($item);
+
+        $this->assertSame(['writing', 'Writing', 'The article is still being prepared.'], [$status['key'], $status['label'], $status['detail']]);
+    }
+
+    #[Test]
+    public function the_sweepers_own_words_are_never_shown(): void
+    {
+        foreach ([
+            'The worker holding this delivery never reported back — it was most likely killed mid-flight. Nothing was sent; the delivery has been put back in the queue.',
+            'It may have reached the website; it is being re-sent with the same identity.',
+        ] as $note) {
+            $item = $this->article(ContentItemState::Approved);
+            $delivery = $this->delivery($item, ['status' => DeliveryStatus::Retrying, 'response_code' => null, 'error' => $note,
+                'next_attempt_at' => now(), 'delivered_at' => null]);
+            $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $delivery->id]);
+
+            $status = $this->present($item);
+            $row = PublicationStatus::attempt($delivery->fresh() ?? $delivery, 'UTC');
+
+            $this->assertSame(['delayed', 'Delayed', 'Taking longer than usual. Avyo will try again automatically.'], [$status['key'], $status['label'], $status['detail']]);
+            $this->assertSame(['Delayed', 'Taking longer than usual. Avyo will try again automatically.', null], [$row['label'], $row['explanation'], $row['next_attempt']]);
+        }
+
+        $item = $this->article(ContentItemState::Approved);
+        $dead = $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'delivered_at' => null,
+            'error' => 'This delivery was found abandoned 3 times and was never attempted — the worker that picked it up stopped reporting each time.']);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $dead->id]);
+
+        $status = $this->present($item);
+
+        $this->assertSame("Avyo couldn't get it to your website after several tries.", $status['detail']);
+        $this->assertSame('Try again', $status['action']['label'] ?? null);
+    }
+
+    #[Test]
+    public function a_wordpress_refusal_is_explained_as_a_login_in_every_list(): void
+    {
+        $wordpress = Channel::factory()->create(['type' => ChannelType::WordPress, 'name' => 'Blog', 'is_enabled' => true, 'verified_at' => now(),
+            'config' => ['url' => 'https://blog.test', 'username' => 'avyo', 'article_publishing_verified' => true]]);
+        $items = [];
+        foreach ([1, 2] as $n) {
+            $item = $this->article(ContentItemState::Approved);
+            $delivery = WebhookDelivery::factory()->create(['channel_id' => $wordpress->id, 'content_item_id' => $item->id,
+                'payload_snapshot' => ['event' => 'content.published'], 'status' => DeliveryStatus::DeadLetter,
+                'response_code' => 401, 'error' => 'receiver refused with 401', 'delivered_at' => null]);
+            $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $delivery->id, 'channel_id' => $wordpress->id]);
+            $items[] = $item->id;
+        }
+
+        // Loaded as a list, the way every screen loads them, so a lazy load
+        // of the website would throw here outside production.
+        // Also without the website eager-loaded: the presenter loads it itself.
+        foreach (['articleSchedule.delivery.channel', 'articleSchedule.delivery'] as $with) {
+            $loaded = ContentItem::query()->whereIn('id', $items)->with([$with, 'project.channels'])->get();
+            foreach ($loaded as $item) {
+                $status = app(ArticleSchedules::class)->props($item)['presentation'];
+                $this->assertStringStartsWith("WordPress refused Avyo's login (401)", (string) $status['detail'], $with);
+            }
         }
     }
 

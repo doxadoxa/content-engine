@@ -46,7 +46,10 @@ final class ArticleDeliveryGuard
             }
         }
 
-        if ($schedule->mode === 'automatic' && ($item->factcheck['passed'] ?? false) !== true) {
+        // Asked of Avyo's own approvals only. A person who approved the
+        // article, or pressed Publish now, has read it and decided; a failed
+        // fact check is theirs to overrule.
+        if ($schedule->approved_by_avyo && ($item->factcheck['passed'] ?? false) !== true) {
             return 'The fact check has not passed. Review the article before publishing.';
         }
 
@@ -59,9 +62,9 @@ final class ArticleDeliveryGuard
         if (! app(ArticleSchedules::class)->compatible($delivery->channel)) {
             return 'The scheduled website connection is no longer enabled for this publication.';
         }
-        // Queued before the owner switched the project to review first: that
-        // answer reaches deliveries already waiting to be sent, too.
-        if ($schedule->mode === 'automatic' && ! $project->autopublish) {
+        // Avyo approved it, and since then the project went review-first or
+        // the owner held the article: nobody has said yes to this one yet.
+        if ($schedule->approved_by_avyo && (! $project->autopublish || $schedule->mode !== 'automatic')) {
             return 'Automatic publishing was turned off before this article was sent. Schedule it again to publish it.';
         }
 

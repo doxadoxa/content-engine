@@ -119,6 +119,8 @@ class WebhookPublisher implements ChannelPublisher
             'delivery_id' => $deliveryId,
             'status' => DeliveryStatus::Pending->value,
             'payload_snapshot' => WebhookPayload::ping($project, $deliveryId),
+            // Its answer counts only while the connection is still this one.
+            'connection_fingerprint' => ConnectionFingerprint::of($channel),
         ]);
 
         DeliverWebhookJob::dispatch($delivery->getKey())->afterCommit();
@@ -312,9 +314,12 @@ class WebhookPublisher implements ChannelPublisher
      */
     protected function succeed(WebhookDelivery $delivery, int $attempt, int $latency, int $status, ?array $body): WebhookDelivery
     {
+        // Asked before settling: settling is what writes `verified_at`.
+        $confirms = $this->isCurrentTest($delivery);
+
         $this->settleDelivered($delivery, $attempt, $latency, $status);
 
-        if (($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value) {
+        if ($confirms) {
             $this->confirmConnection($delivery);
         }
 

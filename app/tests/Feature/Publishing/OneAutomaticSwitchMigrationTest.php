@@ -9,9 +9,11 @@ use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
+use App\Models\WebhookDelivery;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -113,6 +115,128 @@ final class OneAutomaticSwitchMigrationTest extends TestCase
         $this->assertSchedule($reviewing, mode: 'review_first', status: 'active', held: false, version: 1);
     }
 
+    #[Test]
+    public function an_article_approved_ahead_of_a_schedule_that_now_reviews_first_goes_back_to_the_owner(): void
+    {
+        $flipped = $this->project(['autopublish' => true]);
+        $off = $this->channel($flipped, ['autopublish' => false]);
+        $early = $this->approved($this->schedule($flipped, $off, ['mode' => 'automatic', 'origin' => 'engine']));
+
+        $staying = $this->project(['autopublish' => true]);
+        $on = $this->channel($staying, ['autopublish' => true]);
+        $going = $this->approved($this->schedule($staying, $on, ['mode' => 'automatic', 'origin' => 'engine']));
+
+        $this->migration()->up();
+
+        $this->assertSame('draft', $this->state($early));
+        $this->assertSame(1, DB::table('article_approval_records')->where('content_item_id', $early->content_item_id)->count());
+        // Who approved it was never recorded, so the fact check still applies.
+        $this->assertSame('approved', $this->state($going));
+        $this->assertTrue((bool) DB::table('article_schedules')->where('id', $going->id)->value('approved_by_avyo'));
+    }
+
+    #[Test]
+    public function articles_waiting_for_review_keep_waiting_whoever_scheduled_them(): void
+    {
+        // Review-first once, automatic now: its calendar still waits.
+        $project = $this->project(['autopublish' => true]);
+        $channel = $this->channel($project, ['autopublish' => true]);
+        $engine = $this->schedule($project, $channel, ['mode' => 'review_first', 'origin' => 'engine']);
+
+        $this->migration()->up();
+
+        $this->assertTrue($project->refresh()->autopublish);
+        $this->assertSchedule($engine, mode: 'review_first', status: 'active', held: true, version: 1);
+    }
+
+    #[Test]
+    public function a_website_its_owner_switched_off_counts_even_after_an_edit_made_it_unusable(): void
+    {
+        $project = $this->project(['autopublish' => true]);
+        $this->channel($project, ['autopublish' => false, 'verified_at' => null, 'autopublish_declined_at' => now()->subWeek()]);
+
+        $this->migration()->up();
+
+        $this->assertFalse($project->refresh()->autopublish);
+    }
+
+    #[Test]
+    public function a_delivery_the_old_switch_would_have_refused_is_withdrawn_unless_it_has_started(): void
+    {
+        $project = $this->project(['autopublish' => true]);
+        $this->channel($project, ['autopublish' => true, 'name' => 'Blog']);
+        $off = $this->channel($project, ['autopublish' => false, 'name' => 'Shop']);
+        [$queued, $queuedDelivery] = $this->inFlight($project, $off, started: false);
+        [$started, $startedDelivery] = $this->inFlight($project, $off, started: true);
+
+        $this->migration()->up();
+
+        $this->assertSame('dead_letter', DB::table('webhook_deliveries')->where('id', $queuedDelivery->id)->value('status'));
+        $this->assertSchedule($queued, mode: 'review_first', status: 'blocked', held: true, version: 2);
+        $row = DB::table('article_schedules')->where('id', $queued->id)->first();
+        $this->assertNotNull($row);
+        $this->assertSame([null, 'needs_approval'], [$row->delivery_id, $row->blocked_code]);
+        $this->assertSame('draft', $this->state($queued));
+
+        // Possibly at the website already: it finishes as it started.
+        $this->assertSame('pending', DB::table('webhook_deliveries')->where('id', $startedDelivery->id)->value('status'));
+        $this->assertSchedule($started, mode: 'review_first', status: 'dispatching', held: true, version: 1);
+        $this->assertFalse((bool) DB::table('article_schedules')->where('id', $started->id)->value('approved_by_avyo'));
+    }
+
+    #[Test]
+    public function a_block_whose_date_has_passed_waits_for_a_new_date_instead_of_going_out_on_deploy_day(): void
+    {
+        $project = $this->project(['autopublish' => true]);
+        $channel = $this->channel($project, ['autopublish' => true]);
+        $stale = $this->schedule($project, $channel, ['mode' => 'automatic', 'origin' => 'manager', 'status' => 'blocked',
+            'publish_at' => now()->subDays(3), 'blocked_reason' => 'Enable automatic publishing for this website or choose review first.']);
+        $missed = $this->schedule($project, $channel, ['mode' => 'automatic', 'origin' => 'engine', 'status' => 'blocked',
+            'publish_at' => now()->subDays(3), 'blocked_reason' => 'This automatic publication date was missed. Choose a new date to keep articles spaced out.']);
+        $checked = $this->schedule($project, $channel, ['mode' => 'automatic', 'origin' => 'engine', 'status' => 'blocked',
+            'publish_at' => now()->subDay(), 'blocked_reason' => 'The fact check has not passed. Review the article before publishing.']);
+
+        $this->migration()->up();
+
+        foreach ([$stale, $missed] as $schedule) {
+            $this->assertSame(['blocked', 'missed_date'], [
+                DB::table('article_schedules')->where('id', $schedule->id)->value('status'),
+                DB::table('article_schedules')->where('id', $schedule->id)->value('blocked_code'),
+            ]);
+        }
+        $this->assertSame('fact_check', DB::table('article_schedules')->where('id', $checked->id)->value('blocked_code'));
+    }
+
+    /** @return array{ArticleSchedule, WebhookDelivery} */
+    private function inFlight(Project $project, Channel $channel, bool $started): array
+    {
+        $schedule = $this->approved($this->schedule($project, $channel, ['mode' => 'automatic', 'origin' => 'engine',
+            'status' => 'dispatching', 'publish_at' => now()->subMinute()]));
+        $delivery = WebhookDelivery::factory()->pending()->create([
+            'channel_id' => $channel->id, 'content_item_id' => $schedule->content_item_id,
+            'article_schedule_id' => $schedule->id, 'article_schedule_version' => 1,
+            'article_attempt_started_at' => $started ? now() : null,
+        ]);
+        $schedule->forceFill(['delivery_id' => $delivery->id])->save();
+
+        return [$schedule, $delivery];
+    }
+
+    private function approved(ArticleSchedule $schedule): ArticleSchedule
+    {
+        DB::table('content_items')->where('id', $schedule->content_item_id)->update(['state' => 'approved']);
+        DB::table('article_approval_records')->insert(['id' => (string) Str::ulid(), 'project_id' => $schedule->project_id,
+            'content_item_id' => $schedule->content_item_id, 'accepted_at' => now(), 'units' => 1,
+            'policy' => 'first_article_approval', 'created_at' => now(), 'updated_at' => now()]);
+
+        return $schedule;
+    }
+
+    private function state(ArticleSchedule $schedule): mixed
+    {
+        return DB::table('content_items')->where('id', $schedule->content_item_id)->value('state');
+    }
+
     private function migration(): mixed
     {
         return require database_path('migrations/2026_09_30_120000_publish_automatically_is_one_project_switch.php');
@@ -147,7 +271,9 @@ final class OneAutomaticSwitchMigrationTest extends TestCase
     {
         app(CurrentProject::class)->set($project);
 
-        return ArticleSchedule::query()->create([
+        // forceCreate: a guarded create would make Eloquent remember this
+        // table's columns as they are before the migration, for every test after.
+        return ArticleSchedule::query()->forceCreate([
             'content_item_id' => ContentItem::factory()->draft()->create()->id, 'channel_id' => $channel?->id,
             'publish_at' => now()->addDay(), 'local_date' => now()->addDay()->toDateString(), 'local_time' => '09:00',
             'timezone' => 'UTC', 'status' => 'active', 'version' => 1, ...$attributes,

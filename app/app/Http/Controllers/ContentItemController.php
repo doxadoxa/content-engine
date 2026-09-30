@@ -70,7 +70,7 @@ class ContentItemController extends Controller
         $roots = ContentItem::query()
             ->whereIn('locale_group_id', $groupIds)
             ->withLocaleVariants()
-            ->with(['contentPlan', 'articleSchedule.delivery', 'project.channels'])
+            ->with(['contentPlan', 'articleSchedule.delivery.channel', 'project.channels'])
             ->get()
             ->groupBy('locale_group_id');
 

@@ -18,10 +18,13 @@ use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\Jobs\DeliverWebhookJob;
+use App\Publishing\PublishToChannels;
+use App\Publishing\WebhookPublisher;
 use App\Support\Tenancy\CurrentProject;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\PendingCommand;
 use Mockery\Expectation;
@@ -144,10 +147,61 @@ final class PublishNowTest extends TestCase
         $this->actingAs($this->owner)->post("/content/{$this->item->id}/publish-now")->assertSessionHasNoErrors();
 
         $this->actingAs($this->owner)->post("/content/{$this->item->id}/publish-now")
-            ->assertSessionHasErrors(['publish' => 'This article is already on its way to your website.']);
+            ->assertSessionHasErrors(['publish' => "It's already on its way."]);
 
         $this->assertSame(1, WebhookDelivery::query()->count());
         $this->assertSame(DeliveryStatus::Pending, WebhookDelivery::query()->firstOrFail()->status);
+    }
+
+    #[Test]
+    public function a_person_publishing_now_overrules_a_failed_fact_check_on_an_automatic_project(): void
+    {
+        $this->project->forceFill(['autopublish' => true])->save();
+        $this->item->forceFill(['factcheck' => ['passed' => false]])->save();
+
+        $this->actingAs($this->owner)->post("/content/{$this->item->id}/publish-now")->assertSessionHasNoErrors();
+
+        $schedule = ArticleSchedule::query()->where('content_item_id', $this->item->id)->firstOrFail();
+        $this->assertFalse($schedule->approved_by_avyo);
+        Http::fake(['receiver.test/*' => Http::response(['public_url' => 'https://example.test/article'])]);
+        app(WebhookPublisher::class)->attempt(WebhookDelivery::query()->sole());
+
+        $this->assertSame(DeliveryStatus::Delivered, WebhookDelivery::query()->sole()->status);
+        $this->assertSame(ContentItemState::Published, $this->item->fresh()?->state);
+    }
+
+    #[Test]
+    public function a_press_refused_at_the_last_step_leaves_nothing_behind(): void
+    {
+        $schedule = app(ArticleSchedules::class)->save($this->owner, $this->item, [
+            'expected_version' => null, 'local_date' => '2026-09-20', 'local_time' => '09:00', 'hold' => true,
+        ]);
+        $this->partialMock(PublishToChannels::class, function (MockInterface $mock): void {
+            /** @var Expectation $expectation */
+            $expectation = $mock->shouldReceive('publishToSelected');
+            $expectation->andReturnNull();
+        });
+
+        $this->actingAs($this->owner)->post("/content/{$this->item->id}/publish-now")->assertSessionHasErrors('publish');
+
+        $this->assertSame(ContentItemState::Draft, $this->item->fresh()?->state);
+        $this->assertSame(0, DB::table('article_approval_records')->count());
+        $after = $schedule->fresh();
+        $this->assertNotNull($after);
+        $this->assertSame([1, 'active', true, '2026-09-20'], [$after->version, $after->status, $after->held_for_review, $after->local_date]);
+    }
+
+    #[Test]
+    public function another_businesses_article_cannot_be_published_now(): void
+    {
+        $other = Project::factory()->create();
+        $theirs = app(CurrentProject::class)->run($other, fn (): ContentItem => ContentItem::factory()->draft()->create(['factcheck' => ['passed' => true]]));
+
+        $status = $this->actingAs($this->owner)->post("/content/{$theirs->id}/publish-now")->status();
+
+        $this->assertContains($status, [403, 404]);
+        $this->assertSame(ContentItemState::Draft, ContentItem::acrossProjects()->findOrFail($theirs->id)->state);
+        $this->assertSame(0, WebhookDelivery::acrossProjects()->count());
     }
 
     private function preview(): void

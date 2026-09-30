@@ -46,13 +46,29 @@ final class ConnectionHealth
 
         $ping = self::latestPing($channel);
 
+        // A test of the address or secret the owner has since replaced says
+        // nothing about the connection as it is now.
+        if ($ping !== null && ! ConnectionFingerprint::stillCurrent($ping, $channel)) {
+            $ping = null;
+        }
+
+        $stalled = $ping !== null && $ping->status === DeliveryStatus::Pending
+            && $ping->created_at !== null && $ping->created_at->lt(now()->subSeconds(self::STALLED_AFTER_SECONDS));
+
+        // A test that never ran has no answer. A website that was already
+        // working still is, as far as anybody knows; one that was not is told
+        // to try again.
+        if ($stalled && $channel->verified_at !== null && app(ArticleSchedules::class)->compatible($channel)) {
+            $ping = null;
+        }
+
         if ($ping !== null && $ping->status === DeliveryStatus::Pending) {
-            if ($ping->created_at !== null && $ping->created_at->lt(now()->subSeconds(self::STALLED_AFTER_SECONDS))) {
+            if ($stalled) {
                 return self::health(
                     'failed',
                     "Couldn't connect",
                     "The test didn't run. Try again in a few minutes.",
-                    $ping->created_at->toIso8601String(),
+                    $ping->created_at?->toIso8601String(),
                 );
             }
 
@@ -71,7 +87,7 @@ final class ConnectionHealth
             return self::health(
                 'failed',
                 "Couldn't connect",
-                DeliveryExplanation::explain($ping->response_code, $ping->error) ?? 'Your website did not answer the test with success.',
+                DeliveryExplanation::explain($ping->response_code, $ping->error, $channel->type) ?? 'Your website did not answer the test with success.',
                 $ping->updated_at?->toIso8601String(),
             );
         }

@@ -76,6 +76,27 @@ final class ConnectionHealthTest extends TestCase
     }
 
     #[Test]
+    public function a_test_that_never_ran_leaves_a_working_website_connected(): void
+    {
+        // Nothing answered, so nothing changed: articles still go, and the
+        // page must not say otherwise.
+        $this->channel->forceFill(['verified_at' => now()->subDay()])->save();
+        $this->ping(DeliveryStatus::Pending);
+        $this->travel(6)->minutes();
+
+        $this->assertSame('connected', ConnectionHealth::for($this->channel)['state']);
+    }
+
+    #[Test]
+    public function a_test_of_a_replaced_secret_is_not_this_connections_answer(): void
+    {
+        $this->ping(DeliveryStatus::DeadLetter, 401, 'receiver refused with 401')
+            ->forceFill(['connection_fingerprint' => str_repeat('0', 64)])->save();
+
+        $this->assertSame('untested', ConnectionHealth::for($this->channel)['state']);
+    }
+
+    #[Test]
     public function a_refused_test_explains_why_in_plain_words(): void
     {
         $this->ping(DeliveryStatus::DeadLetter, 401, 'receiver refused with 401');

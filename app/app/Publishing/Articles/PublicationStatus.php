@@ -41,6 +41,12 @@ final class PublicationStatus
 
     public const string FAILED = "Couldn't publish";
 
+    public const string DELAYED = 'Taking longer than usual. Avyo will try again automatically.';
+
+    public const string GAVE_UP = "Avyo couldn't get it to your website after several tries.";
+
+    public const string STILL_WRITING = 'The article is still being prepared.';
+
     /**
      * @return Presentation
      */
@@ -49,7 +55,7 @@ final class PublicationStatus
         $item->loadMissing('project');
         $project = $item->project;
         $schedule ??= $item->relationLoaded('articleSchedule') ? $item->articleSchedule : $item->articleSchedule()->first();
-        $delivery ??= $schedule?->delivery_id === null ? null : $schedule->delivery;
+        $delivery ??= $schedule?->delivery_id === null ? null : $schedule->loadMissing('delivery')->delivery;
         $now = $now === null ? Carbon::now() : Carbon::instance($now);
         $tz = $project->timezone;
 
@@ -115,7 +121,10 @@ final class PublicationStatus
      * a fact-check hold say "Review article" instead of pointing at the
      * website settings — which is where every one of them used to link.
      *
-     * @return 'website'|'choose_website'|'missed'|'paused'|'plan'|'approve'|'review'|'writing'|'reschedule'|'retry'|'other'
+     * Only for rows written before `blocked_code` existed, and for delivery
+     * errors, which carry no code: see {@see kindForCode()}.
+     *
+     * @return 'website'|'choose_website'|'missed'|'paused'|'plan'|'allowance'|'approve'|'review'|'writing'|'reschedule'|'retry'|'other'
      */
     public static function reasonKind(?string $reason, ?Project $project = null): string
     {
@@ -126,7 +135,8 @@ final class PublicationStatus
             str_contains($text, 'choose which website') => 'choose_website',
             str_contains($text, 'missed') => 'missed',
             str_contains($text, 'paused for this project'), str_contains($text, 'automatic publication is paused') => $project !== null && $project->status !== ProjectStatus::Active ? 'paused' : 'plan',
-            str_contains($text, 'active plan'), str_contains($text, 'no articles remain'), str_contains($text, 'publication grace') => 'plan',
+            str_contains($text, 'no articles remain') => 'allowance',
+            str_contains($text, 'active plan'), str_contains($text, 'publication grace') => 'plan',
             str_contains($text, 'website'), str_contains($text, 'connection'), str_contains($text, 'endpoint') => 'website',
             str_contains($text, 'review and approve'), str_contains($text, 'no active automatic schedule') => 'approve',
             str_contains($text, 'fact check'), str_contains($text, 'needs a person'), str_contains($text, 'needs attention:'),
@@ -136,6 +146,59 @@ final class PublicationStatus
             str_contains($text, 'previous delivery') => 'retry',
             default => 'other',
         };
+    }
+
+    /**
+     * What to show for a stored {@see BlockedCode}. The code is the answer;
+     * the sentence beside it is only read for rows that have no code.
+     *
+     * @return 'website'|'choose_website'|'missed'|'paused'|'plan'|'allowance'|'approve'|'fact_check'|'review'|'website_paused'|'retry'|'other'
+     */
+    public static function kindForCode(string $code): string
+    {
+        return match ($code) {
+            BlockedCode::NO_WEBSITE => 'website',
+            BlockedCode::CHOOSE_WEBSITE => 'choose_website',
+            BlockedCode::MISSED_DATE => 'missed',
+            BlockedCode::PLAN => 'plan',
+            BlockedCode::ALLOWANCE_USED => 'allowance',
+            BlockedCode::PROJECT_PAUSED => 'paused',
+            BlockedCode::NEEDS_APPROVAL => 'approve',
+            BlockedCode::FACT_CHECK => 'fact_check',
+            BlockedCode::SCORE, BlockedCode::BUSINESS_FACTS => 'review',
+            BlockedCode::WEBSITE_PAUSED => 'website_paused',
+            BlockedCode::PREVIOUS_DELIVERY => 'retry',
+            default => 'other',
+        };
+    }
+
+    /**
+     * Whether a delivery's error is the stranded-delivery sweeper talking
+     * about its own workers ("never reported back", "being re-sent"). That
+     * is written for whoever runs the queue; the owner is told it is late.
+     */
+    public static function isSweeperNote(?string $error): bool
+    {
+        $text = strtolower((string) $error);
+
+        return $text !== '' && (str_contains($text, 'never reported back') || str_contains($text, 're-sent')
+            || str_contains($text, 'found abandoned') || str_contains($text, 'stopped reporting')
+            || str_contains($text, 'back in the queue'));
+    }
+
+    /**
+     * A failure in the owner's words, with the website's type so a WordPress
+     * login refusal is not explained as a webhook secret. The channel is
+     * loaded explicitly: lazy loading is refused outside production.
+     */
+    public static function explanation(WebhookDelivery $delivery): ?string
+    {
+        if (self::isSweeperNote($delivery->error)) {
+            return $delivery->status === DeliveryStatus::DeadLetter ? self::GAVE_UP : self::DELAYED;
+        }
+        $delivery->loadMissing('channel');
+
+        return DeliveryExplanation::for($delivery);
     }
 
     /**
@@ -163,9 +226,10 @@ final class PublicationStatus
      */
     public static function attempt(WebhookDelivery $delivery, string $timezone, ?CarbonInterface $now = null): array
     {
-        $stranded = StrandedDeliveries::includes($delivery, $now === null ? null : Carbon::instance($now));
+        $stranded = StrandedDeliveries::includes($delivery, $now === null ? null : Carbon::instance($now))
+            || ($delivery->status === DeliveryStatus::Retrying && self::isSweeperNote($delivery->error));
         $test = ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value;
-        $next = $delivery->status === DeliveryStatus::Retrying && $delivery->next_attempt_at !== null
+        $next = ! $stranded && $delivery->status === DeliveryStatus::Retrying && $delivery->next_attempt_at !== null
             ? self::moment($delivery->next_attempt_at, $timezone, $now) : null;
 
         return [
@@ -182,9 +246,7 @@ final class PublicationStatus
                 $stranded, $delivery->status === DeliveryStatus::Retrying => 'attention',
                 default => 'progress',
             },
-            'explanation' => $stranded
-                ? 'Taking longer than usual. Avyo will try again automatically.'
-                : DeliveryExplanation::for($delivery),
+            'explanation' => $stranded ? self::DELAYED : self::explanation($delivery),
             'next_attempt' => $next === null ? null : 'Avyo will try again '.$next.'.',
         ];
     }
@@ -233,11 +295,16 @@ final class PublicationStatus
 
         if ($delivery->status === DeliveryStatus::Pending) {
             return StrandedDeliveries::includes($delivery, $now)
-                ? self::make('delayed', 'attention', 'Delayed', 'Taking longer than usual. Avyo will try again automatically.')
+                ? self::make('delayed', 'attention', 'Delayed', self::DELAYED)
                 : self::make('sending', 'progress', 'Sending', 'Sending to your website…');
         }
 
-        $explanation = DeliveryExplanation::for($delivery);
+        // The sweeper re-queued it: late, not refused.
+        if ($delivery->status === DeliveryStatus::Retrying && self::isSweeperNote($delivery->error)) {
+            return self::make('delayed', 'attention', 'Delayed', self::DELAYED);
+        }
+
+        $explanation = self::explanation($delivery);
 
         if ($delivery->status === DeliveryStatus::Retrying) {
             $next = $delivery->next_attempt_at;
@@ -259,7 +326,8 @@ final class PublicationStatus
                 self::action('Check website connection', 'connect', '/channels', ownerOnly: true));
         }
 
-        if ($delivery->response_code === null && ! str_contains(strtolower((string) $delivery->error), 'curl')) {
+        if ($delivery->response_code === null && ! self::isSweeperNote($delivery->error)
+            && ! str_contains(strtolower((string) $delivery->error), 'curl')) {
             $kind = self::reasonKind($delivery->error, $item->project);
             if (! in_array($kind, ['other', 'retry'], true)) {
                 return self::forReason($item, $item->project, $kind, $delivery->error, null, $tz, $now);
@@ -273,13 +341,40 @@ final class PublicationStatus
     /** @return Presentation */
     private static function blocked(ContentItem $item, Project $project, ArticleSchedule $schedule, ?WebhookDelivery $delivery, string $tz, Carbon $now): array
     {
-        $kind = self::reasonKind($schedule->blocked_reason, $project);
+        $kind = $schedule->blocked_code === null
+            ? self::reasonKind($schedule->blocked_reason, $project)
+            : self::kindForCode($schedule->blocked_code);
 
-        if ($kind === 'retry' && $delivery?->status === DeliveryStatus::DeadLetter) {
-            return self::delivery($item, $delivery, $tz, $now);
+        if ($kind === 'retry') {
+            return self::previousDelivery($item, $delivery);
         }
 
         return self::forReason($item, $project, $kind, $schedule->blocked_reason, $schedule, $tz, $now);
+    }
+
+    /**
+     * The article was refused because an earlier attempt failed. Say why
+     * that attempt failed and offer to try it again.
+     *
+     * @return Presentation
+     */
+    private static function previousDelivery(ContentItem $item, ?WebhookDelivery $delivery): array
+    {
+        if ($delivery?->status !== DeliveryStatus::DeadLetter) {
+            // The schedule does not keep the failed attempt it was refused
+            // for, so find it: this state is rare, and the query is one.
+            $delivery = WebhookDelivery::query()->with('channel')
+                ->where('content_item_id', $item->getKey())->where('status', DeliveryStatus::DeadLetter->value)
+                ->latest()->latest('id')->first();
+        }
+
+        if ($delivery === null) {
+            return self::make('failed', 'problem', self::FAILED, "The last attempt didn't go through.",
+                null, self::action('Open publishing history', 'view', '/deliveries'));
+        }
+
+        return self::make('failed', 'problem', self::FAILED, self::explanation($delivery) ?? "The last attempt didn't go through.",
+            null, self::action('Try again', 'retry', '/deliveries/'.$delivery->getKey().'/replay', 'post', ownerOnly: true));
     }
 
     /** @return Presentation */
@@ -300,17 +395,29 @@ final class PublicationStatus
                 null, self::action('Resume content work', 'settings', '/projects/'.$project->getKey().'/edit', ownerOnly: true)),
             'plan' => self::make('waiting', 'attention', self::WAITING, "Your plan doesn't include publishing yet. Choose a plan to publish it.",
                 null, self::action('Choose a plan', 'plan', '/billing', ownerOnly: true)),
+            'allowance' => self::make('waiting', 'attention', self::WAITING,
+                "You've used this period's articles. It will publish when your allowance renews, or choose a bigger plan.",
+                null, self::action('Choose a plan', 'plan', '/billing', ownerOnly: true)),
+            'website_paused' => self::make('paused', 'attention', 'Paused', 'Your website connection is paused. Resume it to publish.',
+                null, self::action('Open website connection', 'connect', '/channels', ownerOnly: true)),
+            'fact_check' => self::make('waiting', 'attention', self::WAITING, 'The fact check found something to look at. Review the article, then approve it.',
+                null, self::action('Review article', 'review', '/content/'.$item->getKey())),
             'approve' => self::make('waiting', 'attention', self::WAITING,
                 $due === null ? 'Approve it to publish now.' : "It was due {$due}. Approve it to publish now.",
                 $schedule?->publish_at->toIso8601String(), self::approve($item)),
-            'review' => self::make('waiting', 'attention', self::WAITING, self::reviewDetail((string) $reason),
+            'review' => self::make('waiting', 'attention', self::WAITING, $reason === null || trim($reason) === '' ? 'Review the article, then approve it.' : self::reviewDetail($reason),
                 null, self::action('Review article', 'review', '/content/'.$item->getKey())),
             'retry' => self::make('failed', 'problem', self::FAILED, "The last attempt didn't go through.",
                 null, self::action('Open publishing history', 'view', '/deliveries')),
-            'writing' => self::make('writing', 'progress', 'Writing', 'Being written. It publishes once it is ready.'),
+            'writing' => self::make('writing', 'progress', 'Writing', self::STILL_WRITING),
             'reschedule' => self::make('waiting', 'attention', self::WAITING, 'Its publishing settings changed before it went out. Pick a new date to publish it.',
                 null, self::action('Pick a new date', 'reschedule', self::panel($item), ownerOnly: true)),
-            default => self::make('failed', 'problem', self::FAILED, $reason ?? "Avyo couldn't publish this article.", null, null),
+            // `other`: the stored sentence, unless there is none or the
+            // article simply is not written yet.
+            default => $reason === null || trim($reason) === '' || $reason === ArticleSchedules::STILL_WRITING
+                || in_array($item->state, [ContentItemState::Idea, ContentItemState::Queued, ContentItemState::Generating], true)
+                ? self::make('writing', 'progress', 'Writing', self::STILL_WRITING)
+                : self::make('failed', 'problem', self::FAILED, $reason, null, null),
         };
     }
 

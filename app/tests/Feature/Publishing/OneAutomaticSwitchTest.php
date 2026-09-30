@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Publishing\Articles\ArticleApproval;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\BlockedCode;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\WordPressPublisher;
 use App\Support\Content\ManagerContent;
@@ -21,6 +22,7 @@ use App\Support\Tenancy\CurrentProject;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
@@ -149,30 +151,93 @@ final class OneAutomaticSwitchTest extends TestCase
     }
 
     #[Test]
-    public function switching_to_automatic_releases_waiting_articles_but_not_held_ones(): void
+    public function switching_to_automatic_releases_waiting_articles_but_not_held_or_stale_ones(): void
     {
         $this->project->update(['autopublish' => false]);
+        $stale = $this->draft();
+        $staleSchedule = $this->engineSchedule($stale);
         $waiting = $this->draft();
-        $schedule = $this->engineSchedule($waiting);
+        $schedule = $this->save($waiting, ['local_time' => '12:00']);
         $held = $this->draft();
-        $this->save($held, ['hold' => true, 'local_time' => '08:30']);
+        $this->save($held, ['hold' => true, 'local_time' => '12:00']);
 
+        // Its date comes and goes while the project reviews first.
         $this->travel(1)->hours();
-        $this->assertSame([], app(ArticleSchedules::class)->dispatch($waiting));
-        $this->assertSame('blocked', $schedule->fresh()->status);
+        $this->assertSame([], app(ArticleSchedules::class)->dispatch($stale));
+        $this->assertSame(BlockedCode::NEEDS_APPROVAL, $staleSchedule->fresh()->blocked_code);
 
         $this->asOwner()->patch("/projects/{$this->project->id}", [...$this->settings(), 'autopublish' => true])
             ->assertSessionHasNoErrors()->assertRedirect();
 
-        $schedule->refresh();
-        $this->assertSame('automatic', $schedule->mode);
-        $this->assertSame('active', $schedule->status);
-        $this->assertNull($schedule->blocked_reason);
+        $this->assertSame('automatic', $schedule->fresh()->mode);
+        $this->assertSame('active', $schedule->fresh()->status);
         $this->assertSame('review_first', ArticleSchedule::query()->where('content_item_id', $held->id)->value('mode'));
+        // Not sent the minute the switch moved: it waits for a new date.
+        $staleSchedule->refresh();
+        $this->assertSame('automatic', $staleSchedule->mode);
+        $this->assertSame('blocked', $staleSchedule->status);
+        $this->assertSame(BlockedCode::MISSED_DATE, $staleSchedule->blocked_code);
+        $this->assertSame([], app(ArticleSchedules::class)->dispatch($stale));
 
+        $this->travelTo(CarbonImmutable::parse('2026-09-15T12:00:00Z'));
         $this->assertCount(1, app(ArticleSchedules::class)->dispatch($waiting));
         $this->assertSame([], app(ArticleSchedules::class)->dispatch($held));
         $this->assertSame(ContentItemState::Draft, $held->fresh()->state);
+        $this->assertSame(ContentItemState::Draft, $stale->fresh()->state);
+    }
+
+    #[Test]
+    public function switching_to_review_first_takes_back_what_avyo_approved_ahead_of_the_date(): void
+    {
+        $item = $this->draft();
+        $schedule = $this->engineSchedule($item);
+        // What the engine tick does days ahead of an automatic schedule.
+        app(ArticleApproval::class)->approve($item, automatic: true);
+        $this->assertSame(ContentItemState::Approved, $item->fresh()->state);
+        $this->assertTrue($schedule->fresh()->approved_by_avyo);
+
+        $this->asOwner()->patch("/projects/{$this->project->id}", [...$this->settings(), 'autopublish' => false])
+            ->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame(ContentItemState::Draft, $item->fresh()->state);
+        $this->assertFalse($schedule->fresh()->approved_by_avyo);
+        $this->travel(1)->hours();
+        $this->assertSame([], app(ArticleSchedules::class)->dispatch($item));
+        Queue::assertNothingPushed();
+
+        // The owner's approval sends it, and the article is counted once.
+        app(ArticleApproval::class)->approve($item);
+        $this->assertCount(1, app(ArticleSchedules::class)->dispatch($item));
+        $this->assertSame(1, (int) DB::table('article_approval_records')->where('content_item_id', $item->id)->sum('units'));
+    }
+
+    #[Test]
+    public function holding_an_article_avyo_approved_sends_it_back_for_review(): void
+    {
+        $item = $this->draft();
+        $schedule = $this->engineSchedule($item);
+        app(ArticleApproval::class)->approve($item, automatic: true);
+
+        $this->save($item, ['expected_version' => $schedule->version, 'hold' => true, 'local_time' => '12:00']);
+
+        $this->assertSame(ContentItemState::Draft, $item->fresh()->state);
+        $this->assertFalse($schedule->fresh()->approved_by_avyo);
+    }
+
+    #[Test]
+    public function avyo_approval_never_sends_a_schedule_that_reviews_first(): void
+    {
+        $item = $this->draft();
+        $schedule = $this->engineSchedule($item);
+        app(ArticleApproval::class)->approve($item, automatic: true);
+        // However it got here, a review-first schedule waits for a person.
+        $schedule->forceFill(['mode' => 'review_first'])->save();
+
+        $this->travel(1)->hours();
+        $this->assertSame([], app(ArticleSchedules::class)->dispatch($item));
+        $this->assertSame(ContentItemState::Draft, $item->fresh()->state);
+        $this->assertSame(BlockedCode::NEEDS_APPROVAL, $schedule->fresh()->blocked_code);
+        Queue::assertNothingPushed();
     }
 
     #[Test]
