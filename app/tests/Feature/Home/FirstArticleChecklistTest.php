@@ -7,12 +7,16 @@ namespace Tests\Feature\Home;
 use App\Billing\Entitlements;
 use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
+use App\Enums\DeliveryStatus;
 use App\Enums\OnboardingStatus;
+use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
+use App\Models\WebhookDelivery;
+use App\Publishing\Articles\BlockedCode;
 use App\Support\Tenancy\CurrentProject;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -77,6 +81,31 @@ final class FirstArticleChecklistTest extends TestCase
             ->where('first_article.steps.2.article.presentation.label', 'Waiting for you')
             ->where('first_article.steps.2.can_publish', true)
             ->where('first_article.steps.2.reason', null));
+    }
+
+    #[Test]
+    public function a_refusal_the_server_keeps_to_itself_never_shows_an_enabled_button(): void
+    {
+        $this->connect();
+        $channel = Channel::query()->firstOrFail();
+        $article = ContentItem::factory()->create(['state' => ContentItemState::Approved, 'title' => 'Tried once']);
+        // An earlier attempt reached the website and failed; its date has
+        // since passed. The server refuses "Publish now" (use Try again) and
+        // says nothing worth showing beside a button.
+        $delivery = WebhookDelivery::factory()->create(['channel_id' => $channel->id, 'content_item_id' => $article->id,
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => 500, 'attempts' => 5, 'delivered_at' => null,
+            'payload_snapshot' => ['event' => 'content.published']]);
+        ArticleSchedule::query()->create(['content_item_id' => $article->id, 'channel_id' => $channel->id,
+            'publish_at' => now()->subDay(), 'local_date' => now()->subDay()->toDateString(), 'local_time' => '09:00',
+            'timezone' => 'UTC', 'mode' => 'automatic', 'held_for_review' => false, 'origin' => 'engine', 'status' => 'blocked',
+            'blocked_code' => BlockedCode::MISSED_DATE, 'blocked_reason' => 'Missed.', 'version' => 1, 'delivery_id' => $delivery->id]);
+
+        $this->home($this->owner)->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('first_article.steps.2.article.id', $article->id)
+            ->where('first_article.steps.2.can_publish', false)
+            ->where('first_article.steps.2.reason', null)
+            // The status's own next step is what the card offers instead.
+            ->where('first_article.steps.2.article.presentation.action.label', 'Pick a new date'));
     }
 
     #[Test]

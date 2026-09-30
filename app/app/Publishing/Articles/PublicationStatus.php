@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Publishing\DeliveryExplanation;
 use App\Publishing\StrandedDeliveries;
+use App\Publishing\WebhookPublisher;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 
@@ -33,7 +34,7 @@ use Illuminate\Support\Carbon;
  * is not an error, and it used to be drawn as one.
  *
  * @phpstan-type Action array{label: string, kind: 'approve'|'retry'|'reschedule'|'connect'|'review'|'plan'|'settings'|'view', href: string, method: 'get'|'post', owner_only: bool, external: bool}
- * @phpstan-type Presentation array{key: string, tone: 'neutral'|'progress'|'success'|'attention'|'problem', label: string, detail: string|null, when: string|null, action: Action|null}
+ * @phpstan-type Presentation array{key: string, tone: 'neutral'|'progress'|'success'|'attention'|'problem', label: string, detail: string|null, when: string|null, action: Action|null, secondary: Action|null}
  */
 final class PublicationStatus
 {
@@ -41,9 +42,11 @@ final class PublicationStatus
 
     public const string FAILED = "Couldn't publish";
 
-    public const string DELAYED = 'Taking longer than usual. Avyo will try again automatically.';
+    public const string DELAYED = DeliveryExplanation::DELAYED;
 
-    public const string GAVE_UP = "Avyo couldn't get it to your website after several tries.";
+    public const string GAVE_UP = DeliveryExplanation::GAVE_UP;
+
+    public const string WAITING_FOR_WEBSITE = 'Waiting for your website';
 
     public const string STILL_WRITING = 'The article is still being prepared.';
 
@@ -79,6 +82,16 @@ final class PublicationStatus
 
         if ($schedule?->status === 'dispatching') {
             return self::make('sending', 'progress', 'Sending', 'Sending to your website…');
+        }
+
+        // Avyo tried, then handed it back for the owner's yes: approving
+        // sends it again. Not a failure, so no "Try again".
+        if ($item->state === ContentItemState::Draft && ArticleSchedules::awaitingOwnerAfterAttempt($schedule)) {
+            assert($schedule instanceof ArticleSchedule);
+
+            return self::make('waiting', 'attention', self::WAITING, $schedule->blocked_code === BlockedCode::FACT_CHECK
+                ? 'The fact check found something to look at. Review it, then approve to send it again.'
+                : 'Approve it to send it again.', null, self::approve($item));
         }
 
         if ($schedule?->status === 'blocked') {
@@ -138,7 +151,8 @@ final class PublicationStatus
             str_contains($text, 'no articles remain') => 'allowance',
             str_contains($text, 'active plan'), str_contains($text, 'publication grace') => 'plan',
             str_contains($text, 'website'), str_contains($text, 'connection'), str_contains($text, 'endpoint') => 'website',
-            str_contains($text, 'review and approve'), str_contains($text, 'no active automatic schedule') => 'approve',
+            str_contains($text, 'review and approve'), str_contains($text, 'no active automatic schedule'),
+            str_contains($text, 'approve the article first') => 'approve',
             str_contains($text, 'fact check'), str_contains($text, 'needs a person'), str_contains($text, 'needs attention:'),
             str_contains($text, 'business information'), str_contains($text, 'article changed'), str_contains($text, 'review the') => 'review',
             str_contains($text, 'still being prepared') => 'writing',
@@ -152,7 +166,7 @@ final class PublicationStatus
      * What to show for a stored {@see BlockedCode}. The code is the answer;
      * the sentence beside it is only read for rows that have no code.
      *
-     * @return 'website'|'choose_website'|'missed'|'paused'|'plan'|'allowance'|'approve'|'fact_check'|'review'|'website_paused'|'retry'|'other'
+     * @return 'website'|'choose_website'|'missed'|'paused'|'plan'|'allowance'|'approve'|'fact_check'|'review'|'website_paused'|'website_not_working'|'retry'|'other'
      */
     public static function kindForCode(string $code): string
     {
@@ -167,23 +181,21 @@ final class PublicationStatus
             BlockedCode::FACT_CHECK => 'fact_check',
             BlockedCode::SCORE, BlockedCode::BUSINESS_FACTS => 'review',
             BlockedCode::WEBSITE_PAUSED => 'website_paused',
+            BlockedCode::WEBSITE_NOT_WORKING => 'website_not_working',
             BlockedCode::PREVIOUS_DELIVERY => 'retry',
             default => 'other',
         };
     }
 
     /**
-     * Whether a delivery's error is the stranded-delivery sweeper talking
-     * about its own workers ("never reported back", "being re-sent"). That
-     * is written for whoever runs the queue; the owner is told it is late.
+     * Whether a delivery's error is the stranded-delivery sweeper's note
+     * about its own workers, matched against the sweeper's own constants.
+     * That is written for whoever runs the queue; the owner is told it is
+     * late ({@see DELAYED}) or that Avyo gave up ({@see GAVE_UP}).
      */
     public static function isSweeperNote(?string $error): bool
     {
-        $text = strtolower((string) $error);
-
-        return $text !== '' && (str_contains($text, 'never reported back') || str_contains($text, 're-sent')
-            || str_contains($text, 'found abandoned') || str_contains($text, 'stopped reporting')
-            || str_contains($text, 'back in the queue'));
+        return StrandedDeliveries::isRequeueNote($error) || StrandedDeliveries::isAbandonedNote($error);
     }
 
     /**
@@ -193,12 +205,24 @@ final class PublicationStatus
      */
     public static function explanation(WebhookDelivery $delivery): ?string
     {
-        if (self::isSweeperNote($delivery->error)) {
-            return $delivery->status === DeliveryStatus::DeadLetter ? self::GAVE_UP : self::DELAYED;
-        }
         $delivery->loadMissing('channel');
 
         return DeliveryExplanation::for($delivery);
+    }
+
+    /**
+     * Whether "Try again" can do anything: a failed article that was not
+     * taken back. A replay of one sent back for changes is only refused.
+     */
+    public static function canTryAgain(WebhookDelivery $delivery): bool
+    {
+        return $delivery->status === DeliveryStatus::DeadLetter && ! DeliveryExplanation::isWithdrawn($delivery->error);
+    }
+
+    /** Held while the website's connection fails its test; it goes when a test passes. */
+    public static function isWaitingForWebsite(WebhookDelivery $delivery): bool
+    {
+        return $delivery->status === DeliveryStatus::Retrying && $delivery->error === WebhookPublisher::WAITING_FOR_WEBSITE;
     }
 
     /**
@@ -227,14 +251,17 @@ final class PublicationStatus
     public static function attempt(WebhookDelivery $delivery, string $timezone, ?CarbonInterface $now = null): array
     {
         $stranded = StrandedDeliveries::includes($delivery, $now === null ? null : Carbon::instance($now))
-            || ($delivery->status === DeliveryStatus::Retrying && self::isSweeperNote($delivery->error));
+            || ($delivery->status === DeliveryStatus::Retrying && StrandedDeliveries::isRequeueNote($delivery->error));
+        $waiting = self::isWaitingForWebsite($delivery);
         $test = ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value;
-        $next = ! $stranded && $delivery->status === DeliveryStatus::Retrying && $delivery->next_attempt_at !== null
+        $next = ! $stranded && ! $waiting && $delivery->status === DeliveryStatus::Retrying && $delivery->next_attempt_at !== null
             ? self::moment($delivery->next_attempt_at, $timezone, $now) : null;
 
         return [
             'label' => match (true) {
                 $stranded => 'Delayed',
+                $waiting => self::WAITING_FOR_WEBSITE,
+                $delivery->status === DeliveryStatus::DeadLetter && DeliveryExplanation::isWithdrawn($delivery->error) => 'Not sent',
                 $delivery->status === DeliveryStatus::Delivered => $test ? 'Test passed' : 'Published',
                 $delivery->status === DeliveryStatus::Pending => 'Sending',
                 $delivery->status === DeliveryStatus::Retrying => 'Retrying',
@@ -242,11 +269,15 @@ final class PublicationStatus
             },
             'tone' => match (true) {
                 $delivery->status === DeliveryStatus::Delivered => 'success',
-                $delivery->status === DeliveryStatus::DeadLetter => 'problem',
+                $delivery->status === DeliveryStatus::DeadLetter => DeliveryExplanation::isWithdrawn($delivery->error) ? 'neutral' : 'problem',
                 $stranded, $delivery->status === DeliveryStatus::Retrying => 'attention',
                 default => 'progress',
             },
-            'explanation' => $stranded ? self::DELAYED : self::explanation($delivery),
+            'explanation' => match (true) {
+                $stranded => self::DELAYED,
+                $waiting => 'Avyo will send it as soon as your website connection passes a test.',
+                default => self::explanation($delivery),
+            },
             'next_attempt' => $next === null ? null : 'Avyo will try again '.$next.'.',
         ];
     }
@@ -300,8 +331,26 @@ final class PublicationStatus
         }
 
         // The sweeper re-queued it: late, not refused.
-        if ($delivery->status === DeliveryStatus::Retrying && self::isSweeperNote($delivery->error)) {
+        if ($delivery->status === DeliveryStatus::Retrying && StrandedDeliveries::isRequeueNote($delivery->error)) {
             return self::make('delayed', 'attention', 'Delayed', self::DELAYED);
+        }
+
+        // Held, not refused: the website failed its test, and a passing test
+        // sends it on without spending an attempt.
+        if (self::isWaitingForWebsite($delivery)) {
+            return self::make('waiting_website', 'attention', self::WAITING_FOR_WEBSITE,
+                'Avyo will send it as soon as your website connection passes a test.',
+                null, self::action('Check website connection', 'connect', '/channels', ownerOnly: true));
+        }
+
+        if ($delivery->status === DeliveryStatus::DeadLetter && $delivery->error === WebhookPublisher::WEBSITE_STAYED_BROKEN) {
+            return self::make('failed', 'problem', self::FAILED,
+                "Your website's connection stayed broken for a day, so it wasn't sent. Test the connection, then try again.",
+                null, self::action('Check website connection', 'connect', '/channels', ownerOnly: true), self::retry($delivery));
+        }
+
+        if ($delivery->status === DeliveryStatus::DeadLetter && DeliveryExplanation::isWithdrawn($delivery->error)) {
+            return self::make('withdrawn', 'neutral', 'Not sent', self::explanation($delivery));
         }
 
         $explanation = self::explanation($delivery);
@@ -334,8 +383,13 @@ final class PublicationStatus
             }
         }
 
-        return self::make('failed', 'problem', self::FAILED, $detail, null,
-            self::action('Try again', 'retry', '/deliveries/'.$delivery->getKey().'/replay', 'post', ownerOnly: true));
+        return self::make('failed', 'problem', self::FAILED, $detail, null, self::retry($delivery));
+    }
+
+    /** @return Action */
+    private static function retry(WebhookDelivery $delivery): array
+    {
+        return self::action('Try again', 'retry', '/deliveries/'.$delivery->getKey().'/replay', 'post', ownerOnly: true);
     }
 
     /** @return Presentation */
@@ -374,7 +428,7 @@ final class PublicationStatus
         }
 
         return self::make('failed', 'problem', self::FAILED, self::explanation($delivery) ?? "The last attempt didn't go through.",
-            null, self::action('Try again', 'retry', '/deliveries/'.$delivery->getKey().'/replay', 'post', ownerOnly: true));
+            null, self::canTryAgain($delivery) ? self::retry($delivery) : null);
     }
 
     /** @return Presentation */
@@ -398,6 +452,8 @@ final class PublicationStatus
             'allowance' => self::make('waiting', 'attention', self::WAITING,
                 "You've used this period's articles. It will publish when your allowance renews, or choose a bigger plan.",
                 null, self::action('Choose a plan', 'plan', '/billing', ownerOnly: true)),
+            'website_not_working' => self::make('failed', 'problem', self::FAILED, "Your website connection isn't working. Test it on the Website page.",
+                null, self::action('Check website connection', 'connect', '/channels', ownerOnly: true)),
             'website_paused' => self::make('paused', 'attention', 'Paused', 'Your website connection is paused. Resume it to publish.',
                 null, self::action('Open website connection', 'connect', '/channels', ownerOnly: true)),
             'fact_check' => self::make('waiting', 'attention', self::WAITING, 'The fact check found something to look at. Review the article, then approve it.',
@@ -486,10 +542,11 @@ final class PublicationStatus
     /**
      * @param  'neutral'|'progress'|'success'|'attention'|'problem'  $tone
      * @param  Action|null  $action
+     * @param  Action|null  $secondary
      * @return Presentation
      */
-    private static function make(string $key, string $tone, string $label, ?string $detail, ?string $when = null, ?array $action = null): array
+    private static function make(string $key, string $tone, string $label, ?string $detail, ?string $when = null, ?array $action = null, ?array $secondary = null): array
     {
-        return ['key' => $key, 'tone' => $tone, 'label' => $label, 'detail' => $detail, 'when' => $when, 'action' => $action];
+        return ['key' => $key, 'tone' => $tone, 'label' => $label, 'detail' => $detail, 'when' => $when, 'action' => $action, 'secondary' => $secondary];
     }
 }

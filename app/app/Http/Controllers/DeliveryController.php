@@ -9,6 +9,7 @@ use App\Enums\WebhookEvent;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\PublicationStatus;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\DeliveryExplanation;
 use App\Publishing\StrandedDeliveries;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
@@ -74,7 +75,8 @@ class DeliveryController extends Controller
                 'channel' => $delivery->channel->name,
                 'content' => $delivery->contentItem?->title,
                 'content_id' => $delivery->content_item_id,
-                'can_replay' => $delivery->status === DeliveryStatus::DeadLetter,
+                // Not on one that was taken back: a replay would only be refused.
+                'can_replay' => PublicationStatus::canTryAgain($delivery),
                 // A row nothing is going to attempt. `pending` reads as healthy
                 // — it is what every delivery looks like for its first second —
                 // so without this the one failure with no automatic way out is
@@ -149,10 +151,17 @@ class DeliveryController extends Controller
         $text = strtolower($message);
 
         return match (true) {
+            // The replay's own refusals are already written for owners.
+            str_starts_with($message, 'This article is being sent right now.'),
+            str_starts_with($message, 'Avyo is already trying') => $message,
             str_contains($text, 'no longer matches') => "This article's schedule changed since that attempt. Pick a new date to publish it.",
             str_contains($text, 'changed after this delivery') => 'The article changed since that attempt. Review it, then publish it again.',
             str_contains($text, 'no longer enabled') => "Your website connection isn't working. Check it, then try again.",
-            default => $message,
+            // Everything else in the words every other screen uses, and a
+            // plain "couldn't" for a sentence nobody has named.
+            default => ($plain = DeliveryExplanation::explain(null, $message)) === null || $plain === DeliveryExplanation::GENERIC
+                ? "Avyo couldn't send it again."
+                : $plain,
         };
     }
 }

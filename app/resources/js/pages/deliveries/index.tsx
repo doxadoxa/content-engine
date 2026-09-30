@@ -255,6 +255,7 @@ export default function Deliveries({
                                                     detail: null,
                                                     when: null,
                                                     action: null,
+                                                    secondary: null,
                                                 }}
                                             />
                                             {delivery.explanation && (

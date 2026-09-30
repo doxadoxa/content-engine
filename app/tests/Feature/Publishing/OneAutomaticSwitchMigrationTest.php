@@ -178,10 +178,33 @@ final class OneAutomaticSwitchMigrationTest extends TestCase
         $this->assertSame([null, 'needs_approval'], [$row->delivery_id, $row->blocked_code]);
         $this->assertSame('draft', $this->state($queued));
 
-        // Possibly at the website already: it finishes as it started.
+        // Possibly at the website already: it keeps its identity, and is
+        // marked as Avyo's approval so the next attempt hands it to the owner
+        // rather than sending it — the verdict the old rules gave it.
         $this->assertSame('pending', DB::table('webhook_deliveries')->where('id', $startedDelivery->id)->value('status'));
         $this->assertSchedule($started, mode: 'review_first', status: 'dispatching', held: true, version: 1);
-        $this->assertFalse((bool) DB::table('article_schedules')->where('id', $started->id)->value('approved_by_avyo'));
+        $this->assertTrue((bool) DB::table('article_schedules')->where('id', $started->id)->value('approved_by_avyo'));
+    }
+
+    #[Test]
+    public function a_delivery_the_old_rules_let_through_still_goes(): void
+    {
+        // The owner's own automatic schedule on a review-first project: the
+        // old guard sent it, so the new one must not take it for Avyo's.
+        $project = $this->project(['autopublish' => false]);
+        $channel = $this->channel($project, ['autopublish' => true]);
+        $schedule = $this->approved($this->schedule($project, $channel, ['mode' => 'automatic', 'origin' => 'manager',
+            'status' => 'dispatching', 'publish_at' => now()->subMinute()]));
+        $delivery = WebhookDelivery::factory()->pending()->create(['channel_id' => $channel->id, 'content_item_id' => $schedule->content_item_id,
+            'article_schedule_id' => $schedule->id, 'article_schedule_version' => 1, 'article_attempt_started_at' => now()]);
+        $schedule->forceFill(['delivery_id' => $delivery->id])->save();
+
+        $this->migration()->up();
+
+        $this->assertSchedule($schedule, mode: 'automatic', status: 'dispatching', held: false, version: 1);
+        $this->assertFalse((bool) DB::table('article_schedules')->where('id', $schedule->id)->value('approved_by_avyo'));
+        $this->assertSame('pending', DB::table('webhook_deliveries')->where('id', $delivery->id)->value('status'));
+        $this->assertSame('approved', $this->state($schedule));
     }
 
     #[Test]
@@ -205,6 +228,22 @@ final class OneAutomaticSwitchMigrationTest extends TestCase
             ]);
         }
         $this->assertSame('fact_check', DB::table('article_schedules')->where('id', $checked->id)->value('blocked_code'));
+    }
+
+    #[Test]
+    public function a_website_block_says_whether_the_website_is_switched_off_or_not_working(): void
+    {
+        $project = $this->project(['autopublish' => true]);
+        $off = $this->channel($project, ['autopublish' => true, 'is_enabled' => false, 'name' => 'Off']);
+        $broken = $this->channel($project, ['autopublish' => true, 'verified_at' => null, 'name' => 'Broken']);
+        $reason = 'Choose a verified, enabled website connection for this schedule.';
+        $paused = $this->schedule($project, $off, ['mode' => 'automatic', 'origin' => 'engine', 'status' => 'blocked', 'blocked_reason' => $reason]);
+        $failing = $this->schedule($project, $broken, ['mode' => 'automatic', 'origin' => 'engine', 'status' => 'blocked', 'blocked_reason' => $reason]);
+
+        $this->migration()->up();
+
+        $this->assertSame('website_paused', DB::table('article_schedules')->where('id', $paused->id)->value('blocked_code'));
+        $this->assertSame('website_not_working', DB::table('article_schedules')->where('id', $failing->id)->value('blocked_code'));
     }
 
     /** @return array{ArticleSchedule, WebhookDelivery} */

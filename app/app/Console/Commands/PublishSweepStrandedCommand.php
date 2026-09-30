@@ -235,9 +235,8 @@ class PublishSweepStrandedCommand extends Command
             'status' => DeliveryStatus::Retrying,
             'sweeps' => $delivery->sweeps + 1,
             'error' => $this->provablyUnsent($delivery)
-                ? 'This delivery was interrupted before it was sent. Nothing was sent; it has been put back in the queue.'
-                : 'This delivery was interrupted before its result was recorded. It may have reached the website; it is '
-                    .'being re-sent with the same delivery id so the website can recognise a repeat.',
+                ? StrandedDeliveries::REQUEUED_UNSENT
+                : StrandedDeliveries::REQUEUED_MAYBE_SENT,
             'next_attempt_at' => now(),
         ])->save();
 
@@ -262,17 +261,10 @@ class PublishSweepStrandedCommand extends Command
     {
         $delivery->forceFill([
             'status' => DeliveryStatus::DeadLetter,
-            'error' => $this->provablyUnsent($delivery)
-                ? sprintf(
-                    'This delivery was interrupted %d times in a row and was never attempted. Nothing has been '
-                        .'sent. Check the queue workers, then replay it.',
-                    StrandedDeliveries::MAX_SWEEPS + 1,
-                )
-                : sprintf(
-                    'This delivery was interrupted %d times in a row before its result was recorded. It may have '
-                        .'reached the website, so check there before replaying it.',
-                    StrandedDeliveries::MAX_SWEEPS + 1,
-                ),
+            'error' => sprintf(
+                $this->provablyUnsent($delivery) ? StrandedDeliveries::ABANDONED_UNSENT : StrandedDeliveries::ABANDONED_MAYBE_SENT,
+                StrandedDeliveries::MAX_SWEEPS + 1,
+            ),
             'next_attempt_at' => null,
         ])->save();
 

@@ -166,38 +166,44 @@ class ChannelController extends Controller
      */
     public function destroy(Channel $channel): RedirectResponse
     {
-        $articleDeliveries = fn () => $channel->deliveries()->where(fn ($query) => $query
-            ->whereNotNull('content_item_id')->orWhereNotNull('article_schedule_id'));
-
-        if ($articleDeliveries()->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])->exists()) {
-            throw ValidationException::withMessages([
-                'channel' => 'An article is on its way to this website. Try again once it has been sent, or pause the website instead.',
-            ]);
-        }
-
-        // Uncertain: the request went out and no answer said "not
-        // published". A 4xx other than 409 did say so; no answer, a 5xx or
-        // an unexpected 2xx did not.
-        $uncertain = $articleDeliveries()
-            ->where('status', DeliveryStatus::DeadLetter->value)
-            ->whereNotNull('article_attempt_started_at')
-            ->where(fn ($query) => $query->whereNull('response_code')
-                ->orWhere('response_code', '<', 400)->orWhere('response_code', '>=', 500)->orWhere('response_code', 409))
-            ->exists();
-
-        if ($uncertain) {
-            throw ValidationException::withMessages([
-                'channel' => "An article may have reached this website without Avyo hearing back. Send it again from the article first, so it isn't published twice, or pause the website instead.",
-            ]);
-        }
-
-        if (PagePublicationOperation::query()->where('channel_id', $channel->getKey())->exists()) {
-            throw ValidationException::withMessages([
-                'channel' => 'Page updates have been published through this website, so it cannot be removed. Pause it instead.',
-            ]);
-        }
-
+        // Checked and done under the project's row lock — the one
+        // ArticleSchedules::dispatch() takes before it queues an article — so
+        // an article cannot be put on its way to this website between the
+        // checks and the delete.
         DB::transaction(function () use ($channel): void {
+            Project::query()->whereKey($channel->project_id)->lockForUpdate()->firstOrFail();
+
+            $articleDeliveries = fn () => $channel->deliveries()->where(fn ($query) => $query
+                ->whereNotNull('content_item_id')->orWhereNotNull('article_schedule_id'));
+
+            if ($articleDeliveries()->whereIn('status', [DeliveryStatus::Pending->value, DeliveryStatus::Retrying->value])->exists()) {
+                throw ValidationException::withMessages([
+                    'channel' => 'An article is on its way to this website. Try again once it has been sent, or pause the website instead.',
+                ]);
+            }
+
+            // Uncertain: the request went out and no answer said "not
+            // published". A 4xx other than 409 did say so; no answer, a 5xx or
+            // an unexpected 2xx did not.
+            $uncertain = $articleDeliveries()
+                ->where('status', DeliveryStatus::DeadLetter->value)
+                ->whereNotNull('article_attempt_started_at')
+                ->where(fn ($query) => $query->whereNull('response_code')
+                    ->orWhere('response_code', '<', 400)->orWhere('response_code', '>=', 500)->orWhere('response_code', 409))
+                ->exists();
+
+            if ($uncertain) {
+                throw ValidationException::withMessages([
+                    'channel' => "An article may have reached this website without Avyo hearing back. Send it again from the article first, so it isn't published twice, or pause the website instead.",
+                ]);
+            }
+
+            if (PagePublicationOperation::query()->where('channel_id', $channel->getKey())->exists()) {
+                throw ValidationException::withMessages([
+                    'channel' => 'Page updates have been published through this website, so it cannot be removed. Pause it instead.',
+                ]);
+            }
+
             $waiting = [
                 'status' => 'blocked',
                 'blocked_reason' => ArticleSchedules::NO_WEBSITE,

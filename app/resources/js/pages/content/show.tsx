@@ -638,6 +638,7 @@ function DeliveryRow({ delivery }: { delivery: Delivery }) {
                         detail: delivery.explanation,
                         when: null,
                         action: null,
+                        secondary: null,
                     }}
                 />
                 <span className="text-xs text-muted-foreground">

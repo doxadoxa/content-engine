@@ -58,6 +58,8 @@ export type PublicationPresentation = {
     detail: string | null;
     when: string | null;
     action: PublicationAction | null;
+    /** A second step, shown quieter: "Try again" after "Check website connection". */
+    secondary: PublicationAction | null;
 };
 
 export type ArticlePublication = {
@@ -283,7 +285,7 @@ export function PublishNowButton({
 }
 
 /** Statuses where a request is on its way, or was, and the schedule is not the story. */
-const UNDERWAY = ['sending', 'retrying', 'delayed'];
+const UNDERWAY = ['sending', 'retrying', 'delayed', 'waiting_website'];
 
 export function ArticlePublicationPanel({
     itemId,
@@ -341,7 +343,9 @@ export function ArticlePublicationPanel({
                 {`${status.label}. ${status.detail ?? ''}`}
             </p>
 
-            {(status.action !== null || offerPublishNow) && (
+            {(status.action !== null ||
+                status.secondary !== null ||
+                offerPublishNow) && (
                 <div className="mt-4 flex flex-wrap items-start gap-2">
                     {status.action?.kind !== 'reschedule' && (
                         <PublicationActionButton
@@ -349,6 +353,11 @@ export function ArticlePublicationPanel({
                             owner={owner}
                         />
                     )}
+                    <PublicationActionButton
+                        action={status.secondary}
+                        owner={owner}
+                        variant="outline"
+                    />
                     {offerPublishNow &&
                         (publication.publish_now.available ? (
                             <PublishNowButton

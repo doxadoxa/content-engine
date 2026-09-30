@@ -40,7 +40,8 @@ final class ArticleApproval
                 $this->require(($draft->factcheck['passed'] ?? false) === true, 'The fact check has not passed. Review the article before publishing.', BlockedCode::FACT_CHECK);
                 $channel = $schedule?->channel_id === null ? null : Channel::query()->find($schedule->channel_id);
                 $this->require($channel !== null && app(ArticleSchedules::class)->compatible($channel)
-                    && app(ChannelPublisherRegistry::class)->canAutopublish($channel->type), 'Connect and test your website before articles publish automatically.', BlockedCode::WEBSITE_PAUSED);
+                    && app(ChannelPublisherRegistry::class)->canAutopublish($channel->type), 'Connect and test your website before articles publish automatically.',
+                    $channel === null ? BlockedCode::NO_WEBSITE : ArticleSchedules::websiteCode($channel));
             }
             $this->require(in_array($draft->state, [ContentItemState::Draft, ContentItemState::Approved], true), 'Only a finished draft can be approved.', BlockedCode::OTHER);
             $factsRefusal = app(ArticleBusinessFacts::class)->refusal($draft);

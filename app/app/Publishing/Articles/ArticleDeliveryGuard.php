@@ -22,6 +22,11 @@ final class ArticleDeliveryGuard
         if ($schedule === null || ($schedule->status === 'completed' && $delivery->article_schedule_id === null)) {
             return null;
         }
+        // Handed back to the owner (see below): Try again is not the way out,
+        // approving the article is, and it sends this same delivery.
+        if ($schedule->delivery_id === $delivery->id && ArticleSchedules::awaitingOwnerAfterAttempt($schedule)) {
+            return 'Approve the article first. Avyo sends it as soon as you do.';
+        }
         if ($delivery->article_schedule_id !== $schedule->id
             || $delivery->article_schedule_version !== $schedule->version
             || $schedule->delivery_id !== $delivery->id
@@ -48,9 +53,10 @@ final class ArticleDeliveryGuard
 
         // Asked of Avyo's own approvals only. A person who approved the
         // article, or pressed Publish now, has read it and decided; a failed
-        // fact check is theirs to overrule.
+        // fact check is theirs to overrule — so it goes to them.
         if ($schedule->approved_by_avyo && ($item->factcheck['passed'] ?? false) !== true) {
-            return 'The fact check has not passed. Review the article before publishing.';
+            return app(ArticleSchedules::class)->awaitOwner($schedule, $item, BlockedCode::FACT_CHECK,
+                'The fact check has not passed. Review the article, then approve it to publish.');
         }
 
         $project = $item->project->fresh();
@@ -59,15 +65,26 @@ final class ArticleDeliveryGuard
         if ($project->status !== ProjectStatus::Active || ! $entitlements->for($project)->mayPublish()) {
             return 'Publishing is paused for this project or its plan.';
         }
-        if (! app(ArticleSchedules::class)->compatible($delivery->channel)) {
-            return 'The scheduled website connection is no longer enabled for this publication.';
-        }
         // Avyo approved it, and since then the project went review-first or
         // the owner held the article: nobody has said yes to this one yet.
         if ($schedule->approved_by_avyo && (! $project->autopublish || $schedule->mode !== 'automatic')) {
-            return 'Automatic publishing was turned off before this article was sent. Schedule it again to publish it.';
+            return app(ArticleSchedules::class)->awaitOwner($schedule, $item, BlockedCode::NEEDS_APPROVAL, ArticleSchedules::NEEDS_APPROVAL);
         }
 
         return null;
+    }
+
+    /**
+     * Whether a scheduled article's website cannot take it right now.
+     *
+     * Not part of {@see refusal()}: a website that failed its last test is a
+     * wait, not a verdict on the article. The transport holds the delivery
+     * without spending an attempt, and a passing test sends it on.
+     */
+    public function websiteUnusable(WebhookDelivery $delivery): bool
+    {
+        $delivery->loadMissing('channel');
+
+        return $delivery->article_schedule_id !== null && ! app(ArticleSchedules::class)->compatible($delivery->channel);
     }
 }

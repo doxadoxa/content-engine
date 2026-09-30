@@ -42,8 +42,11 @@ final class BlockedCode
     /** Business facts the article relies on are missing or out of date. */
     public const string BUSINESS_FACTS = 'business_facts';
 
-    /** The chosen website is switched off, untested or incomplete. */
+    /** The owner switched the chosen website off. */
     public const string WEBSITE_PAUSED = 'website_paused';
+
+    /** The chosen website is on but not working: never tested, failed its last test, or missing its secret or address. */
+    public const string WEBSITE_NOT_WORKING = 'website_not_working';
 
     /** An earlier delivery of this article needs attention first. */
     public const string PREVIOUS_DELIVERY = 'previous_delivery';

@@ -16,6 +16,8 @@ use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\Articles\BlockedCode;
 use App\Publishing\Articles\PublicationStatus;
+use App\Publishing\StrandedDeliveries;
+use App\Publishing\WebhookPublisher;
 use App\Support\Tenancy\CurrentProject;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -207,6 +209,7 @@ final class PublicationStatusTest extends TestCase
             'fact_check' => [BlockedCode::FACT_CHECK, 'waiting', 'Waiting for you', 'Review article', '/content/', 'The fact check found something'],
             'score' => [BlockedCode::SCORE, 'waiting', 'Waiting for you', 'Review article', '/content/', 'This draft needs attention: add a picture.'],
             'business_facts' => [BlockedCode::BUSINESS_FACTS, 'waiting', 'Waiting for you', 'Review article', '/content/', 'This draft needs attention: add a picture.'],
+            'website_not_working' => [BlockedCode::WEBSITE_NOT_WORKING, 'failed', "Couldn't publish", 'Check website connection', '/channels', "Your website connection isn't working. Test it on the Website page."],
             'website_paused' => [BlockedCode::WEBSITE_PAUSED, 'paused', 'Paused', 'Open website connection', '/channels', 'Your website connection is paused. Resume it to publish.'],
             'previous_delivery' => [BlockedCode::PREVIOUS_DELIVERY, 'failed', "Couldn't publish", 'Try again', '/replay', 'Your website had an error (500).'],
             'other' => [BlockedCode::OTHER, 'failed', "Couldn't publish", null, null, 'This draft needs attention: add a picture.'],
@@ -250,10 +253,7 @@ final class PublicationStatusTest extends TestCase
     #[Test]
     public function the_sweepers_own_words_are_never_shown(): void
     {
-        foreach ([
-            'The worker holding this delivery never reported back — it was most likely killed mid-flight. Nothing was sent; the delivery has been put back in the queue.',
-            'It may have reached the website; it is being re-sent with the same identity.',
-        ] as $note) {
+        foreach ([StrandedDeliveries::REQUEUED_UNSENT, StrandedDeliveries::REQUEUED_MAYBE_SENT] as $note) {
             $item = $this->article(ContentItemState::Approved);
             $delivery = $this->delivery($item, ['status' => DeliveryStatus::Retrying, 'response_code' => null, 'error' => $note,
                 'next_attempt_at' => now(), 'delivered_at' => null]);
@@ -262,19 +262,93 @@ final class PublicationStatusTest extends TestCase
             $status = $this->present($item);
             $row = PublicationStatus::attempt($delivery->fresh() ?? $delivery, 'UTC');
 
-            $this->assertSame(['delayed', 'Delayed', 'Taking longer than usual. Avyo will try again automatically.'], [$status['key'], $status['label'], $status['detail']]);
+            $this->assertSame(['delayed', 'Delayed', 'Taking longer than usual. Avyo will try again automatically.', null],
+                [$status['key'], $status['label'], $status['detail'], $status['action']], $note);
             $this->assertSame(['Delayed', 'Taking longer than usual. Avyo will try again automatically.', null], [$row['label'], $row['explanation'], $row['next_attempt']]);
         }
 
+        foreach ([StrandedDeliveries::ABANDONED_UNSENT, StrandedDeliveries::ABANDONED_MAYBE_SENT] as $format) {
+            $item = $this->article(ContentItemState::Approved);
+            $dead = $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'delivered_at' => null,
+                'error' => sprintf($format, StrandedDeliveries::MAX_SWEEPS + 1)]);
+            $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $dead->id]);
+
+            $status = $this->present($item);
+
+            $this->assertSame(["Couldn't publish", "Avyo couldn't get it to your website after several tries.", 'Try again'],
+                [$status['label'], $status['detail'], $status['action']['label'] ?? null], $format);
+        }
+    }
+
+    #[Test]
+    public function an_article_handed_back_after_an_attempt_waits_for_approval_without_try_again(): void
+    {
+        foreach ([BlockedCode::NEEDS_APPROVAL => 'Approve it to send it again.',
+            BlockedCode::FACT_CHECK => 'The fact check found something to look at. Review it, then approve to send it again.'] as $code => $detail) {
+            $item = $this->article(ContentItemState::Draft);
+            $delivery = $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'attempts' => 1,
+                'error' => 'Approve the article first. Avyo sends it as soon as you do.', 'delivered_at' => null]);
+            $this->schedule($item, '2026-09-15 07:00', ['status' => 'blocked', 'blocked_code' => $code,
+                'blocked_reason' => ArticleSchedules::NEEDS_APPROVAL, 'delivery_id' => $delivery->id]);
+
+            $status = $this->present($item);
+
+            $this->assertSame(['waiting', 'Waiting for you', $detail], [$status['key'], $status['label'], $status['detail']]);
+            $this->assertSame(['Approve', 'approve'], [$status['action']['label'] ?? null, $status['action']['kind'] ?? null]);
+            $this->assertNull($status['secondary']);
+        }
+    }
+
+    #[Test]
+    public function an_article_waiting_for_a_broken_website_says_so_and_then_gives_up_plainly(): void
+    {
         $item = $this->article(ContentItemState::Approved);
-        $dead = $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'delivered_at' => null,
-            'error' => 'This delivery was found abandoned 3 times and was never attempted — the worker that picked it up stopped reporting each time.']);
-        $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $dead->id]);
+        $delivery = $this->delivery($item, ['status' => DeliveryStatus::Retrying, 'response_code' => null, 'attempts' => 0, 'deferrals' => 2,
+            'error' => WebhookPublisher::WAITING_FOR_WEBSITE, 'next_attempt_at' => now()->addHours(3), 'delivered_at' => null]);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $delivery->id]);
+
+        $status = $this->present($item);
+        $row = PublicationStatus::attempt($delivery->fresh() ?? $delivery, 'UTC');
+
+        $this->assertSame(['waiting_website', 'Waiting for your website', 'Avyo will send it as soon as your website connection passes a test.'],
+            [$status['key'], $status['label'], $status['detail']]);
+        $this->assertSame(['Check website connection', '/channels'], [$status['action']['label'] ?? null, $status['action']['href'] ?? null]);
+        $this->assertSame(['Waiting for your website', null], [$row['label'], $row['next_attempt']]);
+
+        $delivery->forceFill(['status' => DeliveryStatus::DeadLetter, 'error' => WebhookPublisher::WEBSITE_STAYED_BROKEN, 'next_attempt_at' => null])->save();
 
         $status = $this->present($item);
 
-        $this->assertSame("Avyo couldn't get it to your website after several tries.", $status['detail']);
-        $this->assertSame('Try again', $status['action']['label'] ?? null);
+        $this->assertSame("Couldn't publish", $status['label']);
+        $this->assertStringContainsString('stayed broken for a day', (string) $status['detail']);
+        $this->assertSame('Check website connection', $status['action']['label'] ?? null);
+        $this->assertSame(['Try again', "/deliveries/{$delivery->id}/replay"], [$status['secondary']['label'] ?? null, $status['secondary']['href'] ?? null]);
+    }
+
+    #[Test]
+    public function internal_sentences_never_reach_the_owner_raw(): void
+    {
+        $item = $this->article(ContentItemState::Approved);
+        $back = $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'delivered_at' => null,
+            'error' => 'The unit was sent back for rework before this delivery went out, so it was not sent.']);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $back->id]);
+
+        $status = $this->present($item);
+
+        $this->assertSame(['withdrawn', 'Not sent', "It was sent back for changes, so it wasn't sent.", null],
+            [$status['key'], $status['label'], $status['detail'], $status['action']]);
+        $this->assertFalse(PublicationStatus::canTryAgain($back));
+        $this->assertSame('Not sent', PublicationStatus::attempt($back, 'UTC')['label']);
+
+        $other = $this->article(ContentItemState::Approved);
+        $odd = $this->delivery($other, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'delivered_at' => null,
+            'error' => 'Unexpected internal state 0x2f in publisher.']);
+        $this->schedule($other, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $odd->id]);
+
+        $status = $this->present($other);
+
+        $this->assertSame(["Avyo couldn't send it.", 'Try again'], [$status['detail'], $status['action']['label'] ?? null]);
+        $this->assertTrue(PublicationStatus::canTryAgain($odd));
     }
 
     #[Test]

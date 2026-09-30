@@ -38,6 +38,11 @@ use Illuminate\Support\Facades\Log;
  */
 trait RecordsDeliveryOutcome
 {
+    public const string WAITING_FOR_WEBSITE = "Waiting for your website: its connection isn't working. Avyo sends this article as soon as a test passes.";
+
+    /** What a delivery that waited a day for a broken website says when it gives up. */
+    public const string WEBSITE_STAYED_BROKEN = "Your website's connection stayed broken for a day, so this article wasn't sent. Test the connection on the Website page, then use Try again.";
+
     /**
      * How many times a delivery may be put off before it is a dead letter.
      *
@@ -50,6 +55,9 @@ trait RecordsDeliveryOutcome
      * sliding window it is eight windows.
      */
     private const int MAX_DEFERRALS = 8;
+
+    /** How long an article waits between looks at a website that isn't working: a day, over the deferral limit. */
+    private const int WEBSITE_WAIT_HOURS = 3;
 
     /** How this transport names itself in the dead-letter log. */
     abstract protected function transportName(): string;
@@ -225,14 +233,28 @@ trait RecordsDeliveryOutcome
             ContentItemState::Refreshing,
         ];
 
-        if (in_array($unit->state, $sendable, true)) {
-            return null;
+        if (! in_array($unit->state, $sendable, true)) {
+            return $this->deadLetter(
+                $delivery,
+                'The unit was sent back for rework before this delivery went out, so it was not sent.',
+            );
         }
 
-        return $this->deadLetter(
-            $delivery,
-            'The unit was sent back for rework before this delivery went out, so it was not sent.',
-        );
+        // A website that failed its last test is a wait, not a verdict: the
+        // article waits without spending an attempt, and the test that passes
+        // sends it on ({@see WebhookPublisher::resumeHeldArticles()}). Dead-
+        // lettering it here left "the connection isn't working" on the
+        // article long after the connection was fixed.
+        if (app(ArticleDeliveryGuard::class)->websiteUnusable($delivery)) {
+            return $this->defer(
+                $delivery,
+                now()->addHours(self::WEBSITE_WAIT_HOURS),
+                self::WAITING_FOR_WEBSITE,
+                self::WEBSITE_STAYED_BROKEN,
+            );
+        }
+
+        return null;
     }
 
     /** Persist the possibility of a remote effect before crossing the transport boundary. */

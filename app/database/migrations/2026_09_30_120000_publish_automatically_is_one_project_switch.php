@@ -39,10 +39,14 @@ use Illuminate\Support\Facades\Schema;
  * 2. On a project that was automatic, every article already waiting for
  *    review keeps waiting (held), whoever scheduled it. So does an automatic
  *    article aimed at a website whose checkbox was off.
- * 3. A delivery still queued for such a website, or queued automatically on a
- *    project that no longer allowed it, would have been refused when sent. It
- *    is withdrawn and the article held — unless its attempt has started, which
- *    must keep its identity; that article is only held.
+ * 3. A delivery in flight keeps the verdict the old rules would have given it
+ *    when sent. One they would have refused — automatic, to a website whose
+ *    checkbox was off, or for an Avyo-scheduled article on a project that had
+ *    said review first — is withdrawn and the article held and handed back
+ *    for review. If its attempt has already started it keeps its identity
+ *    instead: held, and marked as Avyo's approval, so the new rules refuse it
+ *    too and hand it to the owner, whose approval resends that same delivery.
+ *    One they would have let through still goes.
  * 4. Every schedule nothing has been sent for takes the mode that follows, and
  *    loses the blocks the old switches put on it — except where its date has
  *    already passed, which waits for a new date rather than going out in a
@@ -50,8 +54,12 @@ use Illuminate\Support\Facades\Schema;
  * 5. An approved article whose schedule now waits for review goes back to
  *    waiting for the owner: who approved it was never recorded, so it is taken
  *    to be Avyo. Its allowance record stays; approving it again is not charged.
- *    Approved articles on automatic schedules are likewise counted as Avyo's,
- *    so the fact check still applies to them when they are sent.
+ *    On a project that stays automatic, approved articles on automatic
+ *    schedules are likewise counted as Avyo's, so the fact check still applies
+ *    to them when they are sent, as it did to every automatic schedule. Not on
+ *    a review-first project: an automatic schedule there was the owner's own
+ *    (the old rules only let those through), and counting it as Avyo's would
+ *    refuse what they allowed.
  *
  * Plain queries throughout: the application's rules will move on, and this
  * has to keep meaning what it meant on the day it ran.
@@ -114,7 +122,7 @@ return new class extends Migration
         $schedules = DB::table('article_schedules')->where('project_id', $project->id)->where('status', '!=', 'completed')->get();
 
         foreach ($schedules as $schedule) {
-            $code = $schedule->status === 'blocked' ? $this->code($schedule->blocked_reason, $project) : null;
+            $code = $schedule->status === 'blocked' ? $this->code($schedule->blocked_reason, $project, $channels[$schedule->channel_id] ?? null) : null;
 
             if ($schedule->status === 'dispatching') {
                 $this->inFlight($schedule, $wasAutomatic, $switchedOff($schedule->channel_id));
@@ -158,14 +166,13 @@ return new class extends Migration
         }
 
         // Nobody recorded who approved these; the fact check applies to them
-        // as it did to every automatic schedule before.
-        DB::table('article_schedules')->where('project_id', $project->id)
-            ->where('mode', 'automatic')->whereNotIn('status', ['completed', 'canceled'])
-            ->whereIn('content_item_id', DB::table('content_items')->where('project_id', $project->id)->where('state', 'approved')->select('id'))
-            // An attempt already under way finishes under its own identity.
-            ->where(fn ($unsent) => $unsent->whereNull('delivery_id')
-                ->orWhereNotIn('delivery_id', DB::table('webhook_deliveries')->whereNotNull('article_attempt_started_at')->select('id')))
-            ->update(['approved_by_avyo' => true]);
+        // as it did to every automatic schedule before (see 5 above).
+        if ($automatic) {
+            DB::table('article_schedules')->where('project_id', $project->id)
+                ->where('mode', 'automatic')->whereNotIn('status', ['completed', 'canceled'])
+                ->whereIn('content_item_id', DB::table('content_items')->where('project_id', $project->id)->where('state', 'approved')->select('id'))
+                ->update(['approved_by_avyo' => true]);
+        }
     }
 
     /**
@@ -183,10 +190,12 @@ return new class extends Migration
         }
 
         if ($delivery->article_attempt_started_at !== null) {
-            // Possibly already at the website: it finishes under the identity
-            // it started with. The version is left alone for that reason.
+            // Possibly already at the website, so it keeps the identity it
+            // started with and the version that matches it. Marked as Avyo's
+            // approval, the next attempt is refused and the article handed to
+            // the owner; their approval resends this same delivery.
             DB::table('article_schedules')->where('id', $schedule->id)
-                ->update(['held_for_review' => true, 'mode' => 'review_first']);
+                ->update(['held_for_review' => true, 'mode' => 'review_first', 'approved_by_avyo' => true]);
 
             return;
         }
@@ -215,7 +224,7 @@ return new class extends Migration
     }
 
     /** The code for a sentence the application has written on a schedule. */
-    private function code(?string $reason, stdClass $project): string
+    private function code(?string $reason, stdClass $project, ?stdClass $channel): string
     {
         $reason ??= '';
 
@@ -232,7 +241,7 @@ return new class extends Migration
             $reason === self::NEEDS_APPROVAL, str_contains($reason, 'needs a person'), $reason === 'This article has no active automatic schedule.',
             in_array($reason, self::SWITCH_REASONS, true) => 'needs_approval',
             str_contains($reason, 'website connection'), str_contains($reason, 'before articles publish automatically'),
-            str_contains($reason, 'automatic publishing enabled before automatic approval') => 'website_paused',
+            str_contains($reason, 'automatic publishing enabled before automatic approval') => $channel !== null && ! $channel->is_enabled ? 'website_paused' : 'website_not_working',
             str_starts_with($reason, 'The previous delivery') => 'previous_delivery',
             default => 'other',
         };

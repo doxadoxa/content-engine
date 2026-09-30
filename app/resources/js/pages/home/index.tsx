@@ -790,7 +790,18 @@ function PublishStep({ step, owner }: { step: FirstStep; owner: boolean }) {
     const status = article?.presentation ?? null;
     const underway =
         status !== null &&
-        ['sending', 'retrying', 'delayed', 'failed'].includes(status.key);
+        [
+            'sending',
+            'retrying',
+            'delayed',
+            'waiting_website',
+            'failed',
+            'withdrawn',
+        ].includes(status.key);
+    // Refused without a reason worth showing: the status's own next step
+    // is the answer, not a button the server would turn down.
+    const quietlyRefused =
+        !underway && !step.can_publish && !step.reason && article !== null;
     const reasonId = `first-article-reason-${article?.id ?? 'none'}`;
 
     return (
@@ -813,11 +824,18 @@ function PublishStep({ step, owner }: { step: FirstStep; owner: boolean }) {
                     )}
                 </>
             )}
-            {underway ? (
-                <PublicationActionButton
-                    action={status?.action ?? null}
-                    owner={owner}
-                />
+            {underway || quietlyRefused ? (
+                <div className="flex flex-wrap gap-2">
+                    <PublicationActionButton
+                        action={status?.action ?? null}
+                        owner={owner}
+                    />
+                    <PublicationActionButton
+                        action={status?.secondary ?? null}
+                        owner={owner}
+                        variant="outline"
+                    />
+                </div>
             ) : step.can_publish && article ? (
                 <div className="self-start">
                     <PublishNowButton itemId={article.id} />

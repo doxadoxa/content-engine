@@ -15,11 +15,21 @@ use App\Models\WebhookDelivery;
  * 401", or a cURL line. An owner reading "Couldn't publish" next to that has
  * to translate it and then guess what to do; this does both, once, so the
  * website page and every article status say the same thing about the same
- * failure. Messages that are already sentences — the delivery guard's, the
- * sweep's — pass through untouched.
+ * failure. Sentences Avyo itself writes on a delivery — the guard's, the
+ * sweeper's, the send-back — are known here and reworded; anything else is
+ * an unnamed failure, and the raw text stays for the history's details only.
  */
 final class DeliveryExplanation
 {
+    /** For a failure nobody has written words for. The raw text stays in the history's details. */
+    public const string GENERIC = "Avyo couldn't send it.";
+
+    public const string SENT_BACK = "It was sent back for changes, so it wasn't sent.";
+
+    public const string DELAYED = 'Taking longer than usual. Avyo will try again automatically.';
+
+    public const string GAVE_UP = "Avyo couldn't get it to your website after several tries.";
+
     /** Null while nothing has gone wrong yet: pending, or delivered. */
     public static function for(WebhookDelivery $delivery): ?string
     {
@@ -44,7 +54,18 @@ final class DeliveryExplanation
             return null;
         }
 
-        return self::forTransport($error) ?? $error;
+        return self::forTransport($error) ?? self::forInternal($error) ?? self::GENERIC;
+    }
+
+    /**
+     * Whether a failure is final for this article: it was taken back, or its
+     * schedule moved on, so "Try again" would only be refused.
+     */
+    public static function isWithdrawn(?string $error): bool
+    {
+        $lower = strtolower((string) $error);
+
+        return str_contains($lower, 'sent back for rework') || str_contains($lower, 'schedule changed before this delivery');
     }
 
     private static function forStatus(int $status, ?ChannelType $type): string
@@ -81,6 +102,32 @@ final class DeliveryExplanation
             str_contains($lower, 'curl error 7:'), str_contains($lower, 'connection refused') => "Your website didn't accept the connection.",
             str_contains($lower, 'ssl'), str_contains($lower, 'certificate') => "Your website's HTTPS certificate isn't valid.",
             str_contains($lower, 'curl error') => "Avyo couldn't reach your website.",
+            default => null,
+        };
+    }
+
+    /** Avyo's own sentences, in the words the rest of the product uses. */
+    private static function forInternal(string $error): ?string
+    {
+        $lower = strtolower($error);
+
+        return match (true) {
+            StrandedDeliveries::isRequeueNote($error) => self::DELAYED,
+            StrandedDeliveries::isAbandonedNote($error) => self::GAVE_UP,
+            $error === WebhookPublisher::WAITING_FOR_WEBSITE => 'Waiting for your website. Avyo will send it as soon as your website connection passes a test.',
+            $error === WebhookPublisher::WEBSITE_STAYED_BROKEN => $error,
+            str_contains($lower, 'sent back for rework') => self::SENT_BACK,
+            str_contains($lower, 'schedule changed before this delivery') => "Its schedule changed before it went out, so it wasn't sent.",
+            str_contains($lower, 'no longer matches') => "Its schedule changed after it was queued, so it wasn't sent. Pick a new date to publish it.",
+            str_contains($lower, 'changed after this delivery was queued') => "The article changed after it was queued, so it wasn't sent. Review it, then publish it again.",
+            str_contains($lower, 'fact check') => 'The fact check found something to look at. Review the article, then approve it.',
+            str_contains($lower, 'missed') => 'Its date passed before it went out. Pick a new date to publish it.',
+            str_contains($lower, 'paused for this project'), str_contains($lower, 'publication is paused') => 'Publishing is paused for this business or its plan.',
+            str_contains($lower, 'automatic publishing was turned off') => 'Automatic publishing was turned off before it went out. Pick a new date to publish it.',
+            str_contains($lower, 'no longer enabled'), str_contains($lower, 'website connection') => "Your website connection isn't working. Test it on the Website page.",
+            str_contains($lower, 'no webhook address'), str_contains($lower, 'no endpoint') => 'No webhook address is set for this website. Add it on the Website page.',
+            // Already written for owners: the approval hold and the business-facts checks.
+            str_contains($lower, 'approve the article first'), str_contains($lower, 'business information') => $error,
             default => null,
         };
     }

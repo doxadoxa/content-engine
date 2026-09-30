@@ -6,6 +6,7 @@ namespace Tests\Unit\Publishing;
 
 use App\Enums\ChannelType;
 use App\Publishing\DeliveryExplanation;
+use App\Publishing\StrandedDeliveries;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -51,11 +52,26 @@ final class DeliveryExplanationTest extends TestCase
     }
 
     #[Test]
-    public function a_sentence_already_written_for_people_passes_through(): void
+    public function avyos_own_sentences_are_reworded_and_unknown_ones_are_not_shown(): void
     {
-        $message = 'The fact check has not passed. Review the article before publishing.';
+        $this->assertSame("It was sent back for changes, so it wasn't sent.",
+            DeliveryExplanation::explain(null, 'The unit was sent back for rework before this delivery went out, so it was not sent.'));
+        $this->assertSame('The fact check found something to look at. Review the article, then approve it.',
+            DeliveryExplanation::explain(null, 'The fact check has not passed. Review the article before publishing.'));
+        $this->assertStringStartsWith("Its schedule changed after it was queued, so it wasn't sent.",
+            (string) DeliveryExplanation::explain(null, 'This delivery no longer matches the active, due publication schedule.'));
+        $this->assertStringStartsWith("The article changed after it was queued, so it wasn't sent.",
+            (string) DeliveryExplanation::explain(null, 'The article changed after this delivery was queued. Review the current article before publishing.'));
+        $this->assertSame(DeliveryExplanation::DELAYED, DeliveryExplanation::explain(null, StrandedDeliveries::REQUEUED_MAYBE_SENT));
+        $this->assertSame(DeliveryExplanation::GAVE_UP,
+            DeliveryExplanation::explain(null, sprintf(StrandedDeliveries::ABANDONED_UNSENT, StrandedDeliveries::MAX_SWEEPS + 1)));
 
-        $this->assertSame($message, DeliveryExplanation::explain(null, $message));
+        // Already written for owners.
+        $facts = 'Your business information changed after this article was written. Update the article before publishing it.';
+        $this->assertSame($facts, DeliveryExplanation::explain(null, $facts));
+
+        // Nobody has named this one: a plain "couldn't", never the raw text.
+        $this->assertSame("Avyo couldn't send it.", DeliveryExplanation::explain(null, 'Unexpected internal state 0x2f in publisher.'));
     }
 
     #[Test]

@@ -15,6 +15,7 @@ use App\Models\WebhookDelivery;
 use App\Pipelines\Core\PipelineRunner;
 use App\Publishing\Articles\ArticleApproval;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\PublicationStatus;
 use App\Publishing\PublishToChannels;
 use App\Support\Content\ContentItemProps;
 use App\Support\Tenancy\CurrentProject;
@@ -92,9 +93,7 @@ class ApprovalController extends Controller
             throw $exception;
         }
         $deliveries = app(ArticleSchedules::class)->dispatch($item);
-        $item->loadMissing('articleSchedule');
-        Inertia::flash('toast', ['type' => 'success', 'message' => $deliveries === []
-            ? ($item->articleSchedule === null ? 'Article approved. Choose a publication time or publish it now.' : 'Article approved. It will publish at its scheduled time.') : 'Article approved and queued for publishing.']);
+        Inertia::flash('toast', $this->approvedToast($item, $deliveries !== []));
 
         return back();
     }
@@ -218,6 +217,28 @@ class ApprovalController extends Controller
         ]);
 
         return back();
+    }
+
+    /**
+     * What approving actually did: sent it, scheduled it, or — when the
+     * schedule is blocked or its date was missed — why it is still waiting.
+     * "It will publish at its scheduled time" used to be said either way.
+     *
+     * @return array{type: string, message: string}
+     */
+    private function approvedToast(ContentItem $item, bool $sent): array
+    {
+        $fresh = ContentItem::query()->whereKey($item->getKey())->with(['project', 'articleSchedule.delivery.channel'])->firstOrFail();
+        $schedule = $fresh->articleSchedule;
+        $status = PublicationStatus::for($fresh, $schedule);
+
+        return match (true) {
+            $sent, in_array($status['key'], ['sending', 'published'], true) => ['type' => 'success', 'message' => 'Article approved. Sending it to your website now.'],
+            $schedule === null => ['type' => 'success', 'message' => 'Article approved. Pick a date, or publish it now.'],
+            $status['key'] === 'scheduled' && $schedule->publish_at->isFuture() => ['type' => 'success',
+                'message' => 'Article approved. It publishes '.PublicationStatus::moment($schedule->publish_at, $fresh->project->timezone).'.'],
+            default => ['type' => 'info', 'message' => 'Article approved, but it is waiting. '.($status['detail'] ?? $status['label'])],
+        };
     }
 
     /**

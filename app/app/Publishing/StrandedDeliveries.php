@@ -83,6 +83,22 @@ final class StrandedDeliveries
     public const int MAX_SWEEPS = 3;
 
     /**
+     * What `publish:sweep-stranded` writes on a row, kept here so the screens
+     * can recognise it rather than show a queue operator's note to an owner.
+     */
+    public const string REQUEUED_UNSENT = 'This delivery was interrupted before it was sent. Nothing was sent; it has been put back in the queue.';
+
+    public const string REQUEUED_MAYBE_SENT = 'This delivery was interrupted before its result was recorded. It may have reached the website; it is '
+        .'being re-sent with the same delivery id so the website can recognise a repeat.';
+
+    /** `sprintf` formats, with the number of interruptions. */
+    public const string ABANDONED_UNSENT = 'This delivery was interrupted %d times in a row and was never attempted. Nothing has been '
+        .'sent. Check the queue workers, then replay it.';
+
+    public const string ABANDONED_MAYBE_SENT = 'This delivery was interrupted %d times in a row before its result was recorded. It may have '
+        .'reached the website, so check there before replaying it.';
+
+    /**
      * How far past `retry_after` the threshold must reach, whatever config says.
      *
      * One sweep interval. At `retry_after` Redis only moves the abandoned job
@@ -93,6 +109,23 @@ final class StrandedDeliveries
      * off anyway.
      */
     private const int MARGIN_SECONDS = 60;
+
+    /** The sweeper's re-queue notes: the delivery is late, not refused. */
+    public static function isRequeueNote(?string $error): bool
+    {
+        return in_array($error, [self::REQUEUED_UNSENT, self::REQUEUED_MAYBE_SENT], true)
+            // Written before these were constants.
+            || str_contains((string) $error, 'never reported back');
+    }
+
+    /** The sweeper's give-up notes: out of sweeps, a dead letter. */
+    public static function isAbandonedNote(?string $error): bool
+    {
+        return in_array($error, [
+            sprintf(self::ABANDONED_UNSENT, self::MAX_SWEEPS + 1),
+            sprintf(self::ABANDONED_MAYBE_SENT, self::MAX_SWEEPS + 1),
+        ], true) || str_contains((string) $error, 'found abandoned');
+    }
 
     /** The moment before which a due row is presumed abandoned. */
     public static function cutoff(?Carbon $now = null): Carbon

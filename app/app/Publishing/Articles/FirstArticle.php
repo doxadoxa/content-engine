@@ -150,7 +150,10 @@ final class FirstArticle
         $writing = $article !== null && in_array($article->state, [ContentItemState::Idea, ContentItemState::Queued, ContentItemState::Generating], true);
         // While a first attempt is on its way or has gone wrong, the article's
         // own status is the step: "Sending", "Retrying", "Couldn't publish".
-        $underway = in_array($presentation['key'] ?? null, ['sending', 'retrying', 'delayed', 'failed'], true);
+        $underway = in_array($presentation['key'] ?? null, ['sending', 'retrying', 'delayed', 'waiting_website', 'failed', 'withdrawn'], true);
+        // Only what the server would accept: a refusal it keeps to itself
+        // (no reason worth showing) still means the button must not offer.
+        $available = ($props['publish_now']['available'] ?? false) === true;
 
         [$reason, $fix] = match (true) {
             $underway => [null, null],
@@ -158,7 +161,7 @@ final class FirstArticle
             $article === null => ["Avyo hasn't written an article yet. It will appear here when it is ready.", null],
             $writing => ['Your article is still being written.', null],
             ! $this->entitlements->for($project)->mayPublish() => ["Your plan doesn't include publishing yet.", ['label' => 'Choose a plan', 'href' => '/billing']],
-            ($props['publish_now']['available'] ?? false) !== true => [$props['publish_now']['reason'] ?? null, null],
+            ! $available => [$props['publish_now']['reason'] ?? null, null],
             ! $owner => ['Only the business owner can publish.', null],
             default => [null, null],
         };
@@ -171,7 +174,7 @@ final class FirstArticle
             'article' => $article === null ? null : [
                 'id' => $article->getKey(), 'title' => $article->title, 'presentation' => $presentation,
             ],
-            'can_publish' => ! $underway && $reason === null && $article !== null,
+            'can_publish' => $available && ! $underway && $reason === null && $article !== null,
             'reason' => $reason,
             'fix' => $fix,
         ];

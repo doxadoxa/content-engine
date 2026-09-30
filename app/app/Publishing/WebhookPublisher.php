@@ -210,7 +210,8 @@ class WebhookPublisher implements ChannelPublisher
                 }
                 // An uncertain website outcome must be reconciled with its original receipt identity.
                 $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
-                    ?? ($delivery->contentItem === null ? null : app(ArticleBusinessFacts::class)->refusal($delivery->contentItem));
+                    ?? ($delivery->contentItem === null ? null : app(ArticleBusinessFacts::class)->refusal($delivery->contentItem))
+                    ?? (app(ArticleDeliveryGuard::class)->websiteUnusable($delivery) ? "Your website's connection isn't working. Test it on the Website page first; the article is sent once the test passes." : null);
                 if ($refusal !== null) {
                     throw ValidationException::withMessages(['delivery' => $refusal]);
                 }
@@ -321,6 +322,7 @@ class WebhookPublisher implements ChannelPublisher
 
         if ($confirms) {
             $this->confirmConnection($delivery);
+            $this->resumeHeldArticles($delivery->channel);
         }
 
         $this->recordPublicUrl($delivery, $body);
@@ -331,6 +333,44 @@ class WebhookPublisher implements ChannelPublisher
         }
 
         return $delivery;
+    }
+
+    /**
+     * Send on the articles that were waiting for this website to work again.
+     *
+     * They were deferred at attempt time because the website had failed its
+     * test (see `refuseIfWithdrawn()`), and would otherwise sleep until their
+     * next look — up to three hours after the owner fixed it. Each is made due
+     * now and given a job that carries that time, so the job it already had
+     * finds the rung taken and stands down. A row an attempt holds right now
+     * is left to that attempt.
+     *
+     * `deferrals` is what marks them: no webhook or WordPress delivery is
+     * deferred for any other reason.
+     */
+    protected function resumeHeldArticles(Channel $channel): void
+    {
+        $held = WebhookDelivery::acrossProjects()->where('channel_id', $channel->getKey())
+            ->whereNotNull('article_schedule_id')->where('status', DeliveryStatus::Retrying->value)
+            ->where('deferrals', '>', 0)->pluck('id');
+
+        foreach ($held->map(fn (mixed $id): string => (string) $id) as $id) {
+            $lock = Cache::lock('webhook-delivery:'.$id, self::lockSeconds());
+            if (! $lock->get()) {
+                continue;
+            }
+            try {
+                $delivery = WebhookDelivery::acrossProjects()->whereKey($id)->first();
+                if ($delivery === null || $delivery->status !== DeliveryStatus::Retrying) {
+                    continue;
+                }
+                $delivery->forceFill(['next_attempt_at' => now()])->save();
+                $due = $delivery->refresh()->next_attempt_at;
+            } finally {
+                $lock->release();
+            }
+            DeliverWebhookJob::dispatch($id, $due)->afterCommit();
+        }
     }
 
     /**
