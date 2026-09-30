@@ -73,6 +73,7 @@ trait RecordsDeliveryOutcome
             'delivered_at' => now(),
             'next_attempt_at' => null,
             'error' => null,
+            'sweeps' => 0,
         ])->save();
 
         if (($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value) {
@@ -96,6 +97,11 @@ trait RecordsDeliveryOutcome
      * 12h" and a worker's own retry policy has no idea what was promised to
      * anybody. The status is written even when it is null: a row that retried
      * after a timeout must not still be showing the 503 that preceded it.
+     *
+     * `sweeps` goes back to zero here and on delivery, because both mean a
+     * worker got as far as an answer. The sweep limit is about a delivery that
+     * keeps losing its worker, and losses either side of a real attempt are
+     * not the same run of bad luck.
      */
     protected function scheduleRetry(
         WebhookDelivery $delivery,
@@ -120,6 +126,7 @@ trait RecordsDeliveryOutcome
             'latency_ms' => $latency,
             'error' => $error,
             'next_attempt_at' => now()->addSeconds($delay),
+            'sweeps' => 0,
         ])->save();
 
         return $delivery;

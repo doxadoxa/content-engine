@@ -7,6 +7,8 @@ namespace App\Publishing\Jobs;
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Tenancy\CurrentProject;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -28,6 +30,13 @@ use Illuminate\Foundation\Queue\Queueable;
  * common half. `DeliverToChannelJob` can happen on a day when the queue is
  * drained and nothing is in flight, which is a deployment decision rather than
  * a refactor.
+ *
+ * The lane is chosen here rather than at the dispatch sites, of which there
+ * are six. Publishing has a connection and a supervisor of its own
+ * (config/publishing.php explains why), and a site that forgot to say so would
+ * put one delivery back on the pipeline's queue, with its hour-long
+ * `retry_after` — the failure the lane exists to remove, reintroduced by
+ * omission.
  */
 class DeliverWebhookJob implements ShouldQueue
 {
@@ -35,7 +44,20 @@ class DeliverWebhookJob implements ShouldQueue
 
     public int $tries = 1;
 
-    public function __construct(public string $deliveryId) {}
+    /**
+     * The rung this job was queued for, as an ISO-8601 time — set only on the
+     * retry `attempt()` schedules, and how the publisher tells that job from a
+     * duplicate. A plain property with a default rather than a promoted one:
+     * jobs serialised before it existed must still unserialise with it null.
+     */
+    public ?string $scheduledFor = null;
+
+    public function __construct(public string $deliveryId, ?CarbonInterface $scheduledFor = null)
+    {
+        $this->scheduledFor = $scheduledFor?->toIso8601String();
+        $this->onConnection((string) config('publishing.connection'));
+        $this->onQueue((string) config('publishing.queue'));
+    }
 
     public function handle(ChannelPublisherRegistry $publishers, CurrentProject $current): void
     {
@@ -54,7 +76,10 @@ class DeliverWebhookJob implements ShouldQueue
             if ($fresh !== null) {
                 // The row says where it is going; the registry says who takes
                 // it there. Nothing in the queued payload had to know.
-                $publishers->forDelivery($fresh)->attempt($fresh);
+                $publishers->forDelivery($fresh)->attempt(
+                    $fresh,
+                    $this->scheduledFor === null ? null : CarbonImmutable::parse($this->scheduledFor),
+                );
             }
         });
     }

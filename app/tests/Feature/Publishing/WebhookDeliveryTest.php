@@ -15,6 +15,7 @@ use App\Models\ContentItem;
 use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Publishing\Jobs\DeliverWebhookJob;
+use App\Publishing\Pages\DispatchPageOperation;
 use App\Publishing\WebhookPublisher;
 use App\Publishing\WebhookSignature;
 use App\Support\Tenancy\CurrentProject;
@@ -509,6 +510,64 @@ final class WebhookDeliveryTest extends TestCase
 
         $this->assertSame(1, WebhookDelivery::query()->count());
         Queue::assertPushed(DeliverWebhookJob::class, 1);
+    }
+
+    #[Test]
+    public function every_publishing_job_rides_the_publishing_lane(): void
+    {
+        Queue::fake();
+        Http::fake(['receiver.test/*' => Http::response([], 503)]);
+
+        // The first attempt, a ping, a retry the ladder schedules, and a
+        // replay: every way a delivery job is made. All of them on the
+        // connection whose `retry_after` fits one request, and the queue its
+        // supervisor works — one left on `pipeline` waits behind model calls
+        // and, lost, stays lost for the better part of an hour.
+        $delivery = $this->publish();
+        $this->publisher()->ping($this->channel, $this->project);
+        $this->publisher()->attempt($delivery);
+        $delivery->forceFill(['status' => DeliveryStatus::DeadLetter])->save();
+        $this->publisher()->replay($delivery);
+
+        Queue::assertPushed(DeliverWebhookJob::class, 4);
+        Queue::assertNotPushed(
+            DeliverWebhookJob::class,
+            fn (DeliverWebhookJob $job): bool => $job->connection !== 'publishing' || $job->queue !== 'publishing',
+        );
+
+        // Native page operations share the lane, and choose it the same way —
+        // under a queue name of their own, so they are not counted as
+        // deliveries waiting.
+        $operation = new DispatchPageOperation('operation');
+
+        $this->assertSame('publishing', $operation->connection);
+        $this->assertSame('publishing-pages', $operation->queue);
+        $this->assertSame(['publishing', 'publishing-pages'], config('horizon.defaults.publishing.queue'));
+    }
+
+    #[Test]
+    public function a_retry_that_is_not_due_yet_is_not_sent_early(): void
+    {
+        Queue::fake();
+        Http::fake(['receiver.test/*' => Http::response([])]);
+
+        // A second job for the row — the stranded sweep's, or a duplicate —
+        // arriving while the ladder says wait. Sending now would spend the
+        // next rung at an interval nobody promised.
+        $delivery = $this->publish();
+        $due = now()->addMinutes(5)->startOfSecond();
+        $delivery->forceFill(['status' => DeliveryStatus::Retrying, 'attempts' => 1, 'next_attempt_at' => $due])->save();
+
+        $this->publisher()->attempt($delivery);
+
+        Http::assertNothingSent();
+        // And queues nothing either: the retry already has its job, and a
+        // second would keep the duplicate alive rung after rung.
+        Queue::assertPushed(DeliverWebhookJob::class, 1);
+        $delivery->refresh();
+        $this->assertSame(DeliveryStatus::Retrying, $delivery->status);
+        $this->assertSame(1, $delivery->attempts);
+        $this->assertTrue($delivery->next_attempt_at?->equalTo($due));
     }
 
     #[Test]

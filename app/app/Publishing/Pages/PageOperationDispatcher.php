@@ -19,7 +19,9 @@ final class PageOperationDispatcher
 
     public function attempt(PagePublicationOperation $operation, bool $reconcileOnly = false, bool $force = false): void
     {
-        Cache::lock('native-page-operation:'.$operation->id, 90)->get(function () use ($operation, $reconcileOnly, $force): void {
+        // Held past the publishing worker's timeout, like a delivery's and for
+        // the same reason: see `publishing.lock_seconds`.
+        Cache::lock('native-page-operation:'.$operation->id, (int) config('publishing.lock_seconds', 100))->get(function () use ($operation, $reconcileOnly, $force): void {
             $operation = PagePublicationOperation::query()->findOrFail($operation->id);
             if ($operation->committed_at !== null || in_array($operation->status, ['conflict', 'unsupported', 'cancelled'], true)
                 || (! $force && $operation->retry_at?->isFuture())) {
@@ -197,7 +199,7 @@ final class PageOperationDispatcher
         $retryAt = $operation->attempts < 11 ? now()->addSeconds($delay) : null;
         $operation->update(['status' => 'outcome_unknown', 'last_error' => $reason, 'retry_at' => $retryAt]);
         if ($retryAt !== null) {
-            DispatchPageOperation::dispatch($operation->id)->onQueue((string) config('publishing.queue', 'pipeline'))->delay($retryAt);
+            DispatchPageOperation::dispatch($operation->id)->delay($retryAt);
         }
     }
 

@@ -22,7 +22,7 @@ class ReconcilePagePublications extends Command
             ->where(fn ($query) => $query->where('status', 'queued')->orWhere('status', 'sending')->orWhere('retry_at', '<=', now()))
             ->chunkById(100, function ($operations): void {
                 foreach ($operations as $operation) {
-                    DispatchPageOperation::dispatch($operation->id)->onQueue((string) config('publishing.queue', 'pipeline'));
+                    DispatchPageOperation::dispatch($operation->id);
                 }
             });
 

@@ -18,6 +18,7 @@ use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\Pages\PageReceiverClient;
 use App\Publishing\PublishToChannels;
+use App\Publishing\WebhookPublisher;
 use App\Support\Engine\ArticleWorkflow;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -391,7 +392,7 @@ final class ArticleSchedules
                 Project::query()->whereKey($item->project_id)->lockForUpdate()->firstOrFail();
                 $item->refresh()->loadMissing('project');
                 $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->lockForUpdate()->first();
-                $lock = $schedule?->delivery_id === null ? null : Cache::lock('webhook-delivery:'.$schedule->delivery_id, 30);
+                $lock = $schedule?->delivery_id === null ? null : Cache::lock('webhook-delivery:'.$schedule->delivery_id, WebhookPublisher::lockSeconds());
                 $this->require($lock === null || $lock->get(), 'A delivery is in progress. Wait for its result before changing this schedule.');
 
                 return $operation($schedule);

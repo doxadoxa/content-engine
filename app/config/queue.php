@@ -99,8 +99,41 @@ return [
              * `pipeline-expensive` is 2100 now, because a step on that queue was
              * asking for longer than the worker allowed and losing. 2700
              * keeps the same margin over it that 1200 kept over 900.
+             *
+             * Publishing does not run here any more — see `publishing` below —
+             * because a number sized for a thirty-five-minute model call is
+             * also how long a lost delivery waited before anything noticed.
              */
             'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 2_700),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
+        /*
+         * The same Redis, with a `retry_after` of its own, for publishing.
+         *
+         * `retry_after` belongs to a connection, not to a queue, so while
+         * deliveries shared `redis` with the pipeline they inherited the 2700
+         * seconds the longest model step needs. A delivery is one HTTP request
+         * of at most `publishing.timeout`. When the worker holding one was
+         * restarted by a deploy, Redis waited three quarters of an hour to
+         * offer it again — and the offer is refused, because the job has one
+         * try — so the sweep that actually recovers it could not safely run for
+         * an hour. An owner watched "in progress" for seventy minutes on an
+         * article that was never sent.
+         *
+         * 150 clears the `publishing` supervisor's 90-second timeout
+         * (config/horizon.php) by a minute, which is the same rule the
+         * paragraph above states for `redis`, and the 100-second delivery
+         * lock that outlives that timeout. It also bounds how long
+         * App\Publishing\StrandedDeliveries has to wait before sweeping.
+         * PipelineTimeoutChainTest keeps the whole chain in order.
+         */
+        'publishing' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => 'publishing',
+            'retry_after' => (int) env('PUBLISH_QUEUE_RETRY_AFTER', 150),
             'block_for' => null,
             'after_commit' => false,
         ],
