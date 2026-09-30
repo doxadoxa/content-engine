@@ -200,10 +200,12 @@ class ChannelController extends Controller
 
             // Uncertain: the request went out and no answer said "not
             // published". A 4xx other than 409 did say so; no answer, a 5xx or
-            // an unexpected 2xx did not.
+            // an unexpected 2xx did not. "Went out" is a spent attempt as well
+            // as the start stamp: only scheduled articles are stamped, and an
+            // article published by hand that timed out is just as uncertain.
             $uncertain = $articleDeliveries()
                 ->where('status', DeliveryStatus::DeadLetter->value)
-                ->whereNotNull('article_attempt_started_at')
+                ->where(fn ($query) => $query->whereNotNull('article_attempt_started_at')->orWhere('attempts', '>', 0))
                 ->where(fn ($query) => $query->whereNull('response_code')
                     ->orWhere('response_code', '<', 400)->orWhere('response_code', '>=', 500)->orWhere('response_code', 409))
                 ->exists();

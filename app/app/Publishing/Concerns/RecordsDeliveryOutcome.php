@@ -362,6 +362,12 @@ trait RecordsDeliveryOutcome
     /**
      * Whether this delivery is a test of the website connection as it is
      * now — the only kind whose answer may change `verified_at`.
+     *
+     * And the newest test of it: two tests of an unchanged connection can
+     * finish in either order, and the one the owner pressed last is the
+     * answer they are waiting for. An older one finishing later would
+     * otherwise undo it — clear a pass, or verify over a failure and send
+     * the articles held for it. ConnectionHealth reads the newest test too.
      */
     protected function isCurrentTest(WebhookDelivery $delivery): bool
     {
@@ -372,7 +378,8 @@ trait RecordsDeliveryOutcome
         $channel = $delivery->channel;
 
         return $channel instanceof Channel
-            && ConnectionFingerprint::stillCurrent($delivery, $channel->refresh());
+            && ConnectionFingerprint::stillCurrent($delivery, $channel->refresh())
+            && ! $this->newerTestExists($delivery);
     }
 
     /**
@@ -396,5 +403,17 @@ trait RecordsDeliveryOutcome
     protected function elapsed(int|float $startedAt): int
     {
         return (int) ((hrtime(true) - $startedAt) / 1_000_000);
+    }
+
+    private function newerTestExists(WebhookDelivery $delivery): bool
+    {
+        return WebhookDelivery::query()
+            ->where('channel_id', $delivery->channel_id)
+            ->whereNull('content_item_id')
+            ->where('payload_snapshot->event', WebhookEvent::Ping->value)
+            ->whereKeyNot($delivery->getKey())
+            ->where(fn ($query) => $query->where('created_at', '>', $delivery->created_at)
+                ->orWhere(fn ($same) => $same->where('created_at', $delivery->created_at)->where('id', '>', $delivery->getKey())))
+            ->exists();
     }
 }

@@ -342,6 +342,27 @@ final class WebsiteConnectionTest extends TestCase
     }
 
     #[Test]
+    public function an_article_published_by_hand_that_went_unanswered_also_keeps_its_website(): void
+    {
+        // Published by hand, so never stamped as a scheduled attempt — but a
+        // request went out and timed out, which is just as uncertain.
+        $channel = $this->webhook();
+        $delivery = $this->articleDelivery($channel, [
+            'status' => DeliveryStatus::DeadLetter->value,
+            'article_schedule_id' => null,
+            'article_attempt_started_at' => null,
+            'attempts' => 1,
+            'response_code' => null,
+            'error' => 'cURL error 28: Operation timed out',
+        ]);
+
+        $this->as($this->owner)->delete(route('channels.destroy', $channel))
+            ->assertSessionHasErrors('channel');
+
+        $this->assertTrue(WebhookDelivery::query()->whereKey($delivery->id)->exists());
+    }
+
+    #[Test]
     public function removing_a_website_sends_its_scheduled_articles_back_to_waiting_for_one(): void
     {
         $channel = $this->webhook(['verified_at' => now()]);
@@ -431,6 +452,43 @@ final class WebsiteConnectionTest extends TestCase
         $this->assertNotNull($channel->refresh()->verified_at);
         $this->as($this->owner)->get(route('channels.index'))
             ->assertInertia(fn (AssertableInertia $page) => $page->where('channels.0.health.state', 'connected'));
+    }
+
+    #[Test]
+    public function an_older_test_finishing_last_does_not_undo_the_newest_one(): void
+    {
+        Queue::fake();
+        $channel = $this->webhook();
+        $older = app(WebhookPublisher::class)->ping($channel, $this->project);
+        $this->travel(1)->seconds();
+        $newer = app(WebhookPublisher::class)->ping($channel, $this->project);
+
+        // The newest passes first; the older one fails afterwards.
+        Http::fake(['receiver.test/*' => Http::sequence()->push(['ok' => true])->push('down', 503)]);
+        app(WebhookPublisher::class)->attempt($newer);
+        app(WebhookPublisher::class)->attempt($older);
+
+        $this->assertSame(DeliveryStatus::DeadLetter, $older->refresh()->status);
+        $this->assertNotNull($channel->refresh()->verified_at);
+        $this->assertSame('connected', ConnectionHealth::for($channel)['state']);
+    }
+
+    #[Test]
+    public function an_older_pass_finishing_last_does_not_verify_over_the_newest_failure(): void
+    {
+        Queue::fake();
+        $channel = $this->webhook();
+        $older = app(WebhookPublisher::class)->ping($channel, $this->project);
+        $this->travel(1)->seconds();
+        $newer = app(WebhookPublisher::class)->ping($channel, $this->project);
+
+        Http::fake(['receiver.test/*' => Http::sequence()->push('down', 503)->push(['ok' => true])]);
+        app(WebhookPublisher::class)->attempt($newer);
+        app(WebhookPublisher::class)->attempt($older);
+
+        $this->assertSame(DeliveryStatus::Delivered, $older->refresh()->status);
+        $this->assertNull($channel->refresh()->verified_at);
+        $this->assertSame('failed', ConnectionHealth::for($channel)['state']);
     }
 
     #[Test]
