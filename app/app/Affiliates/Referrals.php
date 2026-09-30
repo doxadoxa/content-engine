@@ -60,6 +60,14 @@ final class Referrals
     /** Written by resources/js/lib/consent.ts. */
     public const string CONSENT_COOKIE = 'avyo_consent';
 
+    /**
+     * The script writes 32 hex characters. The bounds are looser than that so a
+     * format change on their side does not silently stop crediting anybody, and
+     * tight enough that a cookie somebody typed into their browser is not
+     * forwarded to a third party as it stands.
+     */
+    public const string VISITOR_PATTERN = '/\A[A-Za-z0-9_-]{8,64}\z/';
+
     public function __construct(private readonly Anderro $anderro) {}
 
     /**
@@ -240,17 +248,12 @@ final class Referrals
         $referral->forceFill(['consent_version' => null, 'consented_at' => null])->save();
     }
 
-    /**
-     * The script writes 32 hex characters. The bounds are looser than that so a
-     * format change on their side does not silently stop crediting anybody, and
-     * tight enough that a cookie somebody typed into their browser is not
-     * forwarded to a third party as it stands.
-     */
+    /** The visitor id the script wrote, if it looks like one. See {@see self::VISITOR_PATTERN}. */
     private function visitorIn(Request $request): ?string
     {
         $visitor = $request->cookie(self::VISITOR_COOKIE);
 
-        return is_string($visitor) && preg_match('/\A[A-Za-z0-9_-]{8,64}\z/', $visitor) === 1
+        return is_string($visitor) && preg_match(self::VISITOR_PATTERN, $visitor) === 1
             ? $visitor
             : null;
     }
