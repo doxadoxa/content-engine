@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { workspacePanelClass } from '@/components/workspace-page';
@@ -27,6 +28,7 @@ export type ArticlePublication = {
         id: string;
         version: number;
         mode: 'automatic' | 'review_first';
+        held: boolean;
         status: string;
         publish_at: string;
         local_date: string;
@@ -40,7 +42,6 @@ export type ArticlePublication = {
         id: string;
         name: string;
         type: string;
-        autopublish: boolean;
     }[];
     can_schedule: boolean;
 };
@@ -101,7 +102,9 @@ export function ArticlePublicationPanel({
                     <p className="mt-1 text-sm leading-6 text-muted-foreground">
                         {schedule
                             ? `Scheduled for ${schedule.local_date} at ${schedule.local_time} (${schedule.timezone}) · ${nextStep}`
-                            : 'Choose when this article should reach your customers. You can let Avyo publish automatically or review it first.'}
+                            : publication.default_mode === 'automatic'
+                              ? 'Choose when this article should reach your customers. Avyo publishes it once its checks pass, unless you hold it for your review.'
+                              : 'Choose when this article should reach your customers. It waits for your approval before publishing.'}
                     </p>
                 </div>
             </div>
@@ -267,13 +270,24 @@ function ScheduleForm({
             day: '2-digit',
         }).format(new Date(Date.now() + 86400000)),
     );
+    // The project decides whether articles wait for a person; the only
+    // question left per article is whether to hold this one. A review-first
+    // project already holds everything, so it is not asked there — and the
+    // server keeps any earlier hold when `hold` is not sent.
+    const automatic = publication.default_mode === 'automatic';
+    const chooseWebsite = publication.channels.length > 1;
     const form = useForm({
         expected_version: schedule?.version ?? null,
         local_date: schedule?.local_date ?? tomorrow,
         local_time: schedule?.local_time.slice(0, 5) ?? '09:00',
-        mode: schedule?.mode ?? publication.default_mode,
+        hold: schedule?.held ?? false,
         channel_id: schedule?.channel_id ?? publication.channels[0]?.id ?? '',
     });
+    form.transform(({ hold, channel_id, ...data }) => ({
+        ...data,
+        ...(automatic ? { hold } : {}),
+        ...(chooseWebsite ? { channel_id } : {}),
+    }));
     const submit = (event: FormEvent) => {
         event.preventDefault();
         form.put(`/content/${itemId}/schedule`, { preserveScroll: true });
@@ -312,43 +326,42 @@ function ScheduleForm({
                 />
                 <InputError message={form.errors.local_time} />
             </div>
-            <div className="space-y-2">
-                <Label htmlFor={`mode-${itemId}`}>Before publication</Label>
-                <select
-                    id={`mode-${itemId}`}
-                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                    value={form.data.mode}
-                    onChange={(event) =>
-                        form.setData(
-                            'mode',
-                            event.target.value as 'automatic' | 'review_first',
-                        )
-                    }
-                >
-                    <option value="automatic">Publish automatically</option>
-                    <option value="review_first">Let me review first</option>
-                </select>
-                <InputError message={form.errors.mode} />
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor={`channel-${itemId}`}>Website</Label>
-                <select
-                    id={`channel-${itemId}`}
-                    required
-                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                    value={form.data.channel_id}
-                    onChange={(event) =>
-                        form.setData('channel_id', event.target.value)
-                    }
-                >
-                    {publication.channels.map((channel) => (
-                        <option key={channel.id} value={channel.id}>
-                            {channel.name}
-                        </option>
-                    ))}
-                </select>
-                <InputError message={form.errors.channel_id} />
-            </div>
+            {chooseWebsite && (
+                <div className="space-y-2">
+                    <Label htmlFor={`channel-${itemId}`}>Website</Label>
+                    <select
+                        id={`channel-${itemId}`}
+                        required
+                        className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        value={form.data.channel_id}
+                        onChange={(event) =>
+                            form.setData('channel_id', event.target.value)
+                        }
+                    >
+                        {publication.channels.map((channel) => (
+                            <option key={channel.id} value={channel.id}>
+                                {channel.name}
+                            </option>
+                        ))}
+                    </select>
+                    <InputError message={form.errors.channel_id} />
+                </div>
+            )}
+            {automatic && (
+                <div className="flex items-start gap-2 sm:col-span-2 lg:col-span-4">
+                    <Checkbox
+                        id={`hold-${itemId}`}
+                        checked={form.data.hold}
+                        onCheckedChange={(checked) =>
+                            form.setData('hold', checked === true)
+                        }
+                    />
+                    <Label htmlFor={`hold-${itemId}`}>
+                        Hold this article for my review
+                    </Label>
+                    <InputError message={form.errors.hold} />
+                </div>
+            )}
             <div className="sm:col-span-2 lg:col-span-4">
                 <Button type="submit" disabled={form.processing}>
                     {form.processing
@@ -358,9 +371,9 @@ function ScheduleForm({
                           : 'Schedule article'}
                 </Button>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    Automatic articles publish only after quality checks pass.
-                    Review-first articles wait for your approval, even if their
-                    date has arrived.
+                    {automatic
+                        ? 'Articles publish only after their quality checks pass. A held article waits for your approval, even once its date has arrived.'
+                        : 'This project reviews every article first, so this one waits for your approval, even once its date has arrived. You can change that in project settings.'}
                 </p>
                 <InputError message={form.errors.expected_version} />
                 <InputError
@@ -371,7 +384,7 @@ function ScheduleForm({
                                     'expected_version',
                                     'local_date',
                                     'local_time',
-                                    'mode',
+                                    'hold',
                                     'channel_id',
                                 ].includes(key),
                         )

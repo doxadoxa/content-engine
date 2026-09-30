@@ -29,8 +29,9 @@ use Illuminate\Database\Eloquent\Collection;
  *   can go.
  * - {@see publishAutomatically()} — the article's publication schedule, which
  *   decides when an approved article goes out unattended.
- * - {@see publishManually()} — enabled and verified. A person is watching, so
- *   the `autopublish` toggle is not their answer to give twice.
+ * - {@see publishManually()} — enabled and verified. A person pressed the
+ *   button, so whether the project publishes automatically is beside the
+ *   point.
  *
  * Across all three, and before any of them, the schedule's hold: see
  * {@see refusal()}. Three rules about *where* a unit goes are three rules that

@@ -100,7 +100,7 @@ final class OperatorDayTest extends TestCase
     {
         Http::fake(['receiver.test/*' => Http::response(['public_url' => 'https://example.test/x'])]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
 
         $draft = $this->draft();
         $this->scheduleForReview($draft);
@@ -145,7 +145,7 @@ final class OperatorDayTest extends TestCase
     }
 
     #[Test]
-    public function approving_without_autopublish_stops_at_approved(): void
+    public function approving_without_a_schedule_stops_at_approved(): void
     {
         Http::fake();
 
@@ -153,8 +153,8 @@ final class OperatorDayTest extends TestCase
 
         $this->actingAs($this->operator)->post(route('content.approve', $draft));
 
-        // §5.4: auto-publish is a privilege a channel earns, and this one has
-        // not. Approval means "fit to publish", not "publish now".
+        // Approval means "fit to publish", not "publish now": with no date
+        // on the calendar there is no moment for it to go out at.
         $this->assertSame(ContentItemState::Approved, $draft->refresh()->state);
         Http::assertNothingSent();
     }
@@ -167,14 +167,13 @@ final class OperatorDayTest extends TestCase
             'manual.test/*' => Http::response(['public_url' => 'https://example.test/x']),
         ]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
 
         $manual = Channel::factory()->create([
             'type' => ChannelType::Webhook,
             'name' => 'Manual destination',
             'config' => ['endpoint' => 'https://manual.test/hook'],
             'secret' => 'manual-secret',
-            'autopublish' => false,
             'verified_at' => now(),
         ]);
 
@@ -197,13 +196,12 @@ final class OperatorDayTest extends TestCase
             'manual.test/*' => Http::response(['public_url' => 'https://example.test/x']),
         ]);
 
-        $this->channel->forceFill(['autopublish' => true, 'verified_at' => now()])->save();
+        $this->channel->forceFill(['verified_at' => now()])->save();
         $manual = Channel::factory()->create([
             'type' => ChannelType::Webhook,
             'name' => 'Manual destination',
             'config' => ['endpoint' => 'https://manual.test/hook'],
             'secret' => 'manual-secret',
-            'autopublish' => false,
             'verified_at' => now(),
         ]);
 
@@ -642,19 +640,18 @@ final class OperatorDayTest extends TestCase
 
         $this->actingAs($this->operator)
             ->patch(route('channels.update', $this->channel), [
-                'name' => $this->channel->name,
+                'name' => 'Renamed blog',
                 'type' => $this->channel->type->value,
                 'config' => $this->channel->config,
-                'autopublish' => true,
                 'is_enabled' => true,
             ])
             ->assertRedirect();
 
         $this->channel->refresh();
 
-        // Toggling auto-publish should not require re-pasting a token nobody
+        // Renaming a channel should not require re-pasting a token nobody
         // can read back out of the form.
-        $this->assertTrue($this->channel->autopublish);
+        $this->assertSame('Renamed blog', $this->channel->name);
         $this->assertSame('shared-secret', $this->channel->secret);
     }
 
@@ -669,27 +666,10 @@ final class OperatorDayTest extends TestCase
                 'type' => $this->channel->type->value,
                 'config' => ['endpoint' => 'https://changed.test/hook'],
                 'is_enabled' => true,
-                'autopublish' => false,
             ])
             ->assertRedirect();
 
         $this->assertNull($this->channel->refresh()->verified_at);
-    }
-
-    #[Test]
-    public function automatic_delivery_cannot_be_enabled_before_verification(): void
-    {
-        $this->actingAs($this->operator)
-            ->patch(route('channels.autopublish', $this->channel))
-            ->assertStatus(409);
-
-        $this->channel->forceFill(['verified_at' => now()])->save();
-
-        $this->actingAs($this->operator)
-            ->patch(route('channels.autopublish', $this->channel))
-            ->assertRedirect();
-
-        $this->assertTrue($this->channel->refresh()->autopublish);
     }
 
     // ------------------------------------------------------- exit criterion 3
@@ -893,7 +873,7 @@ final class OperatorDayTest extends TestCase
         $at = now($this->project->timezone)->addMinute()->startOfMinute();
         app(ArticleSchedules::class)->save($this->operator, $draft, [
             'expected_version' => null, 'local_date' => $at->toDateString(), 'local_time' => $at->format('H:i'),
-            'mode' => 'review_first', 'channel_id' => $this->channel->id,
+            'hold' => true, 'channel_id' => $this->channel->id,
         ]);
         Http::assertNothingSent();
         $this->travelTo($at->utc());

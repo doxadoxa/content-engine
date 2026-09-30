@@ -22,6 +22,7 @@ use App\Models\ProjectSubscription;
 use App\Models\User;
 use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
@@ -477,9 +478,19 @@ class OnboardingController extends Controller
             default => [],
         };
 
-        if ($changes !== []) {
-            $project->forceFill($changes)->save();
+        if ($changes === []) {
+            return;
         }
+
+        // Setup can be walked through again on a project that already has a
+        // calendar, and the answer applies to the articles already on it.
+        DB::transaction(function () use ($project, $changes): void {
+            $project->forceFill($changes)->save();
+
+            if ($project->wasChanged('autopublish')) {
+                app(ArticleSchedules::class)->followProject($project);
+            }
+        });
     }
 
     /**
@@ -626,7 +637,6 @@ class OnboardingController extends Controller
                     'config' => ['endpoint' => $endpoint],
                     'secret' => (string) ($answers['webhook_secret'] ?? Str::random(48)),
                     'is_enabled' => true,
-                    'autopublish' => $project->autopublish,
                 ],
             );
 

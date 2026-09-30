@@ -56,7 +56,6 @@ type ChannelRow = {
         username: string;
         endpoint: string;
     };
-    autopublish: boolean;
     can_schedule_articles: boolean;
     verified_at: string | null;
     test_pending: boolean;
@@ -230,12 +229,11 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                                             : 'Disabled'}
                                                     </Badge>
                                                     {/* "Enabled" is the connection, not publishing: without
-                                                        this line a channel waiting on the checkbox looked done. */}
+                                                        this line a channel still waiting on its test looked done. */}
                                                     <span className="text-xs text-muted-foreground">
-                                                        {channel.autopublish &&
-                                                        channel.can_schedule_articles
-                                                            ? 'Automatic publishing enabled'
-                                                            : 'Automatic publishing not enabled'}
+                                                        {channel.can_schedule_articles
+                                                            ? 'Ready for articles'
+                                                            : 'Send a test to publish articles here'}
                                                     </span>
                                                     {isOwner &&
                                                         [
@@ -433,35 +431,6 @@ export default function ChannelsIndex({ channels, types }: Props) {
                                                 />{' '}
                                                 Connection enabled
                                             </label>
-                                            <input
-                                                type="hidden"
-                                                name="autopublish"
-                                                value="0"
-                                            />
-                                            <label className="flex items-center gap-2">
-                                                <input
-                                                    type="checkbox"
-                                                    name="autopublish"
-                                                    value="1"
-                                                    defaultChecked={
-                                                        channel.autopublish
-                                                    }
-                                                    disabled={
-                                                        !channel.can_schedule_articles &&
-                                                        !channel.autopublish
-                                                    }
-                                                />
-                                                Publish scheduled articles
-                                                automatically
-                                            </label>
-                                            <p className="text-xs leading-5 text-muted-foreground">
-                                                {channel.can_schedule_articles
-                                                    ? 'Allows Avyo to use this website for newly scheduled articles. Existing unscheduled approvals stay unchanged; review-first articles still wait for approval.'
-                                                    : 'Send a successful article publishing test before enabling this option.'}
-                                            </p>
-                                            <InputError
-                                                message={errors.autopublish}
-                                            />
                                             <InputError
                                                 message={errors.secret}
                                             />
@@ -486,10 +455,10 @@ export default function ChannelsIndex({ channels, types }: Props) {
                 <div className="rounded-[1.25rem] border border-dashed bg-card/45 px-5 py-4 text-xs leading-relaxed text-muted-foreground">
                     <p>
                         Credentials are stored securely. A publishing test
-                        checks that this website can receive articles. Choose
-                        automatic publishing or review first on each article’s
-                        schedule. Existing-page changes remain a separate
-                        reviewed workflow.
+                        checks that this website can receive articles. Whether
+                        articles publish automatically or wait for your review
+                        is set in project settings. Existing-page changes remain
+                        a separate reviewed workflow.
                     </p>
                     {!isOwner && (
                         <p className="mt-2">
@@ -594,11 +563,6 @@ function ChannelMobileCard({
                     </Badge>
                 </div>
 
-                <p className="text-xs text-muted-foreground">
-                    {channel.autopublish && channel.can_schedule_articles
-                        ? 'Automatic publishing enabled'
-                        : 'Automatic publishing not enabled'}
-                </p>
                 <div className="flex flex-wrap items-center gap-2 border-t pt-4">
                     {isOwner &&
                         ['webhook', 'wordpress'].includes(channel.type) &&

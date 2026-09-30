@@ -251,8 +251,6 @@ Route::middleware(['auth'])->group(function (): void {
     // A real signed ping, which is what turns "configured" into "connected".
     Route::post('channels/{channel}/ping', [ChannelController::class, 'ping'])
         ->middleware('project.owner')->name('channels.ping');
-    Route::patch('channels/{channel}/autopublish', [ChannelController::class, 'autopublish'])
-        ->middleware('project.owner')->name('channels.autopublish');
 
     Route::get('deliveries', [DeliveryController::class, 'index'])->name('deliveries.index');
     Route::post('deliveries/{delivery}/replay', [DeliveryController::class, 'replay'])->name('deliveries.replay');

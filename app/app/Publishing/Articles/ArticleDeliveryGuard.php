@@ -56,10 +56,13 @@ final class ArticleDeliveryGuard
         if ($project->status !== ProjectStatus::Active || ! $entitlements->for($project)->mayPublish()) {
             return 'Publishing is paused for this project or its plan.';
         }
-        if (! app(ArticleSchedules::class)->compatible($delivery->channel)
-            || ($schedule->origin === 'engine' && $schedule->mode === 'automatic' && ! $project->autopublish)
-            || ($schedule->mode === 'automatic' && ! $delivery->channel->autopublish)) {
+        if (! app(ArticleSchedules::class)->compatible($delivery->channel)) {
             return 'The scheduled website connection is no longer enabled for this publication.';
+        }
+        // Queued before the owner switched the project to review first: that
+        // answer reaches deliveries already waiting to be sent, too.
+        if ($schedule->mode === 'automatic' && ! $project->autopublish) {
+            return 'Automatic publishing was turned off before this article was sent. Schedule it again to publish it.';
         }
 
         return null;

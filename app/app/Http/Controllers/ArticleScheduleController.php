@@ -14,15 +14,21 @@ final class ArticleScheduleController extends Controller
 {
     public function save(Request $request, ContentItem $item, ArticleSchedules $schedules): RedirectResponse
     {
-        /** @var array{expected_version: int|null, local_date: string, local_time: string, mode: string, channel_id: string} $input */
         $input = $request->validate([
             'expected_version' => ['present', 'nullable', 'integer', 'min:1'],
             'local_date' => ['required', 'date_format:Y-m-d'], 'local_time' => ['required', 'date_format:H:i'],
-            'mode' => ['required', 'in:automatic,review_first'], 'channel_id' => ['required', 'string'],
+            // Optional both: one usable website needs no choosing, and a
+            // review-first project has no hold to offer (see save()).
+            'channel_id' => ['sometimes', 'nullable', 'string'], 'hold' => ['sometimes', 'nullable', 'boolean'],
         ]);
         $actor = $request->user();
         abort_if($actor === null, 403);
-        $schedules->save($actor, $item, $input);
+        $schedules->save($actor, $item, [
+            'expected_version' => $input['expected_version'] === null ? null : (int) $input['expected_version'],
+            'local_date' => (string) $input['local_date'], 'local_time' => (string) $input['local_time'],
+            'channel_id' => isset($input['channel_id']) ? (string) $input['channel_id'] : null,
+            'hold' => isset($input['hold']) ? $request->boolean('hold') : null,
+        ]);
         Inertia::flash('toast', ['type' => 'success', 'message' => 'Publication schedule saved.']);
 
         return back();

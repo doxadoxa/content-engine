@@ -16,7 +16,6 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
-use App\Publishing\Pages\PageReceiverClient;
 use App\Publishing\PublishToChannels;
 use App\Publishing\WebhookPublisher;
 use App\Support\Engine\ArticleWorkflow;
@@ -28,12 +27,37 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
+/**
+ * When an article goes out, where to, and whether a person approves it first.
+ *
+ * Whether it waits for a person is one switch on the project — "Publish
+ * automatically" or "Let me review first" — plus, per article, the owner's
+ * "Hold this article for my review" (`held_for_review`). `mode` is what those
+ * two add up to, stored so the dispatcher, the approval and the review list
+ * read one column: `review_first` when the article is held or the project
+ * reviews first, `automatic` otherwise. {@see followProject()} keeps it true
+ * when the project's answer changes. The hold is kept apart from the mode
+ * because the mode alone cannot say, once a project has gone review-first,
+ * which of its articles the owner had held and which were only following.
+ *
+ * Websites used to carry a switch of their own, and a schedule had to agree
+ * with both. Owners could not tell which of the three was stopping an
+ * article, so a website is now simply usable for articles or not
+ * ({@see compatible()}).
+ */
 final class ArticleSchedules
 {
-    /** Why an automatic schedule on a channel that may not publish by itself is waiting. */
-    public const string AWAITING_AUTOPUBLISH = 'Enable automatic publishing for this website or choose review first.';
+    public const string NO_WEBSITE = 'Connect and test your website so this article can publish.';
+
+    public const string CHOOSE_WEBSITE = 'Choose which website this article should publish to.';
 
     public function __construct(private readonly ChannelPublisherRegistry $publishers, private readonly Entitlements $entitlements) {}
+
+    /** What a schedule's mode is, given the project's answer and the owner's hold. */
+    public static function modeFor(Project $project, bool $held): string
+    {
+        return $project->autopublish && ! $held ? 'automatic' : 'review_first';
+    }
 
     /** Only new work created after a recorded project opt-in can inherit automation. */
     public function scheduleNew(ContentItem $item, CarbonInterface $publishAt, ?Channel $target = null): ?ArticleSchedule
@@ -53,11 +77,8 @@ final class ArticleSchedules
                 return $existing;
             }
             $targets = $this->channels($project);
-            if ($project->autopublish) {
-                $targets = $targets->where('autopublish', true);
-            }
             $target ??= $targets->count() === 1 ? $targets->first() : null;
-            if ($target !== null && ($target->project_id !== $project->id || ! $this->compatible($target) || ($project->autopublish && ! $target->autopublish))) {
+            if ($target !== null && ($target->project_id !== $project->id || ! $this->compatible($target))) {
                 $target = null;
             }
             $local = CarbonImmutable::instance($publishAt)->setTimezone($project->timezone);
@@ -65,14 +86,24 @@ final class ArticleSchedules
             return ArticleSchedule::query()->create([
                 'content_item_id' => $item->id, 'channel_id' => $target?->id,
                 'publish_at' => $local->utc(), 'local_date' => $local->toDateString(), 'local_time' => $local->format('H:i'),
-                'timezone' => $project->timezone, 'mode' => $project->autopublish ? 'automatic' : 'review_first', 'origin' => 'engine',
+                'timezone' => $project->timezone, 'mode' => self::modeFor($project, held: false), 'held_for_review' => false, 'origin' => 'engine',
                 'status' => $target === null ? 'blocked' : 'active', 'version' => 1,
-                'blocked_reason' => $target === null ? ($project->autopublish ? 'Choose a verified website with automatic publishing enabled.' : 'Choose a verified website for this review-first schedule.') : null,
+                'blocked_reason' => $target === null ? ($targets->isEmpty() ? self::NO_WEBSITE : self::CHOOSE_WEBSITE) : null,
             ]);
         });
     }
 
-    /** @param array{expected_version: int|null, local_date: string, local_time: string, mode: string, channel_id: string} $input */
+    /**
+     * The owner's date, time and website for one article, and whether to hold it.
+     *
+     * `channel_id` may be left out when the project has exactly one usable
+     * website — the form does not ask a question with one answer. `hold` left
+     * out keeps whatever the article had: a review-first project does not show
+     * the checkbox, and saving a new date there must not quietly release a
+     * hold the owner set while the project was automatic.
+     *
+     * @param  array{expected_version: int|null, local_date: string, local_time: string, channel_id?: string|null, hold?: bool|null}  $input
+     */
     public function save(User $actor, ContentItem $item, array $input): ArticleSchedule
     {
         abort_unless($actor->projects()->whereKey($item->project_id)->wherePivot('role', 'owner')->exists(), 403);
@@ -81,19 +112,24 @@ final class ArticleSchedules
             $this->version($schedule, $input['expected_version']);
             $this->require($schedule?->status !== 'completed', 'This article was already published.');
             $this->require(! $item->state->isLive(), 'A published article cannot receive a new initial publication schedule.');
-            $channel = Channel::query()->whereKey($input['channel_id'])->firstOrFail();
-            $this->require($channel->project_id === $item->project_id && $this->compatible($channel), 'Choose an enabled website connection with a successful article publishing test.');
-            $this->require(in_array($input['mode'], ['automatic', 'review_first'], true), 'Choose automatic or review first.');
-            $at = $this->localTime($input['local_date'], $input['local_time'], $item->project->timezone);
+            $project = $item->project;
+            $usable = $this->channels($project);
+            $channel = ($input['channel_id'] ?? null) === null
+                ? ($usable->count() === 1 ? $usable->first() : null)
+                : Channel::query()->whereKey($input['channel_id'])->first();
+            $this->require($channel !== null && $channel->project_id === $item->project_id && $this->compatible($channel), 'Choose an enabled website connection with a successful article publishing test.');
+            assert($channel instanceof Channel);
+            $at = $this->localTime($input['local_date'], $input['local_time'], $project->timezone);
             $this->require($at->isFuture(), 'Choose a future publication time.');
+            $held = $input['hold'] ?? $schedule->held_for_review ?? false;
             $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
             $this->withdrawQueued($schedule);
             $schedule->fill([
                 'channel_id' => $channel->id, 'publish_at' => $at, 'local_date' => $input['local_date'],
-                'local_time' => $input['local_time'], 'timezone' => $item->project->timezone,
-                'mode' => $input['mode'], 'status' => $input['mode'] === 'automatic' && ! $channel->autopublish ? 'blocked' : 'active',
+                'local_time' => $input['local_time'], 'timezone' => $project->timezone,
+                'mode' => self::modeFor($project, $held), 'held_for_review' => $held, 'status' => 'active',
                 'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
-                'blocked_reason' => $input['mode'] === 'automatic' && ! $channel->autopublish ? self::AWAITING_AUTOPUBLISH : null, 'delivery_id' => null,
+                'blocked_reason' => null, 'delivery_id' => null,
             ])->save();
 
             return $schedule;
@@ -123,54 +159,48 @@ final class ArticleSchedules
     }
 
     /**
-     * Bring a channel's waiting automatic schedules in line with its switch.
+     * Bring the project's waiting articles in line with its answer.
      *
-     * A schedule saved while the switch was off is stored as blocked, with
-     * the reason written on it, and nothing looked at it again when the
-     * switch went on: the article kept saying "enable automatic publishing"
-     * next to a channel where it was enabled, until its date arrived and
-     * `dispatch()` finally re-checked. The other direction is the same lie
-     * the other way round — "Scheduled" for an article that will block.
+     * Call it in the transaction that changed `projects.autopublish`. Before
+     * this, a schedule kept the mode it was made with: an owner who switched
+     * to "Let me review first" and then approved an article by hand still saw
+     * it blocked as "Automatic publishing is turned off", because the schedule
+     * went on asking to publish automatically.
      *
-     * Only schedules nothing has been sent for, and only the block this
-     * switch is responsible for: any other reason is still true.
+     * Only schedules nothing has been sent for, and never a held one — the
+     * owner asked for that article to wait whatever the project does. A block
+     * is lifted along with the change, whatever it said: every reason the
+     * mode decides is now out of date, and one that is still true is written
+     * again by {@see dispatch()} the next time the article is due. A schedule
+     * with no website stays blocked, since that is still the whole story.
      */
-    public function followChannelAutopublish(Channel $channel): void
+    public function followProject(Project $project): void
     {
-        $waiting = ArticleSchedule::query()->where('channel_id', $channel->getKey())
-            ->where('mode', 'automatic')->whereNull('delivery_id');
+        $mode = self::modeFor($project, held: false);
+        $drifted = fn () => ArticleSchedule::acrossProjects()->where('project_id', $project->getKey())
+            ->where('held_for_review', false)->where('mode', '!=', $mode)
+            ->whereNull('delivery_id')->whereNotIn('status', ['completed', 'dispatching']);
 
-        $bump = ['version' => DB::raw('version + 1'), 'updated_at' => now()];
-
-        if ($channel->autopublish) {
-            $waiting->where('status', 'blocked')->where('blocked_reason', self::AWAITING_AUTOPUBLISH)
-                ->update(['status' => 'active', 'blocked_reason' => null, ...$bump]);
-
-            return;
-        }
-
-        $waiting->where('status', 'active')
-            ->update(['status' => 'blocked', 'blocked_reason' => self::AWAITING_AUTOPUBLISH, ...$bump]);
+        $drifted()->where('status', 'blocked')->whereNotNull('channel_id')
+            ->update(['status' => 'active', 'blocked_reason' => null]);
+        $drifted()->update(['mode' => $mode, 'version' => DB::raw('version + 1'), 'updated_at' => now()]);
     }
 
-    /** Attach a newly verified default only to already-authorized inherited schedules. */
+    /** Give engine schedules with nowhere to go the project's one usable website, once there is one. */
     public function resolveTargets(Project $project): void
     {
         DB::transaction(function () use ($project): void {
             $fresh = Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
             $channels = $this->channels($fresh);
-            foreach (['automatic', 'review_first'] as $mode) {
-                $eligible = $mode === 'automatic' ? $channels->where('autopublish', true) : $channels;
-                if ($eligible->count() !== 1) {
-                    continue;
-                }
-                $target = $eligible->first();
-                assert($target instanceof Channel);
-                ArticleSchedule::query()->where('origin', 'engine')->where('mode', $mode)
-                    ->whereNull('channel_id')->whereIn('status', ['active', 'blocked'])->whereNull('delivery_id')
-                    ->update(['channel_id' => $target->id, 'status' => 'active', 'blocked_reason' => null,
-                        'version' => DB::raw('version + 1'), 'updated_at' => now()]);
+            if ($channels->count() !== 1) {
+                return;
             }
+            $target = $channels->first();
+            assert($target instanceof Channel);
+            ArticleSchedule::query()->where('origin', 'engine')
+                ->whereNull('channel_id')->whereIn('status', ['active', 'blocked'])->whereNull('delivery_id')
+                ->update(['channel_id' => $target->id, 'status' => 'active', 'blocked_reason' => null,
+                    'version' => DB::raw('version + 1'), 'updated_at' => now()]);
         });
     }
 
@@ -199,15 +229,15 @@ final class ArticleSchedules
                 $reason = 'This automatic publication date was missed. Choose a new date to keep articles spaced out.';
             } elseif ($project->status !== ProjectStatus::Active || ! $this->entitlements->for($project)->mayPublish()) {
                 $reason = 'Publishing is paused for this project or its plan.';
-            } elseif ($schedule->origin === 'engine' && $schedule->mode === 'automatic' && ! $project->autopublish) {
-                $reason = 'Automatic publishing is turned off for this project.';
             }
             $channel = $schedule->channel_id === null ? null : Channel::query()->find($schedule->channel_id);
-            if ($reason === null && ($channel === null || ! $this->compatible($channel)
-                || ($schedule->mode === 'automatic' && ! $channel->autopublish))) {
+            if ($reason === null && ($channel === null || ! $this->compatible($channel))) {
                 $reason = 'Choose a verified, enabled website connection for this schedule.';
             }
-            if ($reason === null && $item->state === ContentItemState::Draft && $schedule->mode === 'automatic') {
+            // Asked of the project as well as the schedule, so a schedule that
+            // somehow missed followProject() waits for a person rather than
+            // blocking an article a person has already approved.
+            if ($reason === null && $item->state === ContentItemState::Draft && $schedule->mode === 'automatic' && $project->autopublish) {
                 try {
                     app(ArticleApproval::class)->approve($item, automatic: true);
                 } catch (ValidationException $exception) {
@@ -239,65 +269,13 @@ final class ArticleSchedules
         });
     }
 
+    /** Whether articles can go to this website: switched on, proven by a test, and reachable. */
     public function compatible(Channel $channel): bool
     {
         return $channel->is_enabled && $channel->verified_at !== null
             && $this->publishers->publishes($channel->type) && $channel->hasSecret()
             && ($channel->type !== ChannelType::Webhook || trim((string) ($channel->config['endpoint'] ?? '')) !== '')
             && ($channel->type !== ChannelType::WordPress || ($channel->config['article_publishing_verified'] ?? false) === true);
-    }
-
-    /**
-     * Automatic publishing for a channel whose test has just made it usable
-     * for articles, when the project already chose automatic publishing and
-     * this is now the one place its articles can go.
-     *
-     * The channel form cannot offer the switch before a test has passed, and
-     * nothing offered it after — so an owner who had already said "publish
-     * automatically" was told publishing needed setting up, by a checkbox
-     * they had to find. Not for a second eligible channel (which one gets
-     * the articles is a real choice), not for a review-first project, only
-     * on the test that first makes the channel usable, and never for a
-     * channel whose owner has switched it off — not even after a connection
-     * change has reset it.
-     *
-     * `$tested` is the channel as the ping was sent. The row is read again,
-     * locked, and must still hold that same connection: an owner who edited
-     * or disabled it while the test was in flight has an untested channel,
-     * and a pass for the old one says nothing about it.
-     *
-     * One transaction, so the lock lasts from the read to the write. The
-     * delivery job runs outside one, and a lock taken in autocommit is gone
-     * the moment its SELECT returns — an owner switching the channel off in
-     * between would be overwritten, and the schedules they had just blocked
-     * released. The owner's side takes the same lock (ChannelController).
-     */
-    public function adoptProjectAutopublish(Channel $tested): void
-    {
-        DB::transaction(function () use ($tested): void {
-            $channel = Channel::query()->whereKey($tested->getKey())->lockForUpdate()->first();
-
-            if ($channel === null || ! $this->sameConnection($tested, $channel)) {
-                return;
-            }
-
-            $channel->loadMissing('project');
-            $project = $channel->project;
-
-            if ($channel->autopublish || $channel->autopublish_declined_at !== null || ! $project->autopublish
-                || ! $this->publishers->canAutopublish($channel->type) || ! $this->compatible($channel)) {
-                return;
-            }
-
-            $eligible = $project->channels()->get()->filter(fn (Channel $candidate): bool => $this->compatible($candidate));
-
-            if ($eligible->count() !== 1) {
-                return;
-            }
-
-            $channel->forceFill(['autopublish' => true])->save();
-            $this->followChannelAutopublish($channel);
-        });
     }
 
     /** @return Collection<int, Channel> */
@@ -329,15 +307,15 @@ final class ArticleSchedules
 
         return [
             'status' => $status, 'timezone' => $item->project->timezone,
-            'default_mode' => $item->project->autopublish ? 'automatic' : 'review_first',
+            'default_mode' => self::modeFor($item->project, held: false),
             'schedule' => $schedule === null ? null : [
-                'id' => $schedule->id, 'version' => $schedule->version, 'mode' => $schedule->mode, 'status' => $schedule->status, 'delivery_id' => $schedule->delivery_id,
+                'id' => $schedule->id, 'version' => $schedule->version, 'mode' => $schedule->mode, 'held' => $schedule->held_for_review, 'status' => $schedule->status, 'delivery_id' => $schedule->delivery_id,
                 'publish_at' => $schedule->publish_at->toIso8601String(), 'local_date' => $schedule->publish_at->setTimezone($item->project->timezone)->toDateString(),
                 'local_time' => $schedule->publish_at->setTimezone($item->project->timezone)->format('H:i'), 'timezone' => $item->project->timezone, 'channel_id' => $schedule->channel_id,
                 'blocked_reason' => $schedule->blocked_reason ?? ($status === 'blocked' ? $schedule->delivery?->error : null),
             ],
             'channels' => $this->channels($item->project)->map(fn (Channel $channel): array => [
-                'id' => $channel->id, 'name' => $channel->name, 'type' => $channel->type->value, 'autopublish' => $channel->autopublish,
+                'id' => $channel->id, 'name' => $channel->name, 'type' => $channel->type->value,
             ])->all(),
             'can_schedule' => ! $item->state->isLive() && $schedule?->status !== 'completed'
                 && ($schedule?->delivery === null || ($schedule->delivery->attempts === 0 && $schedule->delivery->article_attempt_started_at === null)),
@@ -362,20 +340,6 @@ final class ArticleSchedules
         $this->require(count($matches) === 1, 'This local time is skipped or occurs twice when the clocks change. Choose another time.');
 
         return $matches[0];
-    }
-
-    /** Where the ping went and with what: type, enablement, secret and the destination keys. */
-    private function sameConnection(Channel $tested, Channel $current): bool
-    {
-        $destination = static fn (Channel $channel): array => array_intersect_key(
-            $channel->config,
-            array_flip(['endpoint', 'page_receiver_base', 'username']),
-        );
-
-        return $tested->type === $current->type
-            && $current->is_enabled
-            && $tested->getRawOriginal('secret') === $current->getRawOriginal('secret')
-            && PageReceiverClient::same($destination($tested), $destination($current));
     }
 
     /**

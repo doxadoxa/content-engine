@@ -28,9 +28,9 @@ use Illuminate\Support\Carbon;
  * @property string|null $secret
  * @property string|null $token_hash
  * @property bool $is_enabled
- * @property bool $autopublish
+ * @property bool $autopublish Read by nothing: automatic publishing is the project's switch now.
  * @property Carbon|null $verified_at
- * @property Carbon|null $autopublish_declined_at
+ * @property Carbon|null $autopublish_declined_at Read by nothing, like `autopublish`.
  */
 class Channel extends Model
 {

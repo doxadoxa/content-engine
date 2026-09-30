@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $local_time
  * @property string $timezone
  * @property string $mode
+ * @property bool $held_for_review
  * @property string $status
  * @property string $origin
  * @property int|null $requested_by
@@ -50,6 +51,6 @@ class ArticleSchedule extends Model
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['publish_at' => 'immutable_datetime', 'version' => 'integer'];
+        return ['publish_at' => 'immutable_datetime', 'version' => 'integer', 'held_for_review' => 'boolean'];
     }
 }

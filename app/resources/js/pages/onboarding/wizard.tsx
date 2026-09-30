@@ -978,7 +978,7 @@ function Steps({
                                 <Field
                                     id="publishing-mode"
                                     label="Once an article is written"
-                                    hint="You can change this at any time, and pause any single article."
+                                    hint="You can change this at any time, and hold any single article for your review."
                                 >
                                     <Select
                                         value={

@@ -6,7 +6,6 @@ namespace App\Http\Requests;
 
 use App\Enums\ChannelType;
 use App\Models\Channel;
-use App\Publishing\Articles\ArticleSchedules;
 use App\Rules\PublicHttpUrl;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Http\FormRequest;
@@ -61,7 +60,6 @@ class ChannelRequest extends FormRequest
                 'max:500',
             ],
             'is_enabled' => ['boolean'],
-            'autopublish' => ['boolean'],
         ];
     }
 
@@ -70,15 +68,6 @@ class ChannelRequest extends FormRequest
     {
         return [function (Validator $validator): void {
             $channel = $this->route('channel');
-
-            if ($this->boolean('autopublish')
-                && (! $channel instanceof Channel || ! app(ArticleSchedules::class)->compatible($channel))) {
-                $validator->errors()->add(
-                    'autopublish',
-                    'Send a successful test before enabling automatic publishing.',
-                );
-            }
-
             $type = ChannelType::tryFrom((string) $this->input('type'));
             $secret = $this->input('secret');
 

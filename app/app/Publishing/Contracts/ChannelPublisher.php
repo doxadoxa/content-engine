@@ -47,8 +47,8 @@ use Carbon\CarbonInterface;
  *   is the question `ChannelController::ping()` used to ask as
  *   `$channel->type === ChannelType::Webhook`. "Can this channel be tested" is
  *   a property of its transport, not of its type spelling.
- * - {@see canAutopublish()} is the same replacement for the type check on
- *   `ChannelController::autopublish()`. A transport that cannot be left
+ * - {@see canAutopublish()} is asked before an article is approved with
+ *   nobody watching (`ArticleApproval`). A transport that cannot be left
  *   unattended says so once, here, instead of in every caller.
  *
  * What is *not* here is the whole point. No HMAC, no endpoint URL, no

@@ -14,7 +14,6 @@ use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Pages\RegisterPublishedArticle;
 use App\Publishing\Articles\ArticleDeliveryGuard;
-use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\Concerns\RecordsDeliveryOutcome;
 use App\Publishing\Contracts\ChannelPublisher;
 use App\Publishing\Jobs\DeliverWebhookJob;
@@ -303,22 +302,10 @@ class WebhookPublisher implements ChannelPublisher
      */
     protected function succeed(WebhookDelivery $delivery, int $attempt, int $latency, int $status, ?array $body): WebhookDelivery
     {
-        $ping = ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value;
-        $schedules = app(ArticleSchedules::class);
-
-        // Asked before the ping marks anything, so only the test that first
-        // makes the channel usable for articles can switch on automatic
-        // publishing — a re-test is not a second chance to overrule an owner.
-        $usableBefore = $ping && $schedules->compatible($delivery->channel);
-
         $this->settleDelivered($delivery, $attempt, $latency, $status);
 
-        if ($ping) {
+        if (($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value) {
             $this->confirmConnection($delivery);
-
-            if (! $usableBefore) {
-                $schedules->adoptProjectAutopublish($delivery->channel);
-            }
         }
 
         $this->recordPublicUrl($delivery, $body);

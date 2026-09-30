@@ -15,6 +15,7 @@ use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
 use App\Pipelines\Steps\Planning\PlanningWindow;
+use App\Publishing\ChannelPublisherRegistry;
 use App\Support\Engine\ArticleWorkflow;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -34,12 +35,13 @@ final class ArticleApproval
                 $schedule = ArticleSchedule::query()->where('content_item_id', $draft->id)->first();
                 $this->require($schedule !== null && $schedule->mode === 'automatic'
                     && in_array($schedule->status, ['active', 'blocked'], true)
-                    && ($schedule->origin === 'manager' || $project->autopublish), 'This article has no active automatic schedule.');
+                    && $project->autopublish, 'This article has no active automatic schedule.');
                 $this->require($schedule !== null && ! app(ArticleSchedules::class)->missedAutomaticDate($schedule, $project), 'This automatic publication date was missed. Choose a new date before approval.');
                 $this->require(! $project->is_ymyl, 'This topic needs a person to review and approve the article.');
                 $this->require(($draft->factcheck['passed'] ?? false) === true, 'The fact check has not passed. Review the article before publishing.');
                 $channel = $schedule?->channel_id === null ? null : Channel::query()->find($schedule->channel_id);
-                $this->require($channel !== null && $channel->autopublish && app(ArticleSchedules::class)->compatible($channel), 'Choose a verified website with automatic publishing enabled before automatic approval.');
+                $this->require($channel !== null && app(ArticleSchedules::class)->compatible($channel)
+                    && app(ChannelPublisherRegistry::class)->canAutopublish($channel->type), 'Connect and test your website before articles publish automatically.');
             }
             $this->require(in_array($draft->state, [ContentItemState::Draft, ContentItemState::Approved], true), 'Only a finished draft can be approved.');
             $factsRefusal = app(ArticleBusinessFacts::class)->refusal($draft);

@@ -132,7 +132,7 @@ class ChannelPublisherRegistry
         return $this->publishes($type) && $this->for($type)->canPing();
     }
 
-    /** The same question for the automatic-publishing toggle. */
+    /** The same question for publishing with nobody watching. */
     public function canAutopublish(ChannelType $type): bool
     {
         return $this->publishes($type) && $this->for($type)->canAutopublish();

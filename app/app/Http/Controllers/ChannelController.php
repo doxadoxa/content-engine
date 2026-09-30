@@ -15,7 +15,6 @@ use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\Pages\PageReceiverClient;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -56,7 +55,6 @@ class ChannelController extends Controller
                 // the attribute too; this is the deliberate, redacted answer.
                 'has_secret' => $channel->hasSecret(),
                 'native_config' => ['page_receiver_base' => $channel->config['page_receiver_base'] ?? '', 'username' => $channel->config['username'] ?? '', 'endpoint' => $channel->config['endpoint'] ?? ''],
-                'autopublish' => $channel->autopublish,
                 'can_schedule_articles' => app(ArticleSchedules::class)->compatible($channel),
                 'verified_at' => $channel->verified_at?->toIso8601String(),
                 'test_pending' => (bool) $channel->getAttribute('test_pending'),
@@ -107,14 +105,7 @@ class ChannelController extends Controller
 
     public function update(ChannelRequest $request, Channel $channel): RedirectResponse
     {
-        // Read again under the lock a passing test takes before it switches
-        // automatic publishing on (ArticleSchedules::adoptProjectAutopublish),
-        // so the two decide one after the other and on the same row — not on
-        // the copy route binding loaded before either started.
-        $channel = DB::transaction(fn (): Channel => $this->applyUpdate(
-            $request,
-            Channel::query()->whereKey($channel->getKey())->lockForUpdate()->firstOrFail(),
-        ));
+        $channel = $this->applyUpdate($request, $channel);
 
         Inertia::flash('toast', ['type' => 'success', 'message' => "{$channel->name} updated."]);
 
@@ -151,38 +142,11 @@ class ChannelController extends Controller
         return back();
     }
 
-    public function autopublish(Channel $channel, ChannelPublisherRegistry $publishers): RedirectResponse
-    {
-        abort_unless($publishers->canAutopublish($channel->type), 409, 'This kind of channel cannot publish automatically.');
-
-        // Under the same lock as a passing test's switch (see update()).
-        $enable = DB::transaction(function () use ($channel): bool {
-            $channel = Channel::query()->whereKey($channel->getKey())->lockForUpdate()->firstOrFail();
-            $enable = ! $channel->autopublish;
-
-            abort_if($enable && ! app(ArticleSchedules::class)->compatible($channel), 409, 'Test this channel successfully before enabling automatic publishing.');
-
-            $channel->forceFill(['autopublish' => $enable, 'autopublish_declined_at' => $enable ? null : now()])->save();
-            app(ArticleSchedules::class)->followChannelAutopublish($channel);
-
-            return $enable;
-        });
-
-        Inertia::flash('toast', [
-            'type' => 'success',
-            'message' => $enable
-                ? "{$channel->name} will accept explicitly scheduled automatic articles."
-                : "{$channel->name} now waits for an explicit publish action.",
-        ]);
-
-        return back();
-    }
-
     private function applyUpdate(ChannelRequest $request, Channel $channel): Channel
     {
         // A blank secret means "leave it alone", not "clear it". An operator
-        // toggling auto-publish should not have to re-paste a token they
-        // cannot read back out of the form.
+        // renaming a channel should not have to re-paste a token they cannot
+        // read back out of the form.
         $changes = $request->safe()->all();
 
         if (($changes['secret'] ?? null) === null) {
@@ -194,16 +158,8 @@ class ChannelController extends Controller
                 && ! PageReceiverClient::same(array_intersect_key($changes['config'], array_flip(['endpoint', 'page_receiver_base', 'username'])), array_intersect_key($channel->config, array_flip(['endpoint', 'page_receiver_base', 'username']))))
             || array_key_exists('secret', $changes);
 
-        // The owner's answer, kept apart from the flag: a connection change
-        // below resets `autopublish` without anyone having said no, and a
-        // passing test may switch it back on only if nobody has.
-        if (array_key_exists('autopublish', $changes) && (bool) $changes['autopublish'] !== $channel->autopublish) {
-            $changes['autopublish_declined_at'] = $changes['autopublish'] ? null : now();
-        }
-
         if ($connectionChanged) {
             $changes['verified_at'] = null;
-            $changes['autopublish'] = false;
             $changes['config'] = array_merge($changes['config'] ?? $channel->config, ['article_publishing_verified' => false]);
         }
 
@@ -211,12 +167,7 @@ class ChannelController extends Controller
             $changes['config']['article_publishing_verified'] = ($channel->config['article_publishing_verified'] ?? false) === true;
         }
 
-        $wasAutomatic = $channel->autopublish;
         $channel->update($changes);
-
-        if ($channel->autopublish !== $wasAutomatic) {
-            app(ArticleSchedules::class)->followChannelAutopublish($channel);
-        }
 
         return $channel;
     }
