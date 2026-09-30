@@ -12,6 +12,8 @@ use Laravel\Fortify\Contracts\UpdatesUserProfileInformation;
 
 class UpdateUserProfileInformation implements UpdatesUserProfileInformation
 {
+    use EmailValidationRules;
+
     /**
      * Validate and update the given user's profile information.
      *
@@ -47,14 +49,15 @@ class UpdateUserProfileInformation implements UpdatesUserProfileInformation
         Validator::make([...$input, 'email' => $email], [
             'name' => ['required', 'string', 'max:255'],
 
+            // The same check as signing up: a changed address is unverified
+            // again, and a typo here strands the account the same way. Only
+            // for a change, though — the form resubmits the current address
+            // with every name edit, and no mail goes to that one.
             'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
+                ...$this->emailRules(checkDomain: $email !== $user->email),
                 Rule::unique('users')->ignore($user->id),
             ],
-        ])->validateWithBag('updateProfileInformation');
+        ], $this->emailMessages())->validateWithBag('updateProfileInformation');
 
         $input['email'] = $email;
 

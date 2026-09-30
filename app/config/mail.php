@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Support\PlatformEnv;
+
 return [
 
     /*
@@ -114,7 +116,10 @@ return [
 
     'from' => [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
-        'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
+        // Through `PlatformEnv` because `.env.example` writes this as
+        // `"${APP_NAME}"`, which only a `.env` file expands. Copied into a
+        // platform's environment verbatim, it named the sender `${APP_NAME}`.
+        'name' => PlatformEnv::get('MAIL_FROM_NAME', PlatformEnv::get('APP_NAME', 'Laravel')),
     ],
 
     /*
@@ -134,7 +139,7 @@ return [
 
     'reply_to' => [
         'address' => env('MAIL_REPLY_TO_ADDRESS'),
-        'name' => env('MAIL_REPLY_TO_NAME', env('APP_NAME', 'Laravel')),
+        'name' => PlatformEnv::get('MAIL_REPLY_TO_NAME', PlatformEnv::get('APP_NAME', 'Laravel')),
     ],
 
 ];

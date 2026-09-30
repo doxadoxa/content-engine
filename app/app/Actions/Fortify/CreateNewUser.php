@@ -26,6 +26,7 @@ use Laravel\Fortify\Contracts\CreatesNewUsers;
  */
 class CreateNewUser implements CreatesNewUsers
 {
+    use EmailValidationRules;
     use PasswordValidationRules;
 
     /**
@@ -51,9 +52,10 @@ class CreateNewUser implements CreatesNewUsers
 
         Validator::make([...$input, 'email' => $email], [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'email' => [...$this->emailRules(), 'unique:users,email'],
             'password' => $this->passwordRules(),
         ], [
+            ...$this->emailMessages(),
             'email.unique' => 'An account already exists for that address.',
         ])->validate();
 

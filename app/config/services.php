@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Support\PlatformEnv;
+
 return [
 
     /*
@@ -40,8 +42,9 @@ return [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
         // Must match a redirect URI registered on the OAuth client exactly,
-        // including scheme and port. Google compares it as a string.
-        'redirect' => env('GOOGLE_REDIRECT_URI', env('APP_URL').'/integrations/google/callback'),
+        // including scheme and port. Google compares it as a string. Through
+        // `PlatformEnv` because the example writes it as `${APP_URL}/...`.
+        'redirect' => PlatformEnv::get('GOOGLE_REDIRECT_URI', env('APP_URL').'/integrations/google/callback'),
         /*
          * Where Google returns people who signed *in* with it, which is a
          * different flow and therefore a different registered redirect URI —

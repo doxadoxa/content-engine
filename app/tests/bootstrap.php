@@ -49,6 +49,11 @@ $overrides = [
     // down. The tests that do care set the config themselves and fake the HTTP.
     'RENDERER_URL' => '',
 
+    // Off, because the suite signs up with reserved `.test` addresses the
+    // domain check refuses without asking DNS, and because a lookup is a
+    // network call. The tests for the check turn it back on.
+    'AUTH_CHECK_EMAIL_DOMAINS' => 'false',
+
     'MAIL_MAILER' => 'array',
     'QUEUE_CONNECTION' => 'sync',
     'SESSION_DRIVER' => 'array',
