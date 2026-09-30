@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\DeliveryStatus;
 use App\Enums\WebhookEvent;
+use App\Models\ArticleSchedule;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\PublicationStatus;
 use App\Publishing\ChannelPublisherRegistry;
@@ -52,7 +53,12 @@ class DeliveryController extends Controller
         $deliveries = $query->paginate(50)->withQueryString();
 
         $timezone = app(CurrentProject::class)->get()->timezone ?? 'UTC';
-        $deliveries->through(function (WebhookDelivery $delivery) use ($timezone): array {
+        // The schedules pointing at a row on this page, in one query: a row
+        // handed back for the owner's approval is not one to try again.
+        $schedules = ArticleSchedule::query()
+            ->whereIn('delivery_id', collect($deliveries->items())->map(fn (WebhookDelivery $delivery): string => $delivery->getKey())->all())
+            ->get()->keyBy('delivery_id');
+        $deliveries->through(function (WebhookDelivery $delivery) use ($timezone, $schedules): array {
             $attempt = PublicationStatus::attempt($delivery, $timezone);
 
             return [
@@ -76,7 +82,7 @@ class DeliveryController extends Controller
                 'content' => $delivery->contentItem?->title,
                 'content_id' => $delivery->content_item_id,
                 // Not on one that was taken back: a replay would only be refused.
-                'can_replay' => PublicationStatus::canTryAgain($delivery),
+                'can_replay' => PublicationStatus::canTryAgain($delivery, $schedules->get($delivery->getKey())),
                 // A row nothing is going to attempt. `pending` reads as healthy
                 // — it is what every delivery looks like for its first second —
                 // so without this the one failure with no automatic way out is

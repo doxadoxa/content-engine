@@ -12,6 +12,8 @@ use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\RejectionReason;
 use App\Enums\WebhookEvent;
+use App\Http\Controllers\DeliveryController;
+use App\Models\ArticleSchedule;
 use App\Models\AssistantThread;
 use App\Models\Channel;
 use App\Models\ContentItem;
@@ -21,7 +23,9 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\Articles\BlockedCode;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\DeliveryExplanation;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Publishing\WebhookPublisher;
 use App\Support\Content\InvalidStateTransition;
@@ -729,6 +733,37 @@ final class OperatorDayTest extends TestCase
             ->assertForbidden();
 
         $this->assertSame(1, WebhookDelivery::query()->count());
+    }
+
+    #[Test]
+    public function try_again_refusals_are_said_in_the_owners_words(): void
+    {
+        $plain = new \ReflectionMethod(DeliveryController::class, 'plain');
+
+        $this->assertSame(DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING, $plain->invoke(null, DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING));
+        $this->assertSame('Approve it first. Avyo sends it again once you do.', $plain->invoke(null, ArticleSchedules::NEEDS_APPROVAL));
+        $this->assertSame("Avyo couldn't send it again.", $plain->invoke(null, 'Something nobody has named.'));
+    }
+
+    #[Test]
+    public function a_row_handed_back_for_approval_offers_no_try_again_in_the_history(): void
+    {
+        $unit = $this->draft();
+        $dead = WebhookDelivery::factory()->create([
+            'channel_id' => $this->channel->getKey(), 'content_item_id' => $unit->getKey(), 'attempts' => 1,
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'error' => ArticleSchedules::NEEDS_APPROVAL,
+            'delivered_at' => null, 'payload_snapshot' => ['event' => 'content.published'],
+        ]);
+        ArticleSchedule::query()->create(['content_item_id' => $unit->getKey(), 'channel_id' => $this->channel->getKey(),
+            'publish_at' => now()->subHour(), 'local_date' => now()->toDateString(), 'local_time' => '09:00', 'timezone' => 'UTC',
+            'mode' => 'review_first', 'held_for_review' => false, 'origin' => 'manager', 'status' => 'blocked', 'version' => 1,
+            'blocked_code' => BlockedCode::NEEDS_APPROVAL, 'blocked_reason' => ArticleSchedules::NEEDS_APPROVAL, 'delivery_id' => $dead->getKey()]);
+
+        $this->actingAs($this->operator)->get(route('deliveries.index'))->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('deliveries.data.0.id', $dead->getKey())
+                ->where('deliveries.data.0.can_replay', false)
+                ->where('deliveries.data.0.explanation', 'Approve it first. Avyo sends it again once you do.'));
     }
 
     #[Test]

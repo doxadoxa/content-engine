@@ -9,6 +9,7 @@ use App\Enums\ChannelType;
 use App\Enums\ContentItemState;
 use App\Enums\DeliveryStatus;
 use App\Enums\ProjectStatus;
+use App\Enums\WebhookEvent;
 use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
@@ -138,14 +139,18 @@ final class ArticleSchedules
             $at = $this->localTime($input['local_date'], $input['local_time'], $project->timezone);
             $this->require($at->isFuture(), 'Choose a future publication time.');
             $held = $input['hold'] ?? $schedule->held_for_review ?? false;
+            $newlyHeld = $held && ! ($schedule->held_for_review ?? false) && $project->autopublish;
             $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
             $this->withdrawQueued($schedule);
             $mode = self::modeFor($project, $held);
-            // Held, or on a project that reviews everything: whoever approved
-            // it, the owner asked to read it before it goes. Nothing has been
-            // sent (withdrawQueued() just made sure), and the allowance record
-            // stays, so approving it again is not charged.
-            if ($mode === 'review_first') {
+            // A schedule that waits for review takes back Avyo's own approval,
+            // always. A person's only when the owner has just ticked "Hold"
+            // on an automatic project: that is asking to read it again. On a
+            // review-first project a person's approval is exactly what the
+            // schedule is waiting for, and picking its date must keep it.
+            // Nothing has been sent (withdrawQueued() just made sure), and the
+            // allowance record stays, so approving it again is not charged.
+            if ($mode === 'review_first' && ($schedule->approved_by_avyo || $newlyHeld)) {
                 $this->returnToReview($schedule, $item, whoever: true);
             }
             $schedule->fill([
@@ -170,12 +175,25 @@ final class ArticleSchedules
             if ($action === 'resume') {
                 $this->require($schedule->publish_at->isFuture(), 'The original time has passed. Choose a new publication time.');
             }
-            $this->withdrawQueued($schedule);
+            // Handed back after an attempt: nothing is on its way (the
+            // delivery is already a dead letter) and the article already waits
+            // for the owner, so pausing it — which is what sending it back
+            // asks — has nothing to add. Paused, it would wait on a resume its
+            // past date refuses. For any other change the delivery stays
+            // linked, so a later approval settles it under the same id.
+            $handedBack = self::awaitingOwnerAfterAttempt($schedule);
+            if ($handedBack && $action === 'pause') {
+                return $schedule;
+            }
+            if (! $handedBack) {
+                $this->withdrawQueued($schedule);
+            }
             $schedule->forceFill([
                 'status' => match ($action) {
                     'pause' => 'paused', 'cancel' => 'canceled', default => 'active'
                 },
-                'version' => $schedule->version + 1, 'blocked_reason' => null, 'blocked_code' => null, 'delivery_id' => null,
+                'version' => $schedule->version + 1, 'blocked_reason' => null, 'blocked_code' => null,
+                'delivery_id' => $handedBack ? $schedule->delivery_id : null,
             ])->save();
 
             return $schedule;
@@ -331,10 +349,14 @@ final class ArticleSchedules
                 return [];
             }
             assert($channel instanceof Channel);
-            if ($schedule->delivery_id !== null && ($resent = $this->resendAfterApproval($schedule)) !== null) {
-                return $resent;
+            $event = null;
+            if ($schedule->delivery_id !== null) {
+                [$resent, $event] = $this->resendAfterApproval($schedule, $item);
+                if ($resent !== null) {
+                    return $resent;
+                }
             }
-            $delivery = app(PublishToChannels::class)->publishToSelected($item, $channel);
+            $delivery = app(PublishToChannels::class)->publishToSelected($item, $channel, $event);
             if ($delivery === null || $delivery->status === DeliveryStatus::DeadLetter) {
                 $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => self::PREVIOUS_FAILED, 'blocked_code' => BlockedCode::PREVIOUS_DELIVERY])->save();
 
@@ -623,42 +645,52 @@ final class ArticleSchedules
 
     /**
      * Send again the delivery a schedule was waiting on, now that a person
-     * has approved the article ({@see awaitOwner()}), or null when there is
-     * nothing to resend and a new delivery should be made.
+     * has approved the article ({@see awaitOwner()}).
      *
      * An attempt that may have reached the website goes again under the same
-     * delivery id, so the receiver can recognise a repeat. One that never left
-     * gives up its identity, and {@see dispatch()} makes a fresh one from the
-     * article as it is now.
+     * delivery id, so the receiver can recognise a repeat — as long as it
+     * still carries the article as it is. If the article was edited while it
+     * waited, resending the old words would be refused, so a fresh delivery
+     * goes instead, as an update: the receiver may already hold the earlier
+     * version, and replaces it by the article's id. A delivery that never left
+     * gives up its identity, and a fresh one follows in the ordinary way.
      *
-     * @return list<WebhookDelivery>|null
+     * Returns what was resent, or null and the event a fresh delivery should
+     * carry (null for the transport's own choice).
+     *
+     * @return array{list<WebhookDelivery>|null, WebhookEvent|null}
      */
-    private function resendAfterApproval(ArticleSchedule $schedule): ?array
+    private function resendAfterApproval(ArticleSchedule $schedule, ContentItem $item): array
     {
         $previous = WebhookDelivery::query()->find($schedule->delivery_id);
         if ($previous === null || $previous->status !== DeliveryStatus::DeadLetter) {
-            return null;
+            return [null, null];
         }
-        if ($previous->attempts === 0 && $previous->article_attempt_started_at === null) {
-            $previous->forceFill(['dispatch_key' => null])->save();
+        $mayHaveArrived = $previous->attempts > 0 || $previous->article_attempt_started_at !== null;
+        if (! $mayHaveArrived || ! app(ArticleDeliveryGuard::class)->snapshotMatches($previous, $item)) {
+            if (! $mayHaveArrived) {
+                $previous->forceFill(['dispatch_key' => null])->save();
+            }
             $schedule->delivery_id = null;
 
-            return null;
+            return [null, $mayHaveArrived ? WebhookEvent::Updated : null];
         }
         $lock = Cache::lock('webhook-delivery:'.$previous->id, WebhookPublisher::lockSeconds());
         if (! $lock->get()) {
-            return [];
+            return [[], null];
         }
         try {
+            // Relinked at the schedule's current version: pausing or sending
+            // the article back moved it on, and this resend is the owner's.
             $previous->forceFill(['status' => DeliveryStatus::Pending, 'next_attempt_at' => now(), 'error' => null,
-                'deferrals' => 0, 'sweeps' => 0])->save();
+                'deferrals' => 0, 'sweeps' => 0, 'article_schedule_version' => $schedule->version])->save();
             $schedule->forceFill(['status' => 'dispatching', 'blocked_reason' => null, 'blocked_code' => null])->save();
         } finally {
             $lock->release();
         }
         DeliverWebhookJob::dispatch($previous->getKey())->afterCommit();
 
-        return [$previous];
+        return [[$previous], null];
     }
 
     /**

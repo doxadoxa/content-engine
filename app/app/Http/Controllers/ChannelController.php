@@ -17,6 +17,7 @@ use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\ConnectionHealth;
 use App\Publishing\ConnectionSecret;
+use App\Publishing\HeldArticles;
 use App\Publishing\Pages\PageReceiverClient;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Http\JsonResponse;
@@ -137,6 +138,13 @@ class ChannelController extends Controller
     {
         $wasEnabled = $channel->is_enabled;
         [$channel, $connectionChanged] = $this->applyUpdate($request, $channel);
+
+        // Resumed and working: articles held while it was paused go now, not
+        // at their next look hours away. A changed connection is tested first,
+        // and the test that passes sends them instead.
+        if (! $wasEnabled && $channel->is_enabled && ! $connectionChanged && app(ArticleSchedules::class)->compatible($channel)) {
+            app(HeldArticles::class)->resume($channel);
+        }
 
         $message = match (true) {
             $connectionChanged && $this->test($channel) => 'Saved. Testing the connection…',

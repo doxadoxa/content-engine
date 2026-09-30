@@ -7,6 +7,7 @@ namespace App\Publishing;
 use App\Enums\ChannelType;
 use App\Enums\DeliveryStatus;
 use App\Models\WebhookDelivery;
+use App\Publishing\Articles\ArticleSchedules;
 
 /**
  * What went wrong with a delivery, said to the person who has to fix it.
@@ -29,6 +30,19 @@ final class DeliveryExplanation
     public const string DELAYED = 'Taking longer than usual. Avyo will try again automatically.';
 
     public const string GAVE_UP = "Avyo couldn't get it to your website after several tries.";
+
+    /**
+     * The replay's refusal while the website fails its test. Already the
+     * owner's words; a constant so the refusal and this mapping are one
+     * string ({@see WebhookPublisher::replay()} should throw exactly this).
+     */
+    public const string REPLAY_WEBSITE_NOT_WORKING = "Your website's connection isn't working. Test it on the Website page first; the article is sent once the test passes.";
+
+    public const string REPLAY_WEBSITE_PAUSED = 'Your website is paused. Resume it on the Website page; the article is sent once you do.';
+
+    public const string NEEDS_APPROVAL = 'Approve it first. Avyo sends it again once you do.';
+
+    public const string WAITING_FOR_RESUME = 'Your website is paused. Resume it and Avyo will send it.';
 
     /** Null while nothing has gone wrong yet: pending, or delivered. */
     public static function for(WebhookDelivery $delivery): ?string
@@ -115,7 +129,9 @@ final class DeliveryExplanation
             StrandedDeliveries::isRequeueNote($error) => self::DELAYED,
             StrandedDeliveries::isAbandonedNote($error) => self::GAVE_UP,
             $error === WebhookPublisher::WAITING_FOR_WEBSITE => 'Waiting for your website. Avyo will send it as soon as your website connection passes a test.',
-            $error === WebhookPublisher::WEBSITE_STAYED_BROKEN => $error,
+            $error === WebhookPublisher::WEBSITE_STAYED_BROKEN, $error === self::REPLAY_WEBSITE_NOT_WORKING, $error === self::REPLAY_WEBSITE_PAUSED => $error,
+            $error === ArticleSchedules::NEEDS_APPROVAL => self::NEEDS_APPROVAL,
+            $error === WebhookPublisher::WAITING_FOR_RESUME => self::WAITING_FOR_RESUME,
             str_contains($lower, 'sent back for rework') => self::SENT_BACK,
             str_contains($lower, 'schedule changed before this delivery') => "Its schedule changed before it went out, so it wasn't sent.",
             str_contains($lower, 'no longer matches') => "Its schedule changed after it was queued, so it wasn't sent. Pick a new date to publish it.",

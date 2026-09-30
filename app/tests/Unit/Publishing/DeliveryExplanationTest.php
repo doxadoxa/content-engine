@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Publishing;
 
 use App\Enums\ChannelType;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\DeliveryExplanation;
 use App\Publishing\StrandedDeliveries;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -65,6 +66,11 @@ final class DeliveryExplanationTest extends TestCase
         $this->assertSame(DeliveryExplanation::DELAYED, DeliveryExplanation::explain(null, StrandedDeliveries::REQUEUED_MAYBE_SENT));
         $this->assertSame(DeliveryExplanation::GAVE_UP,
             DeliveryExplanation::explain(null, sprintf(StrandedDeliveries::ABANDONED_UNSENT, StrandedDeliveries::MAX_SWEEPS + 1)));
+
+        // This commit's own refusals, said as they are or in its words.
+        $this->assertSame(DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING, DeliveryExplanation::explain(null, DeliveryExplanation::REPLAY_WEBSITE_NOT_WORKING));
+        $this->assertSame(DeliveryExplanation::REPLAY_WEBSITE_PAUSED, DeliveryExplanation::explain(null, DeliveryExplanation::REPLAY_WEBSITE_PAUSED));
+        $this->assertSame('Approve it first. Avyo sends it again once you do.', DeliveryExplanation::explain(null, ArticleSchedules::NEEDS_APPROVAL));
 
         // Already written for owners.
         $facts = 'Your business information changed after this article was written. Update the article before publishing it.';

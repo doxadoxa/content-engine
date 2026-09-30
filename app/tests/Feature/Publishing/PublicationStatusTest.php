@@ -16,6 +16,7 @@ use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\Articles\BlockedCode;
 use App\Publishing\Articles\PublicationStatus;
+use App\Publishing\DeliveryExplanation;
 use App\Publishing\StrandedDeliveries;
 use App\Publishing\WebhookPublisher;
 use App\Support\Tenancy\CurrentProject;
@@ -278,6 +279,64 @@ final class PublicationStatusTest extends TestCase
             $this->assertSame(["Couldn't publish", "Avyo couldn't get it to your website after several tries.", 'Try again'],
                 [$status['label'], $status['detail'], $status['action']['label'] ?? null], $format);
         }
+    }
+
+    #[Test]
+    public function a_row_swept_before_the_sweepers_words_were_constants_is_still_delayed(): void
+    {
+        $item = $this->article(ContentItemState::Approved);
+        $delivery = $this->delivery($item, ['status' => DeliveryStatus::Retrying, 'response_code' => null, 'delivered_at' => null, 'next_attempt_at' => now(),
+            'error' => 'The worker holding this delivery never reported back — it was most likely killed mid-flight. Nothing was sent; the delivery has been put back in the queue.']);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $delivery->id]);
+
+        $this->assertTrue(StrandedDeliveries::isRequeueNote($delivery->error));
+        $this->assertSame(['delayed', 'Taking longer than usual. Avyo will try again automatically.'],
+            [$this->present($item)['key'], $this->present($item)['detail']]);
+    }
+
+    #[Test]
+    public function a_handed_back_attempt_is_not_offered_try_again_anywhere(): void
+    {
+        $item = $this->article(ContentItemState::Draft);
+        $delivery = $this->delivery($item, ['status' => DeliveryStatus::DeadLetter, 'response_code' => null, 'attempts' => 1,
+            'error' => ArticleSchedules::NEEDS_APPROVAL, 'delivered_at' => null]);
+        $schedule = $this->schedule($item, '2026-09-15 07:00', ['status' => 'blocked', 'blocked_code' => BlockedCode::NEEDS_APPROVAL,
+            'blocked_reason' => ArticleSchedules::NEEDS_APPROVAL, 'delivery_id' => $delivery->id]);
+
+        $this->assertFalse(PublicationStatus::canTryAgain($delivery, $schedule));
+        // Without the schedule it would have been offered: the schedule is what knows.
+        $this->assertTrue(PublicationStatus::canTryAgain($delivery));
+        $this->assertSame('Approve it first. Avyo sends it again once you do.', PublicationStatus::attempt($delivery, 'UTC')['explanation']);
+    }
+
+    #[Test]
+    public function the_guard_sentence_about_a_changed_article_is_said_plainly(): void
+    {
+        $item = $this->article(ContentItemState::Approved);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'blocked', 'blocked_code' => null,
+            'blocked_reason' => 'The article changed after this delivery was queued. Review the current article before publishing.']);
+
+        $status = $this->present($item);
+
+        $this->assertSame("The article changed after it was queued, so it wasn't sent. Review it, then publish it again.", $status['detail']);
+        $this->assertStringNotContainsString('delivery', (string) $status['detail']);
+    }
+
+    #[Test]
+    public function an_article_waiting_for_a_paused_website_says_to_resume_it(): void
+    {
+        $note = WebhookPublisher::WAITING_FOR_RESUME;
+        $this->assertSame('Your website is paused. Resume it and Avyo will send it.', DeliveryExplanation::explain(null, $note));
+        $item = $this->article(ContentItemState::Approved);
+        $delivery = $this->delivery($item, ['status' => DeliveryStatus::Retrying, 'response_code' => null, 'attempts' => 0, 'deferrals' => 1,
+            'error' => $note, 'next_attempt_at' => now()->addHours(3), 'delivered_at' => null]);
+        $this->schedule($item, '2026-09-15 07:00', ['status' => 'dispatching', 'delivery_id' => $delivery->id]);
+
+        $status = $this->present($item);
+
+        $this->assertSame(['waiting_website', 'Waiting for your website', 'Your website is paused. Resume it and Avyo will send it.', '/channels'],
+            [$status['key'], $status['label'], $status['detail'], $status['action']['href'] ?? null]);
+        $this->assertSame('Your website is paused. Resume it and Avyo will send it.', PublicationStatus::attempt($delivery, 'UTC')['explanation']);
     }
 
     #[Test]

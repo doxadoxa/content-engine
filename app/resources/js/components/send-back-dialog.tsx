@@ -108,8 +108,31 @@ export function SendBackDialog({
                                             name="note"
                                             rows={3}
                                         />
+                                        {errors.note && (
+                                            <p className="text-xs text-destructive">
+                                                {errors.note}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
+
+                                {/* Whatever else the endpoint refused with —
+                                    a `schedule` change that could not be
+                                    made, say — beside the button pressed. */}
+                                {Object.entries(errors)
+                                    .filter(
+                                        ([key]) =>
+                                            !['reason', 'note'].includes(key),
+                                    )
+                                    .map(([key, message]) => (
+                                        <p
+                                            key={key}
+                                            role="alert"
+                                            className="text-sm text-destructive"
+                                        >
+                                            {message}
+                                        </p>
+                                    ))}
 
                                 <DialogFooter>
                                     <Button

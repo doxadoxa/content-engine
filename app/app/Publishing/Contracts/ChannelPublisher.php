@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Publishing\Contracts;
 
 use App\Enums\ChannelType;
+use App\Enums\WebhookEvent;
 use App\Models\Channel;
 use App\Models\ContentItem;
 use App\Models\Project;
@@ -72,7 +73,12 @@ interface ChannelPublisher
      * must produce one delivery, because the operator pressing publish again
      * is asking "did that go out", not "send it twice".
      */
-    public function queue(ContentItem $unit, Channel $channel): WebhookDelivery;
+    /**
+     * `$event` is normally left to the transport, which knows what this
+     * destination has already received. It is named when that history is not
+     * the whole story: an attempt that may have arrived without an answer.
+     */
+    public function queue(ContentItem $unit, Channel $channel, ?WebhookEvent $event = null): WebhookDelivery;
 
     /**
      * One attempt at one delivery. Never throws — see the class docblock.

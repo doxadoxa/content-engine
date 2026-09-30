@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Publishing;
 
 use App\Enums\ChannelType;
+use App\Enums\WebhookEvent;
 use App\Models\ArticleSchedule;
 use App\Models\Channel;
 use App\Models\ContentItem;
@@ -103,13 +104,13 @@ class PublishToChannels
     }
 
     /** Queue exactly the selected website; the schedule transaction links its durable identity before dispatch. */
-    public function publishToSelected(ContentItem $unit, Channel $channel): ?WebhookDelivery
+    public function publishToSelected(ContentItem $unit, Channel $channel, ?WebhookEvent $event = null): ?WebhookDelivery
     {
         if ($unit->project_id !== $channel->project_id || ! app(ArticleSchedules::class)->compatible($channel)) {
             return null;
         }
 
-        return $this->deliver($unit, new Collection([$channel]))[0] ?? null;
+        return $this->deliver($unit, new Collection([$channel]), $event)[0] ?? null;
     }
 
     /**
@@ -167,7 +168,7 @@ class PublishToChannels
      * @param  Collection<int, Channel>  $channels
      * @return list<WebhookDelivery>
      */
-    private function deliver(ContentItem $unit, Collection $channels): array
+    private function deliver(ContentItem $unit, Collection $channels, ?WebhookEvent $event = null): array
     {
         if ($this->refusal($unit) !== null) {
             return [];
@@ -180,7 +181,7 @@ class PublishToChannels
             $publisher = $this->publishers->for(ChannelType::from((string) $type));
 
             foreach ($group as $channel) {
-                $deliveries[] = $publisher->queue($unit, $channel);
+                $deliveries[] = $publisher->queue($unit, $channel, $event);
             }
         }
 

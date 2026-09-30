@@ -214,15 +214,26 @@ final class PublicationStatus
      * Whether "Try again" can do anything: a failed article that was not
      * taken back. A replay of one sent back for changes is only refused.
      */
-    public static function canTryAgain(WebhookDelivery $delivery): bool
+    public static function canTryAgain(WebhookDelivery $delivery, ?ArticleSchedule $schedule = null): bool
     {
-        return $delivery->status === DeliveryStatus::DeadLetter && ! DeliveryExplanation::isWithdrawn($delivery->error);
+        return $delivery->status === DeliveryStatus::DeadLetter && ! DeliveryExplanation::isWithdrawn($delivery->error)
+            // Handed back to the owner on this very attempt: approving sends
+            // it again, and a replay would only be refused.
+            && ! ($schedule !== null && $schedule->delivery_id === $delivery->getKey()
+                && ArticleSchedules::awaitingOwnerAfterAttempt($schedule));
     }
 
     /** Held while the website's connection fails its test; it goes when a test passes. */
     public static function isWaitingForWebsite(WebhookDelivery $delivery): bool
     {
-        return $delivery->status === DeliveryStatus::Retrying && $delivery->error === WebhookPublisher::WAITING_FOR_WEBSITE;
+        return $delivery->status === DeliveryStatus::Retrying
+            && ($delivery->error === WebhookPublisher::WAITING_FOR_WEBSITE || self::isWaitingForResume($delivery));
+    }
+
+    /** Held because the owner switched the website off; resuming it sends it. */
+    public static function isWaitingForResume(WebhookDelivery $delivery): bool
+    {
+        return $delivery->status === DeliveryStatus::Retrying && $delivery->error === WebhookPublisher::WAITING_FOR_RESUME;
     }
 
     /**
@@ -275,7 +286,8 @@ final class PublicationStatus
             },
             'explanation' => match (true) {
                 $stranded => self::DELAYED,
-                $waiting => 'Avyo will send it as soon as your website connection passes a test.',
+                $waiting => self::isWaitingForResume($delivery) ? DeliveryExplanation::WAITING_FOR_RESUME
+                    : 'Avyo will send it as soon as your website connection passes a test.',
                 default => self::explanation($delivery),
             },
             'next_attempt' => $next === null ? null : 'Avyo will try again '.$next.'.',
@@ -337,6 +349,11 @@ final class PublicationStatus
 
         // Held, not refused: the website failed its test, and a passing test
         // sends it on without spending an attempt.
+        if (self::isWaitingForResume($delivery)) {
+            return self::make('waiting_website', 'attention', self::WAITING_FOR_WEBSITE, DeliveryExplanation::WAITING_FOR_RESUME,
+                null, self::action('Open website connection', 'connect', '/channels', ownerOnly: true));
+        }
+
         if (self::isWaitingForWebsite($delivery)) {
             return self::make('waiting_website', 'attention', self::WAITING_FOR_WEBSITE,
                 'Avyo will send it as soon as your website connection passes a test.',
@@ -514,7 +531,9 @@ final class PublicationStatus
         return match (true) {
             str_contains($text, 'fact check') => 'The fact check found something to look at. Review the article, then approve it.',
             str_contains($text, 'needs a person') => 'This topic needs a person to approve it before it publishes.',
-            default => $reason,
+            // The guard's and the transport's sentences in plain words; one
+            // nobody has named (a score's list of fixes) is already plain.
+            default => ($plain = DeliveryExplanation::explain(null, $reason)) === null || $plain === DeliveryExplanation::GENERIC ? $reason : $plain,
         };
     }
 

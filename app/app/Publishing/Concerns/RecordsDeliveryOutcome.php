@@ -14,8 +14,10 @@ use App\Models\Channel;
 use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleDeliveryGuard;
 use App\Publishing\ConnectionFingerprint;
+use App\Publishing\HeldArticles;
 use App\Publishing\WebhookPublisher;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -40,6 +42,9 @@ trait RecordsDeliveryOutcome
 {
     public const string WAITING_FOR_WEBSITE = "Waiting for your website: its connection isn't working. Avyo sends this article as soon as a test passes.";
 
+    /** The owner paused the website. Waits as long as the pause lasts: Resume sends it. */
+    public const string WAITING_FOR_RESUME = 'Waiting for your website: it is paused. Avyo sends this article as soon as you resume it.';
+
     /** What a delivery that waited a day for a broken website says when it gives up. */
     public const string WEBSITE_STAYED_BROKEN = "Your website's connection stayed broken for a day, so this article wasn't sent. Test the connection on the Website page, then use Try again.";
 
@@ -58,6 +63,9 @@ trait RecordsDeliveryOutcome
 
     /** How long an article waits between looks at a website that isn't working: a day, over the deferral limit. */
     private const int WEBSITE_WAIT_HOURS = 3;
+
+    /** Between looks at a paused website. Resume sends it at once; this is only the fallback. */
+    private const int PAUSED_WAIT_HOURS = 12;
 
     /** How this transport names itself in the dead-letter log. */
     abstract protected function transportName(): string;
@@ -84,6 +92,7 @@ trait RecordsDeliveryOutcome
             'next_attempt_at' => null,
             'error' => null,
             'sweeps' => 0,
+            'deferrals' => 0,
         ])->save();
 
         // Only a test of the connection as it is now. One signed with a
@@ -147,6 +156,8 @@ trait RecordsDeliveryOutcome
             'error' => $error,
             'next_attempt_at' => now()->addSeconds($delay),
             'sweeps' => 0,
+            // A real attempt ends any wait: the next outage gets its own day.
+            'deferrals' => 0,
         ])->save();
 
         return $delivery;
@@ -216,8 +227,18 @@ trait RecordsDeliveryOutcome
             return null;
         }
 
-        $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
-            ?? app(ArticleBusinessFacts::class)->refusal($unit);
+        // Dead-lettered and handed back in one transaction: an Approve landing
+        // between the two would relink a delivery that was still retrying.
+        $verdict = app(ArticleDeliveryGuard::class)->verdict($delivery);
+        if ($verdict !== null) {
+            return DB::transaction(function () use ($delivery, $verdict): WebhookDelivery {
+                $dead = $this->deadLetter($delivery, $verdict->reason);
+                $verdict->handBack();
+
+                return $dead;
+            });
+        }
+        $refusal = app(ArticleBusinessFacts::class)->refusal($unit);
         if ($refusal !== null) {
             return $this->deadLetter($delivery, $refusal);
         }
@@ -240,11 +261,24 @@ trait RecordsDeliveryOutcome
             );
         }
 
-        // A website that failed its last test is a wait, not a verdict: the
-        // article waits without spending an attempt, and the test that passes
-        // sends it on ({@see WebhookPublisher::resumeHeldArticles()}). Dead-
-        // lettering it here left "the connection isn't working" on the
+        // A website that is paused or failed its last test is a wait, not a
+        // verdict: the article waits without spending an attempt, and Resume
+        // or a passing test sends it on ({@see HeldArticles::resume()}).
+        // Dead-lettering it here left "the connection isn't working" on the
         // article long after the connection was fixed.
+        //
+        // A pause is the owner's own choice and lasts as long as they like,
+        // so it does not spend the day a broken website is given.
+        if (app(ArticleDeliveryGuard::class)->websiteUnusable($delivery) && ! $delivery->channel->is_enabled) {
+            $delivery->forceFill([
+                'status' => DeliveryStatus::Retrying,
+                'response_code' => null,
+                'error' => self::WAITING_FOR_RESUME,
+                'next_attempt_at' => now()->addHours(self::PAUSED_WAIT_HOURS),
+            ])->save();
+
+            return $delivery;
+        }
         if (app(ArticleDeliveryGuard::class)->websiteUnusable($delivery)) {
             return $this->defer(
                 $delivery,
