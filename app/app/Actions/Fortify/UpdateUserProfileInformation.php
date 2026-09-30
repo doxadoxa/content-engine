@@ -50,8 +50,13 @@ class UpdateUserProfileInformation implements UpdatesUserProfileInformation
             'name' => ['required', 'string', 'max:255'],
 
             // The same check as signing up: a changed address is unverified
-            // again, and a typo here strands the account the same way.
-            'email' => [...$this->emailRules(), Rule::unique('users')->ignore($user->id)],
+            // again, and a typo here strands the account the same way. Only
+            // for a change, though — the form resubmits the current address
+            // with every name edit, and no mail goes to that one.
+            'email' => [
+                ...$this->emailRules(checkDomain: $email !== $user->email),
+                Rule::unique('users')->ignore($user->id),
+            ],
         ], $this->emailMessages())->validateWithBag('updateProfileInformation');
 
         $input['email'] = $email;

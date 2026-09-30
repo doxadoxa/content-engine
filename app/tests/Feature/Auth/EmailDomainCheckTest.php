@@ -64,6 +64,27 @@ final class EmailDomainCheckTest extends TestCase
     }
 
     #[Test]
+    public function renaming_does_not_re_check_an_address_that_is_not_changing(): void
+    {
+        // The profile form sends the current address with every name edit.
+        // No mail goes to it, so a domain that fails the lookup today — a DNS
+        // outage at the provider, or records since withdrawn — must not block
+        // somebody from correcting their name. `.invalid` stands in for that.
+        config(['auth.check_email_domains' => true]);
+
+        $user = User::factory()->create(['name' => 'Alex', 'email' => 'alex@legacy.invalid']);
+
+        $this->actingAs($user)
+            ->put('/user/profile-information', ['name' => 'Alex Moreira', 'email' => 'alex@legacy.invalid'])
+            ->assertSessionHasNoErrors();
+
+        $user->refresh();
+
+        $this->assertSame('Alex Moreira', $user->name);
+        $this->assertNotNull($user->email_verified_at);
+    }
+
+    #[Test]
     public function the_check_is_on_unless_somebody_turns_it_off(): void
     {
         // Production sets its variables in a dashboard, not from

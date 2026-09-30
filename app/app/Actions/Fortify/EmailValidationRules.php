@@ -19,14 +19,19 @@ trait EmailValidationRules
      * asking anybody, and the suite and local development both sign up with
      * them. See `auth.check_email_domains`.
      *
+     * `$checkDomain` is false for an address that is not changing. The lookup
+     * is about whether a mail we are *about to send* can arrive; asking it of
+     * an address already on the account would let a DNS hiccup at somebody's
+     * mail provider block them from fixing a typo in their name.
+     *
      * @return array<int, string>
      */
-    protected function emailRules(): array
+    protected function emailRules(bool $checkDomain = true): array
     {
         return [
             'required',
             'string',
-            config('auth.check_email_domains', true) ? 'email:rfc,dns' : 'email:rfc',
+            $checkDomain && config('auth.check_email_domains', true) ? 'email:rfc,dns' : 'email:rfc',
             'max:255',
         ];
     }
