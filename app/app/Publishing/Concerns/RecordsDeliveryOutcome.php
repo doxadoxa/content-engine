@@ -90,7 +90,8 @@ trait RecordsDeliveryOutcome
     }
 
     /**
-     * One rung of §6.2's published ladder, or the end of it.
+     * One rung of §6.2's published ladder, or the end of it — straight to the
+     * end for a `ping`.
      *
      * The ladder lives in config and is walked here rather than being left to
      * the queue, because a receiver operator plans around "1m → 5m → 30m → 2h →
@@ -113,7 +114,13 @@ trait RecordsDeliveryOutcome
         /** @var list<int> $ladder */
         $ladder = config('publishing.backoff', []);
 
-        if ($attempt >= count($ladder)) {
+        // A test is a question somebody is waiting on, not an article that
+        // has to arrive eventually. Put on the ladder it read "Testing…" for
+        // twelve hours while the owner waited to be told what was wrong; one
+        // attempt, answered now, is what the connect screen needs.
+        $isTest = ($delivery->payload_snapshot['event'] ?? null) === WebhookEvent::Ping->value;
+
+        if ($isTest || $attempt >= count($ladder)) {
             return $this->deadLetter($delivery, $error, $attempt, $latency, $status);
         }
 

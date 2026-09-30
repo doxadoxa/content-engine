@@ -51,6 +51,18 @@ final class ArticleSchedules
 
     public const string CHOOSE_WEBSITE = 'Choose which website this article should publish to.';
 
+    public const string MISSED_DATE = 'This automatic publication date was missed. Choose a new date to keep articles spaced out.';
+
+    public const string PAUSED = 'Publishing is paused for this project or its plan.';
+
+    public const string WEBSITE_UNUSABLE = 'Choose a verified, enabled website connection for this schedule.';
+
+    public const string NEEDS_APPROVAL = 'Review and approve this article before it can publish.';
+
+    public const string STILL_WRITING = 'The article is still being prepared.';
+
+    public const string PREVIOUS_FAILED = 'The previous delivery needs attention. It will not be repeated with a new identity.';
+
     public function __construct(private readonly ChannelPublisherRegistry $publishers, private readonly Entitlements $entitlements) {}
 
     /** What a schedule's mode is, given the project's answer and the owner's hold. */
@@ -226,13 +238,13 @@ final class ArticleSchedules
             $this->entitlements->forget($project);
             $reason = null;
             if ($this->missedAutomaticDate($schedule, $project)) {
-                $reason = 'This automatic publication date was missed. Choose a new date to keep articles spaced out.';
+                $reason = self::MISSED_DATE;
             } elseif ($project->status !== ProjectStatus::Active || ! $this->entitlements->for($project)->mayPublish()) {
-                $reason = 'Publishing is paused for this project or its plan.';
+                $reason = self::PAUSED;
             }
             $channel = $schedule->channel_id === null ? null : Channel::query()->find($schedule->channel_id);
             if ($reason === null && ($channel === null || ! $this->compatible($channel))) {
-                $reason = 'Choose a verified, enabled website connection for this schedule.';
+                $reason = self::WEBSITE_UNUSABLE;
             }
             // Asked of the project as well as the schedule, so a schedule that
             // somehow missed followProject() waits for a person rather than
@@ -245,7 +257,7 @@ final class ArticleSchedules
                 }
             }
             if ($reason === null && $item->state !== ContentItemState::Approved) {
-                $reason = $item->state === ContentItemState::Draft ? 'Review and approve this article before it can publish.' : 'The article is still being prepared.';
+                $reason = $item->state === ContentItemState::Draft ? self::NEEDS_APPROVAL : self::STILL_WRITING;
             }
             if ($reason !== null) {
                 $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => $reason])->save();
@@ -255,7 +267,7 @@ final class ArticleSchedules
             assert($channel instanceof Channel);
             $delivery = app(PublishToChannels::class)->publishToSelected($item, $channel);
             if ($delivery === null || $delivery->status === DeliveryStatus::DeadLetter) {
-                $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => 'The previous delivery needs attention. It will not be repeated with a new identity.'])->save();
+                $schedule->forceFill(['status' => 'blocked', 'blocked_reason' => self::PREVIOUS_FAILED])->save();
 
                 return [];
             }
@@ -286,15 +298,108 @@ final class ArticleSchedules
         return $project->channels->filter(fn (Channel $channel): bool => $this->compatible($channel))->values();
     }
 
+    /**
+     * Send one article to the project's website now, whatever its date says.
+     *
+     * The owner pressing "Publish now" is the approval, so a finished draft is
+     * approved on the way — through {@see ArticleApproval}, so the business
+     * facts, the score, the plan and the allowance are asked exactly as they
+     * are for the Approve button. The schedule is then moved to this minute
+     * and handed to {@see dispatch()}, which is the one path that sends an
+     * article: its row locks and its `dispatching` status are what keep the
+     * scheduler from sending the same article a second time afterwards.
+     *
+     * Refusals come back as a validation error on `publish`, in words the
+     * owner can act on, and are asked before the approval so a press that
+     * cannot publish does not spend an article from the allowance.
+     */
+    public function publishNow(User $actor, ContentItem $item): ArticleSchedule
+    {
+        abort_unless($actor->projects()->whereKey($item->project_id)->wherePivot('role', 'owner')->exists(), 403);
+        $item->refresh()->loadMissing('project');
+        $project = $item->project;
+        $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->with('delivery')->first();
+        $refusal = $this->publishNowRefusal($item, $schedule);
+        if ($refusal !== null) {
+            throw ValidationException::withMessages(['publish' => $refusal]);
+        }
+
+        if ($item->state === ContentItemState::Draft) {
+            try {
+                app(ArticleApproval::class)->approve($item);
+            } catch (ValidationException $exception) {
+                throw ValidationException::withMessages(['publish' => $exception->getMessage()]);
+            }
+        }
+
+        $this->mutate($item, function (?ArticleSchedule $schedule) use ($actor, $item, $project): ArticleSchedule {
+            $channel = $this->target($project, $schedule);
+            $sent = $schedule?->delivery_id === null ? null : WebhookDelivery::query()->find($schedule->delivery_id);
+            if ($channel === null || $schedule?->status === 'completed'
+                || ($schedule?->status === 'dispatching' && $sent?->status !== DeliveryStatus::DeadLetter)) {
+                throw ValidationException::withMessages(['publish' => 'This article changed in another window. Reload the page and try again.']);
+            }
+            $at = CarbonImmutable::now()->setTimezone($project->timezone);
+            $schedule ??= new ArticleSchedule(['content_item_id' => $item->id, 'version' => 0]);
+            $this->withdrawQueued($schedule);
+            $schedule->fill([
+                'channel_id' => $channel->id, 'publish_at' => $at->utc(), 'local_date' => $at->toDateString(),
+                'local_time' => $at->format('H:i'), 'timezone' => $project->timezone,
+                'mode' => self::modeFor($project, held: false), 'held_for_review' => false, 'status' => 'active',
+                'origin' => 'manager', 'requested_by' => $actor->id, 'version' => $schedule->version + 1,
+                'blocked_reason' => null, 'delivery_id' => null,
+            ])->save();
+
+            return $schedule;
+        });
+
+        $this->dispatch($item);
+        $schedule = ArticleSchedule::query()->where('content_item_id', $item->id)->firstOrFail();
+        if ($schedule->status === 'blocked') {
+            $item->unsetRelation('articleSchedule');
+            $presentation = PublicationStatus::for($item->refresh(), $schedule->load('delivery'));
+
+            throw ValidationException::withMessages(['publish' => $presentation['detail'] ?? (string) $schedule->blocked_reason]);
+        }
+
+        return $schedule;
+    }
+
+    /**
+     * Why "Publish now" cannot work for this article right now, in the
+     * owner's words, or null when it can. Shared by the button, which shows
+     * the reason beside itself, and the endpoint, which refuses with it.
+     */
+    public function publishNowRefusal(ContentItem $item, ?ArticleSchedule $schedule): ?string
+    {
+        $item->loadMissing('project');
+        $project = $item->project;
+        $delivery = $schedule?->delivery_id === null ? null : $schedule->delivery;
+
+        return match (true) {
+            $item->state->isLive(), $schedule?->status === 'completed' => 'This article is already live on your website.',
+            ! in_array($item->state, [ContentItemState::Draft, ContentItemState::Approved], true) => 'This article is still being written. You can publish it once it is ready.',
+            $schedule?->status === 'dispatching' && $delivery?->status !== DeliveryStatus::DeadLetter => 'This article is already on its way to your website.',
+            $delivery !== null && ($delivery->attempts > 0 || $delivery->article_attempt_started_at !== null) => "The last attempt didn't go through. Use Try again on the article instead.",
+            $this->channels($project)->isEmpty() => 'Connect your website first.',
+            $this->target($project, $schedule) === null => 'Choose which website this article should go to first.',
+            $project->status !== ProjectStatus::Active => 'Content work is paused for this business. Resume it to publish.',
+            ! $this->entitlements->for($project)->mayPublish() => "Your plan doesn't include publishing yet.",
+            default => null,
+        };
+    }
+
     /** @return array<string, mixed> */
     public function props(ContentItem $item): array
     {
         $item->loadMissing(['articleSchedule.delivery', 'project.channels']);
         $schedule = $item->articleSchedule;
+        $delivery = $schedule?->delivery_id === null ? null : $schedule->delivery;
         $status = match (true) {
             $item->state->isLive() => 'published',
             $schedule?->status === 'completed' => 'published',
-            $schedule?->status === 'dispatching' && $schedule->delivery?->status === DeliveryStatus::DeadLetter => 'blocked',
+            $schedule?->status === 'dispatching' && $delivery?->status === DeliveryStatus::Delivered => 'published',
+            $schedule?->status === 'dispatching' && $delivery?->status === DeliveryStatus::DeadLetter => 'blocked',
             $schedule?->status === 'dispatching' => 'publishing',
             in_array($schedule?->status, ['paused', 'canceled'], true) => $schedule->status,
             $schedule?->status === 'blocked' => 'blocked',
@@ -304,21 +409,34 @@ final class ArticleSchedules
             $schedule !== null => 'scheduled',
             default => 'unscheduled',
         };
+        $refusal = $this->publishNowRefusal($item, $schedule);
 
         return [
             'status' => $status, 'timezone' => $item->project->timezone,
+            // What every screen shows: one label, one sentence, one next step.
+            // See {@see PublicationStatus}.
+            'presentation' => PublicationStatus::for($item, $schedule, $delivery),
+            // A request may be on its way to the website right now; the
+            // schedule cannot be changed under it.
+            'in_flight' => $schedule?->status === 'dispatching' && $delivery !== null && ! $delivery->status->isSettled(),
+            'publish_now' => [
+                'available' => $refusal === null,
+                // Only the refusals worth showing beside a button: the others
+                // are already the whole story in `presentation`.
+                'reason' => in_array($refusal, [null, 'This article is already live on your website.', 'This article is already on its way to your website.', "The last attempt didn't go through. Use Try again on the article instead."], true) ? null : $refusal,
+            ],
             'default_mode' => self::modeFor($item->project, held: false),
             'schedule' => $schedule === null ? null : [
                 'id' => $schedule->id, 'version' => $schedule->version, 'mode' => $schedule->mode, 'held' => $schedule->held_for_review, 'status' => $schedule->status, 'delivery_id' => $schedule->delivery_id,
                 'publish_at' => $schedule->publish_at->toIso8601String(), 'local_date' => $schedule->publish_at->setTimezone($item->project->timezone)->toDateString(),
                 'local_time' => $schedule->publish_at->setTimezone($item->project->timezone)->format('H:i'), 'timezone' => $item->project->timezone, 'channel_id' => $schedule->channel_id,
-                'blocked_reason' => $schedule->blocked_reason ?? ($status === 'blocked' ? $schedule->delivery?->error : null),
+                'blocked_reason' => $schedule->blocked_reason ?? ($status === 'blocked' ? $delivery?->error : null),
             ],
             'channels' => $this->channels($item->project)->map(fn (Channel $channel): array => [
                 'id' => $channel->id, 'name' => $channel->name, 'type' => $channel->type->value,
             ])->all(),
             'can_schedule' => ! $item->state->isLive() && $schedule?->status !== 'completed'
-                && ($schedule?->delivery === null || ($schedule->delivery->attempts === 0 && $schedule->delivery->article_attempt_started_at === null)),
+                && ($delivery === null || ($delivery->attempts === 0 && $delivery->article_attempt_started_at === null)),
         ];
     }
 
@@ -340,6 +458,15 @@ final class ArticleSchedules
         $this->require(count($matches) === 1, 'This local time is skipped or occurs twice when the clocks change. Choose another time.');
 
         return $matches[0];
+    }
+
+    /** The website "Publish now" sends to: the schedule's, if still usable, or the project's only one. */
+    private function target(Project $project, ?ArticleSchedule $schedule): ?Channel
+    {
+        $usable = $this->channels($project);
+        $chosen = $schedule?->channel_id === null ? null : $usable->firstWhere('id', $schedule->channel_id);
+
+        return $chosen ?? ($usable->count() === 1 ? $usable->first() : null);
     }
 
     /**

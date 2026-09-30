@@ -7,7 +7,9 @@ namespace App\Support\Content;
 use App\Models\ContentItem;
 use App\Models\PipelineRun;
 use App\Models\Project;
+use App\Models\WebhookDelivery;
 use App\Publishing\Articles\ArticleSchedules;
+use App\Publishing\StrandedDeliveries;
 use Illuminate\Database\Eloquent\Builder;
 
 /** Shared filters keep dashboard counts and their content links consistent. */
@@ -52,10 +54,26 @@ final class ManagerContent
                     ->orWhereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('mode', 'review_first')->whereNotIn('status', ['paused', 'canceled', 'completed']))
                     ->orWhere(fn (Builder $unchecked) => $unchecked->where(fn (Builder $check) => $check->whereNull('factcheck')->orWhereJsonDoesntContain('factcheck', ['passed' => true]))->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')))
                     ->orWhere(fn (Builder $sensitive) => $sensitive->whereHas('project', fn (Builder $project) => $project->where('is_ymyl', true))->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')))))
-                ->orWhereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'blocked')->orWhere(fn (Builder $failed) => $failed->where('status', 'dispatching')->whereHas('delivery', fn (Builder $delivery) => $delivery->where('status', 'dead_letter'))))),
-            'scheduled' => $query->whereNotIn('state', ['published', 'refreshing'])->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')->orWhere(fn (Builder $sending) => $sending->where('status', 'dispatching')->whereDoesntHave('delivery', fn (Builder $delivery) => $delivery->where('status', 'dead_letter')))),
+                ->orWhereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'blocked')->orWhere(fn (Builder $failed) => $failed->where('status', 'dispatching')->whereIn('delivery_id', self::troubled())))),
+            // Only what is on course: waiting for its date, or being sent
+            // right now. A delivery that is retrying, stuck or failed was
+            // counted here as "Scheduled" while nothing was happening; it is
+            // in `review` instead, where somebody will look at it.
+            'scheduled' => $query->whereNotIn('state', ['published', 'refreshing'])->whereHas('articleSchedule', fn (Builder $schedule) => $schedule->where('status', 'active')->orWhere(fn (Builder $sending) => $sending->where('status', 'dispatching')->where(fn (Builder $clear) => $clear->whereNull('delivery_id')->orWhereNotIn('delivery_id', self::troubled())))),
             'published' => $query->whereIn('state', ['published', 'refreshing']),
             default => $query,
         };
+    }
+
+    /**
+     * The deliveries that are not simply on their way: failed, retrying, or
+     * pending past the point {@see StrandedDeliveries} calls stuck.
+     *
+     * @return Builder<WebhookDelivery>
+     */
+    private static function troubled(): Builder
+    {
+        return WebhookDelivery::query()->select('id')->where(fn (Builder $any) => $any->whereIn('status', ['dead_letter', 'retrying'])
+            ->orWhere(fn (Builder $stuck) => StrandedDeliveries::scope($stuck)));
     }
 }

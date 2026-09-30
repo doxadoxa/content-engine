@@ -7,8 +7,14 @@ import {
     Undo2,
 } from 'lucide-react';
 import { useState } from 'react';
-import { ArticlePublicationPanel } from '@/components/article-publication';
-import type { ArticlePublication } from '@/components/article-publication';
+import {
+    ArticlePublicationPanel,
+    PublicationBadge,
+} from '@/components/article-publication';
+import type {
+    ArticlePublication,
+    PublicationTone,
+} from '@/components/article-publication';
 import { ContextualAssistant } from '@/components/contextual-assistant';
 import { SendBackDialog } from '@/components/send-back-dialog';
 import type { Reason, SendBackTarget } from '@/components/send-back-dialog';
@@ -35,6 +41,11 @@ import { ArticleDataPanel, ScorePanel } from './score-panel';
 type Delivery = {
     id: string;
     delivery_id: string;
+    label: string;
+    tone: PublicationTone;
+    explanation: string | null;
+    next_attempt: string | null;
+    channel: string | null;
     status: string;
     status_label: string;
     response_code: number | null;
@@ -216,9 +227,10 @@ export default function ContentShow({
                                     Send back
                                 </Button>
                             )}
-                            {((item.state === 'approved' &&
-                                publication.schedule === null) ||
-                                item.state === 'published') && (
+                            {/* Re-sending an article that is already live.
+                                "Publish now" for one that is not lives in
+                                the publishing panel below. */}
+                            {item.state === 'published' && (
                                 <Form
                                     action={publish(item.id).url}
                                     method="post"
@@ -238,9 +250,7 @@ export default function ContentShow({
                                                     className="size-4"
                                                     aria-hidden="true"
                                                 />
-                                                {item.state === 'published'
-                                                    ? 'Sync published article'
-                                                    : 'Publish now'}
+                                                Send the latest version
                                             </Button>
                                             {errors.publishing && (
                                                 <p className="max-w-xs text-right text-xs text-destructive">
@@ -258,7 +268,7 @@ export default function ContentShow({
                                         target="_blank"
                                         rel="noreferrer"
                                     >
-                                        View live article
+                                        View on your site
                                         <ExternalLink
                                             className="size-3.5"
                                             aria-hidden="true"
@@ -274,8 +284,9 @@ export default function ContentShow({
 
                 <div id="publication" className="scroll-mt-6">
                     <ArticlePublicationPanel
-                        approved={item.state === 'approved'}
                         itemId={item.id}
+                        state={item.state}
+                        publishable={item.publishable && rewriting === null}
                         publication={publication}
                     />
                 </div>
@@ -331,8 +342,6 @@ export default function ContentShow({
                         </CardHeader>
                     </Card>
                 )}
-
-                <UndeliveredNotice deliveries={deliveries} />
 
                 <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
                     <Card
@@ -503,46 +512,25 @@ export default function ContentShow({
 
                 <Card className={workspacePanelClass}>
                     <CardHeader>
-                        <CardTitle>Delivery history</CardTitle>
+                        <CardTitle>Publishing history</CardTitle>
                         <CardDescription>
-                            Every attempt to publish this article to a channel.
+                            Each time Avyo sent this article to your website.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2">
                         {deliveries.length === 0 ? (
                             <p className="text-sm text-muted-foreground">
-                                Not delivered anywhere yet.
+                                Not sent to your website yet.
                             </p>
                         ) : (
-                            deliveries.map((delivery) => (
-                                <div
-                                    key={delivery.id}
-                                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm"
-                                >
-                                    <span className="font-mono text-xs text-muted-foreground">
-                                        {delivery.delivery_id}
-                                    </span>
-                                    <span className="flex items-center gap-2">
-                                        {delivery.response_code !== null && (
-                                            <span className="text-muted-foreground">
-                                                {delivery.response_code}
-                                            </span>
-                                        )}
-                                        <Badge
-                                            variant={
-                                                delivery.status === 'delivered'
-                                                    ? 'default'
-                                                    : delivery.status ===
-                                                        'dead_letter'
-                                                      ? 'destructive'
-                                                      : 'secondary'
-                                            }
-                                        >
-                                            {delivery.status_label}
-                                        </Badge>
-                                    </span>
-                                </div>
-                            ))
+                            <ul className="flex flex-col gap-2">
+                                {deliveries.map((delivery) => (
+                                    <DeliveryRow
+                                        key={delivery.id}
+                                        delivery={delivery}
+                                    />
+                                ))}
+                            </ul>
                         )}
                     </CardContent>
                 </Card>
@@ -635,43 +623,68 @@ ContentShow.layout = {
 };
 
 /**
- * Said at the top, where the state badge is.
- *
- * The deliveries log has always been on this page, at the bottom of a very long
- * one. An operator reads "Published" beside the title and stops — which is
- * exactly what happened when an endpoint answered 405 and the article never
- * left the building.
+ * One attempt: what happened, why, and when Avyo tries again. The
+ * identifiers a developer asks for sit behind a toggle.
  */
-function UndeliveredNotice({ deliveries }: { deliveries: Delivery[] }) {
-    const failed = deliveries.filter((d) => d.status === 'dead_letter');
-    const delivered = deliveries.some((d) => d.status === 'delivered');
-
-    if (failed.length === 0 || delivered) {
-        return null;
-    }
-
+function DeliveryRow({ delivery }: { delivery: Delivery }) {
     return (
-        <Card className="rounded-[1.5rem] border-destructive/50 bg-destructive/[0.035] shadow-none">
-            <CardHeader className="flex-row items-start gap-3 space-y-0">
-                <AlertTriangle
-                    className="mt-0.5 size-5 shrink-0 text-destructive"
-                    aria-hidden="true"
+        <li className="rounded-md border p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <PublicationBadge
+                    presentation={{
+                        key: delivery.status,
+                        tone: delivery.tone,
+                        label: delivery.label,
+                        detail: delivery.explanation,
+                        when: null,
+                        action: null,
+                    }}
                 />
-                <div>
-                    <CardTitle className="text-base">
-                        This never reached your site
-                    </CardTitle>
-                    <CardDescription>
-                        {failed[0].error ??
-                            'The receiver refused the delivery.'}
-                        {failed[0].response_code !== null &&
-                            ` (HTTP ${failed[0].response_code})`}
-                        . Check the endpoint on the channel — it has to be a URL
-                        that accepts a POST, not a page on your site.
-                    </CardDescription>
-                </div>
-            </CardHeader>
-        </Card>
+                <span className="text-xs text-muted-foreground">
+                    {[
+                        delivery.channel,
+                        delivery.created_at &&
+                            new Date(delivery.created_at).toLocaleString(
+                                undefined,
+                                { dateStyle: 'medium', timeStyle: 'short' },
+                            ),
+                    ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                </span>
+            </div>
+            {delivery.explanation && (
+                <p className="mt-2 text-muted-foreground">
+                    {delivery.explanation}
+                </p>
+            )}
+            {delivery.next_attempt && (
+                <p className="mt-1 text-muted-foreground">
+                    {delivery.next_attempt}
+                </p>
+            )}
+            <details className="mt-2 text-xs text-muted-foreground">
+                <summary className="cursor-pointer rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                    Technical details
+                </summary>
+                <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                    <dt>Reference</dt>
+                    <dd className="font-mono break-all">
+                        {delivery.delivery_id}
+                    </dd>
+                    <dt>Response</dt>
+                    <dd>{delivery.response_code ?? 'None'}</dd>
+                    <dt>Tries</dt>
+                    <dd>{delivery.attempts}</dd>
+                    {delivery.error && (
+                        <>
+                            <dt>Message</dt>
+                            <dd className="break-words">{delivery.error}</dd>
+                        </>
+                    )}
+                </dl>
+            </details>
+        </li>
     );
 }
 

@@ -582,14 +582,16 @@ final class OperatorDayTest extends TestCase
 
         $channel = Channel::query()->where('name', 'New blog')->firstOrFail();
 
-        // Configured, but not yet proven.
-        $this->assertNull($channel->verified_at);
+        // Saving is testing: a real signed ping went out with the save and
+        // came back, so it is connected on evidence rather than on a form.
+        $this->assertNotNull($channel->verified_at);
+        $channel->forceFill(['verified_at' => null])->save();
 
+        // And the test can be sent again on its own.
         $this->actingAs($this->operator)
             ->post(route('channels.ping', $channel))
             ->assertRedirect();
 
-        // A real signed ping came back, so it is connected on evidence.
         $this->assertNotNull($channel->refresh()->verified_at);
 
         Http::assertSent(fn ($request): bool => $request->header('X-Engine-Event')[0] === 'ping');
@@ -708,6 +710,48 @@ final class OperatorDayTest extends TestCase
 
         $this->assertSame('https://example.test/x', $unit->refresh()->public_url);
         $this->assertSame(2, WebhookDelivery::query()->count());
+    }
+
+    #[Test]
+    public function only_the_owner_can_try_a_failed_publication_again(): void
+    {
+        $unit = $this->draft();
+        $unit->forceFill(['state' => ContentItemState::Approved])->save();
+        $dead = WebhookDelivery::factory()->create([
+            'channel_id' => $this->channel->getKey(), 'content_item_id' => $unit->getKey(),
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => 500, 'delivered_at' => null,
+        ]);
+        $member = User::factory()->create();
+        $member->projects()->attach($this->project, ['role' => 'operator']);
+
+        $this->actingAs($member)->withSession(['project_id' => $this->project->getKey()])
+            ->post(route('deliveries.replay', $dead))
+            ->assertForbidden();
+
+        $this->assertSame(1, WebhookDelivery::query()->count());
+    }
+
+    #[Test]
+    public function the_publishing_history_speaks_plainly_and_says_sent_again(): void
+    {
+        Http::fake(['receiver.test/*' => Http::response(['public_url' => 'https://example.test/y'], 200)]);
+        $unit = $this->draft();
+        $unit->forceFill(['state' => ContentItemState::Approved])->save();
+        $dead = WebhookDelivery::factory()->create([
+            'channel_id' => $this->channel->getKey(), 'content_item_id' => $unit->getKey(),
+            'status' => DeliveryStatus::DeadLetter, 'response_code' => 503, 'error' => 'receiver answered 503',
+            'delivered_at' => null, 'payload_snapshot' => ['event' => 'content.published'],
+        ]);
+
+        $this->actingAs($this->operator)->get(route('deliveries.index'))->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('deliveries.data.0.label', "Couldn't publish")
+                ->where('deliveries.data.0.tone', 'problem')
+                ->where('deliveries.data.0.explanation', 'Your website had an error (503).'));
+
+        $this->actingAs($this->operator)->post(route('deliveries.replay', $dead))
+            ->assertRedirect()->assertSessionHasNoErrors()
+            ->assertInertiaFlash('toast.message', 'Sent again.');
     }
 
     // ------------------------------------------------------- exit criterion 4

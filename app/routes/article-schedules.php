@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\ArticleScheduleController;
+use App\Http\Controllers\PublishNowController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['project.owner', 'throttle:30,1'])->group(function (): void {
@@ -10,4 +11,7 @@ Route::middleware(['project.owner', 'throttle:30,1'])->group(function (): void {
     Route::post('content/{item}/schedule/pause', [ArticleScheduleController::class, 'pause'])->name('content.schedule.pause');
     Route::post('content/{item}/schedule/resume', [ArticleScheduleController::class, 'resume'])->name('content.schedule.resume');
     Route::delete('content/{item}/schedule', [ArticleScheduleController::class, 'cancel'])->name('content.schedule.cancel');
+    // Approves a finished draft and sends it at once. Owner-only, like the
+    // schedule itself: pressing it is the approval.
+    Route::post('content/{item}/publish-now', PublishNowController::class)->name('content.publish-now');
 });

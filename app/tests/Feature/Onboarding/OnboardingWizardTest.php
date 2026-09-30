@@ -26,6 +26,7 @@ use App\Onboarding\Contracts\SiteReader;
 use App\Onboarding\FakeSiteReader;
 use App\Onboarding\ProjectLaunch;
 use App\Pipelines\Jobs\RunStepJob;
+use App\Publishing\ConnectionSecret;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -392,10 +393,12 @@ final class OnboardingWizardTest extends TestCase
                 ['Website'],
                 Channel::query()->pluck('name')->sort()->values()->all(),
             );
-            $this->assertSame(
-                ChannelType::Webhook,
-                Channel::query()->where('name', 'Website')->firstOrFail()->type,
-            );
+            $website = Channel::query()->where('name', 'Website')->firstOrFail();
+            $this->assertSame(ChannelType::Webhook, $website->type);
+
+            // Nobody typed a secret, so Avyo made one — a real one, which
+            // the owner reads back on the website page for the developer.
+            $this->assertSame(ConnectionSecret::LENGTH, strlen((string) $website->secret));
         });
 
         // And now the card. Everything above happened at the wizard's last step;

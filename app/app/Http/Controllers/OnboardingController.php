@@ -24,6 +24,7 @@ use App\Onboarding\ProjectLaunch;
 use App\Onboarding\SiteAnalyst;
 use App\Publishing\Articles\ArticleSchedules;
 use App\Publishing\ChannelPublisherRegistry;
+use App\Publishing\ConnectionSecret;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectManager;
 use Illuminate\Contracts\Cache\Lock;
@@ -630,12 +631,23 @@ class OnboardingController extends Controller
             || Channel::query()->where('name', '!=', 'Website')->count() < $limit;
 
         if ($endpoint !== '' && $fits) {
+            // Avyo makes the secret, and the owner reads it back on the
+            // website page to hand to their developer. A pasted one wins, and
+            // an existing connection keeps the one its website already has.
+            $existing = Channel::query()->where('name', 'Website')->first();
+            $pasted = trim((string) ($answers['webhook_secret'] ?? ''));
+            $secret = match (true) {
+                $pasted !== '' => $pasted,
+                $existing?->hasSecret() === true => (string) $existing->secret,
+                default => ConnectionSecret::generate(),
+            };
+
             $website = Channel::query()->updateOrCreate(
                 ['name' => 'Website'],
                 [
                     'type' => ChannelType::Webhook,
                     'config' => ['endpoint' => $endpoint],
-                    'secret' => (string) ($answers['webhook_secret'] ?? Str::random(48)),
+                    'secret' => $secret,
                     'is_enabled' => true,
                 ],
             );

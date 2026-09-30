@@ -643,9 +643,11 @@ final class StrandedDeliveryTest extends TestCase
         // The screen offers the button only on a dead letter, and the screen is
         // not the guard. Replaying an in-flight delivery is how the same post
         // goes out twice.
+        // Said beside the button rather than as a bare 409 page.
         $this->actingAs($this->operator)
             ->post(route('deliveries.replay', $delivery))
-            ->assertStatus(409);
+            ->assertRedirect()
+            ->assertSessionHasErrors(['delivery' => 'Avyo is still trying to send this. Wait for the result before trying again.']);
 
         $this->assertSame(1, WebhookDelivery::query()->count());
     }
@@ -660,7 +662,7 @@ final class StrandedDeliveryTest extends TestCase
 
         $this->actingAs($this->operator)
             ->post(route('deliveries.replay', $delivery))
-            ->assertStatus(409);
+            ->assertSessionHasErrors('delivery');
 
         $this->assertSame(1, WebhookDelivery::query()->count());
     }

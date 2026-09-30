@@ -1,6 +1,9 @@
-import { Form, Head, Link, router } from '@inertiajs/react';
+import { Form, Head, Link, router, usePage } from '@inertiajs/react';
 import { AlertTriangle, RotateCcw, Send } from 'lucide-react';
+import { PublicationBadge } from '@/components/article-publication';
+import type { PublicationTone } from '@/components/article-publication';
 import Heading from '@/components/heading';
+import InputError from '@/components/input-error';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,6 +28,11 @@ import type { Paginated } from '@/types';
 
 type Delivery = {
     id: string;
+    label: string;
+    tone: PublicationTone;
+    explanation: string | null;
+    next_attempt: string | null;
+    is_test: boolean;
     delivery_id: string;
     event: string;
     status: string;
@@ -51,8 +59,9 @@ type Props = {
 };
 
 /**
- * The delivery log (§7). Dead letters float to the top: everything else here is
- * history, and a dead letter is work waiting for a person.
+ * Publishing history (§7): every time Avyo sent something to the website.
+ * Failures float to the top: everything else here is history, and a failure is
+ * work waiting for a person.
  */
 export default function Deliveries({
     deliveries,
@@ -61,20 +70,23 @@ export default function Deliveries({
     dead_letters,
     stranded,
 }: Props) {
+    const { auth } = usePage().props;
+    const owner = auth.project?.role === 'owner';
+
     return (
         <>
-            <Head title="Delivery log" />
+            <Head title="Publishing history" />
 
             <div className="flex min-w-0 flex-col gap-6 p-4 sm:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <Heading
-                        title="Delivery log"
-                        description="Every publishing attempt, newest first."
+                        title="Publishing history"
+                        description="Each time Avyo sent an article or a test to your website, newest first."
                     />
                     <div className="flex items-center gap-2">
                         {dead_letters > 0 && (
                             <Badge variant="destructive">
-                                {dead_letters} failed
+                                {dead_letters} couldn’t publish
                             </Badge>
                         )}
                         {/* A pending row looks healthy, which is why the one
@@ -86,7 +98,7 @@ export default function Deliveries({
                                     className="size-3"
                                     aria-hidden="true"
                                 />
-                                {stranded} stuck
+                                {stranded} delayed
                             </Badge>
                         )}
                         <Select
@@ -132,17 +144,17 @@ export default function Deliveries({
                             <div>
                                 <h2 className="font-semibold tracking-tight">
                                     {deliveries.total > 0
-                                        ? 'No delivery attempts on this page'
+                                        ? 'Nothing on this page'
                                         : status === null
-                                          ? 'No delivery attempts yet'
-                                          : 'No deliveries match this status'}
+                                          ? 'Nothing sent yet'
+                                          : 'Nothing matches this status'}
                                 </h2>
                                 <p className="mt-1 text-sm text-muted-foreground">
                                     {deliveries.total > 0
                                         ? 'This page is no longer available. Return to the first page.'
                                         : status === null
-                                          ? 'They will appear after content is published to a connected channel.'
-                                          : 'Try another status or show all delivery attempts.'}
+                                          ? 'Articles appear here once Avyo sends them to your website.'
+                                          : 'Choose another status, or show everything.'}
                                 </p>
                             </div>
                             {(status !== null || deliveries.total > 0) && (
@@ -173,78 +185,103 @@ export default function Deliveries({
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>Content</TableHead>
-                                    <TableHead>Channel</TableHead>
-                                    <TableHead>Event</TableHead>
-                                    <TableHead>Code</TableHead>
-                                    <TableHead>Tries</TableHead>
+                                    <TableHead>Article</TableHead>
                                     <TableHead>Status</TableHead>
-                                    <TableHead className="w-px" />
+                                    <TableHead>Website</TableHead>
+                                    <TableHead>Sent</TableHead>
+                                    <TableHead className="w-px">
+                                        <span className="sr-only">Actions</span>
+                                    </TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {deliveries.data.map((delivery) => (
-                                    <TableRow key={delivery.id}>
-                                        <TableCell className="max-w-xs">
+                                    <TableRow
+                                        key={delivery.id}
+                                        className="align-top"
+                                    >
+                                        <TableCell className="max-w-xs whitespace-normal">
                                             {delivery.content_id === null ? (
                                                 <span className="text-muted-foreground">
-                                                    —
+                                                    {delivery.is_test
+                                                        ? 'Connection test'
+                                                        : '—'}
                                                 </span>
                                             ) : (
                                                 <Link
                                                     href={`/content/${delivery.content_id}`}
-                                                    className="hover:underline"
+                                                    className="font-medium hover:underline"
                                                 >
                                                     {delivery.content ?? '—'}
                                                 </Link>
                                             )}
-                                            {delivery.error !== null && (
-                                                <span className="block truncate text-xs text-destructive">
-                                                    {delivery.error}
+                                            <details className="mt-1 text-xs text-muted-foreground">
+                                                <summary className="cursor-pointer rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                                                    Technical details
+                                                </summary>
+                                                <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                                                    <dt>Event</dt>
+                                                    <dd>
+                                                        {delivery.event || '—'}
+                                                    </dd>
+                                                    <dt>Response</dt>
+                                                    <dd>
+                                                        {delivery.response_code ??
+                                                            'None'}
+                                                    </dd>
+                                                    <dt>Tries</dt>
+                                                    <dd>{delivery.attempts}</dd>
+                                                    <dt>Reference</dt>
+                                                    <dd className="font-mono break-all">
+                                                        {delivery.delivery_id}
+                                                    </dd>
+                                                    {delivery.error && (
+                                                        <>
+                                                            <dt>Message</dt>
+                                                            <dd className="break-words">
+                                                                {delivery.error}
+                                                            </dd>
+                                                        </>
+                                                    )}
+                                                </dl>
+                                            </details>
+                                        </TableCell>
+                                        <TableCell className="max-w-sm whitespace-normal">
+                                            <PublicationBadge
+                                                presentation={{
+                                                    key: delivery.status,
+                                                    tone: delivery.tone,
+                                                    label: delivery.label,
+                                                    detail: null,
+                                                    when: null,
+                                                    action: null,
+                                                }}
+                                            />
+                                            {delivery.explanation && (
+                                                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                                                    {delivery.explanation}
+                                                </span>
+                                            )}
+                                            {delivery.next_attempt && (
+                                                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                                                    {delivery.next_attempt}
                                                 </span>
                                             )}
                                         </TableCell>
                                         <TableCell className="text-muted-foreground">
                                             {delivery.channel}
                                         </TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                            {delivery.event}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                            {delivery.response_code ?? '—'}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                            {delivery.attempts}
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge
-                                                variant={
-                                                    delivery.status ===
-                                                    'delivered'
-                                                        ? 'default'
-                                                        : delivery.status ===
-                                                                'dead_letter' ||
-                                                            delivery.is_stranded
-                                                          ? 'destructive'
-                                                          : 'secondary'
-                                                }
-                                            >
-                                                {delivery.is_stranded
-                                                    ? 'Stuck'
-                                                    : delivery.status ===
-                                                        'dead_letter'
-                                                      ? 'Failed'
-                                                      : delivery.status_label}
-                                            </Badge>
-                                            {delivery.is_stranded && (
-                                                <span className="mt-1 block text-xs text-muted-foreground">
-                                                    Queued but never attempted.
-                                                    Waiting to be retried.
-                                                </span>
-                                            )}
+                                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                                            {delivery.created_at &&
+                                                new Date(
+                                                    delivery.created_at,
+                                                ).toLocaleString(undefined, {
+                                                    dateStyle: 'medium',
+                                                    timeStyle: 'short',
+                                                })}
                                         </TableCell>
                                         <TableCell>
-                                            {delivery.can_replay && (
+                                            {owner && delivery.can_replay && (
                                                 <Form
                                                     action={
                                                         replay(delivery.id).url
@@ -254,21 +291,33 @@ export default function Deliveries({
                                                         preserveScroll: true,
                                                     }}
                                                 >
-                                                    {({ processing }) => (
-                                                        <Button
-                                                            type="submit"
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            disabled={
-                                                                processing
-                                                            }
-                                                        >
-                                                            <RotateCcw
-                                                                className="size-4"
-                                                                aria-hidden="true"
+                                                    {({
+                                                        processing,
+                                                        errors,
+                                                    }) => (
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            <Button
+                                                                type="submit"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                disabled={
+                                                                    processing
+                                                                }
+                                                            >
+                                                                <RotateCcw
+                                                                    className="size-4"
+                                                                    aria-hidden="true"
+                                                                />
+                                                                Try again
+                                                            </Button>
+                                                            <InputError
+                                                                role="alert"
+                                                                className="max-w-56 text-right text-xs"
+                                                                message={
+                                                                    errors.delivery
+                                                                }
                                                             />
-                                                            Resend
-                                                        </Button>
+                                                        </div>
                                                     )}
                                                 </Form>
                                             )}
@@ -284,9 +333,9 @@ export default function Deliveries({
 
                 {deliveries.data.length > 0 && (
                     <p className="text-xs text-muted-foreground">
-                        Resending creates a new delivery from the original saved
-                        version, so the receiving channel can distinguish it
-                        from an edit.
+                        Trying again sends the version of the article Avyo saved
+                        the first time, so your website can tell it apart from
+                        an edit.
                     </p>
                 )}
             </div>
@@ -295,5 +344,5 @@ export default function Deliveries({
 }
 
 Deliveries.layout = {
-    breadcrumbs: [{ title: 'Delivery log', href: index() }],
+    breadcrumbs: [{ title: 'Publishing history', href: index() }],
 };

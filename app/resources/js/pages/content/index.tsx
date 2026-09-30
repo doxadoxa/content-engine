@@ -1,6 +1,6 @@
 import { Form, Head, Link, usePoll } from '@inertiajs/react';
 import { FileText } from 'lucide-react';
-import { publicationLabels } from '@/components/article-publication';
+import { PublicationBadge } from '@/components/article-publication';
 import type { ArticlePublication } from '@/components/article-publication';
 import { ContentActions } from '@/components/content-actions';
 import { Pagination } from '@/components/pagination';
@@ -197,7 +197,7 @@ export default function ContentIndex({
                                             Languages
                                         </TableHead>
                                         <TableHead className="whitespace-normal">
-                                            Publication timing
+                                            Publishing
                                         </TableHead>
                                         <TableHead className="whitespace-normal">
                                             Editorial status
@@ -254,9 +254,16 @@ export default function ContentIndex({
                                                 </div>
                                             </TableCell>
                                             <TableCell className="whitespace-normal text-muted-foreground">
-                                                <p>{publicationTiming(item)}</p>
-                                                {item.publication.status !==
-                                                    'published' && (
+                                                <PublicationBadge
+                                                    presentation={
+                                                        item.publication
+                                                            .presentation
+                                                    }
+                                                />
+                                                <p className="mt-1 text-xs leading-5">
+                                                    {publicationTiming(item)}
+                                                </p>
+                                                {canChangeSchedule(item) && (
                                                     <Link
                                                         href={scheduleUrl(
                                                             item.id,
@@ -370,9 +377,16 @@ function MobileContentCard({
                         {locale}
                     </Badge>
                 ))}
-                <span className="ml-auto">{publicationTiming(item)}</span>
             </div>
-            {item.publication.status !== 'published' && (
+            <div className="flex flex-col gap-1">
+                <PublicationBadge
+                    presentation={item.publication.presentation}
+                />
+                <p className="text-xs leading-5 text-muted-foreground">
+                    {publicationTiming(item)}
+                </p>
+            </div>
+            {canChangeSchedule(item) && (
                 <Link
                     href={scheduleUrl}
                     className="self-start text-sm font-medium underline underline-offset-4"
@@ -386,18 +400,19 @@ function MobileContentCard({
     );
 }
 
+/** The status sentence: when it publishes, or why it has not. */
 function publicationTiming(item: ContentRow): string {
-    if (item.publication.schedule) {
-        return `${item.publication.schedule.local_date} · ${item.publication.schedule.local_time} · ${publicationLabels[item.publication.status]}`;
-    }
+    const status = item.publication.presentation;
 
-    if (item.publication.status === 'published') {
-        return item.published_at === null
-            ? 'Published'
-            : `Published ${item.published_at.slice(0, 10)}`;
-    }
+    return status.detail ?? status.label;
+}
 
-    return 'Not scheduled';
+/** Nothing to change while a request is on its way, or once it is live. */
+function canChangeSchedule(item: ContentRow): boolean {
+    return (
+        !item.publication.in_flight &&
+        item.publication.presentation.key !== 'published'
+    );
 }
 
 function EmptyContent({
