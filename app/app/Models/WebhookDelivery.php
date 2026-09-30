@@ -34,6 +34,7 @@ use Illuminate\Support\Str;
  * @property int|null $latency_ms
  * @property int $attempts
  * @property int $deferrals
+ * @property int $sweeps
  * @property array<string, mixed> $payload_snapshot
  * @property string|null $error
  * @property Carbon|null $delivered_at
@@ -61,6 +62,7 @@ class WebhookDelivery extends Model
         'latency_ms',
         'attempts',
         'deferrals',
+        'sweeps',
         'payload_snapshot',
         'error',
         'delivered_at',
@@ -115,6 +117,7 @@ class WebhookDelivery extends Model
             'latency_ms' => 'integer',
             'attempts' => 'integer',
             'deferrals' => 'integer',
+            'sweeps' => 'integer',
             'delivered_at' => 'datetime',
             'next_attempt_at' => 'datetime',
         ];

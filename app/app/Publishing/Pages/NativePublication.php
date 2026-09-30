@@ -56,7 +56,7 @@ final class NativePublication
             $publication = PagePublication::query()->create(['proposal_id' => $proposal->id, 'revision_id' => $revisionId, 'site_page_id' => $proposal->site_page_id, 'delivery_id' => $id, 'mode' => $patch['destination']['type'], 'status' => 'queued', 'authorized_by' => $actor->id, 'authorized_at' => now()]);
             $operation = $this->operation($publication, $actor, $patch['destination'], ['operation_id' => $id, 'expected_revision' => $patch['expected_revision'], 'patches' => $patch['patches']], 'publish', $source->id);
             PageProposalReview::query()->create(['proposal_id' => $proposal->id, 'revision_id' => $revisionId, 'actor_id' => $actor->id, 'action' => 'authorize_native_publication', 'reason' => 'Explicitly authorized the exact reviewed CMS patch.', 'active_seconds' => 0, 'corrections' => ['publication_id' => $publication->id, 'operation_id' => $operation->id]]);
-            DB::afterCommit(fn () => DispatchPageOperation::dispatch($operation->id)->onQueue((string) config('publishing.queue', 'pipeline')));
+            DB::afterCommit(fn () => DispatchPageOperation::dispatch($operation->id));
 
             return $operation;
         });
@@ -96,7 +96,7 @@ final class NativePublication
             // while retaining every original object/account identity constraint.
             $operation = $this->operation($publication, $actor, $destination, ['operation_id' => (string) Str::uuid(), 'expected_revision' => $current->revision, 'restores_operation_id' => $original->delivery_id], 'recovery', $current->id, $original->id);
             PageProposalReview::query()->create(['proposal_id' => $publication->proposal_id, 'revision_id' => $publication->revision_id, 'actor_id' => $actor->id, 'action' => 'authorize_recovery', 'reason' => 'Explicitly authorized restoring only this publication’s original fields.', 'active_seconds' => 0, 'corrections' => ['publication_id' => $publication->id, 'operation_id' => $operation->id]]);
-            DB::afterCommit(fn () => DispatchPageOperation::dispatch($operation->id)->onQueue((string) config('publishing.queue', 'pipeline')));
+            DB::afterCommit(fn () => DispatchPageOperation::dispatch($operation->id));
 
             return $operation;
         });

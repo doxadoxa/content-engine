@@ -25,5 +25,13 @@ abstract class TestCase extends BaseTestCase
         // because the host did not exist. A real host would have been a real
         // request, billed to real credentials, from a test run.
         Http::preventStrayRequests();
+
+        // The suite runs its queue inline (QUEUE_CONNECTION=sync, see
+        // tests/bootstrap.php), and publishing jobs name a connection of their
+        // own that would otherwise push to a real Redis nobody is working.
+        // Only the driver changes: the name stays, so a test can still assert
+        // a job chose the publishing lane, and `retry_after` stays, so the
+        // tests that check the timeout chain read the shipped number.
+        config(['queue.connections.publishing.driver' => 'sync']);
     }
 }

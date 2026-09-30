@@ -11,6 +11,7 @@ use App\Models\Project;
 use App\Models\WebhookDelivery;
 use App\Publishing\ChannelPublisherRegistry;
 use App\Publishing\PublishToChannels;
+use Carbon\CarbonInterface;
 
 /**
  * One transport (§9).
@@ -75,8 +76,12 @@ interface ChannelPublisher
 
     /**
      * One attempt at one delivery. Never throws — see the class docblock.
+     *
+     * `$scheduledFor` is the rung a retry job was queued for, when the caller
+     * is that job. A row waiting for a later rung is left alone by any other
+     * caller, so two jobs for one row cannot split the ladder between them.
      */
-    public function attempt(WebhookDelivery $delivery): WebhookDelivery;
+    public function attempt(WebhookDelivery $delivery, ?CarbonInterface $scheduledFor = null): WebhookDelivery;
 
     /**
      * Send a settled delivery's stored content again, as a new delivery.

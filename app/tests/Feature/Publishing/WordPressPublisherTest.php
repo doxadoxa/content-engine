@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\SitePage;
 use App\Models\WebhookDelivery;
 use App\Pages\RegisterPublishedArticle;
+use App\Publishing\StrandedDeliveries;
 use App\Publishing\WordPressPublisher;
 use App\Support\Tenancy\CurrentProject;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -128,6 +129,28 @@ final class WordPressPublisherTest extends TestCase
         $this->assertSame(1, WebhookDelivery::query()->where('content_item_id', $this->item->id)->count());
         $publisher->replay($delivery->fresh());
         Http::assertSentCount(1);
+    }
+
+    #[Test]
+    public function a_scheduled_delivery_replayed_in_place_is_not_mistaken_for_a_stranded_one(): void
+    {
+        // The row keeps its identity, and so its `created_at` — a week old
+        // here. The stranded sweep ages a pending row from when it was due, so
+        // the replay has to say it is due now, or the sweep would see a
+        // week-old row nobody attempted and send it a second time.
+        $this->channel->forceFill(['verified_at' => now(), 'config' => [...$this->channel->config, 'article_publishing_verified' => true]])->save();
+        $publisher = app(WordPressPublisher::class);
+        $delivery = $publisher->queue($this->item, $this->channel);
+        $schedule = ArticleSchedule::query()->create(['content_item_id' => $this->item->id, 'channel_id' => $this->channel->id, 'publish_at' => now()->subMinute(), 'local_date' => now()->toDateString(), 'local_time' => '09:00', 'timezone' => 'UTC', 'mode' => 'review_first', 'origin' => 'manager', 'status' => 'dispatching', 'version' => 1, 'delivery_id' => $delivery->id]);
+        $delivery->forceFill(['article_schedule_id' => $schedule->id, 'article_schedule_version' => 1, 'status' => DeliveryStatus::DeadLetter, 'attempts' => 5, 'sweeps' => 2, 'article_attempt_started_at' => now(), 'created_at' => now()->subWeek()])->save();
+
+        $retry = $publisher->replay($delivery);
+
+        $this->assertSame(DeliveryStatus::Pending, $retry->status);
+        $this->assertSame(0, $retry->sweeps);
+        $this->assertNotNull($retry->next_attempt_at);
+        $this->assertFalse(StrandedDeliveries::includes($retry));
+        $this->assertSame(0, StrandedDeliveries::scope(WebhookDelivery::query())->count());
     }
 
     /** @param array<string, mixed> $change */

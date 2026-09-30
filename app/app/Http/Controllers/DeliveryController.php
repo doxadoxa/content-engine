@@ -25,6 +25,7 @@ class DeliveryController extends Controller
     public function index(Request $request): Response
     {
         $status = $request->query('status');
+        [$stranded, $bindings] = StrandedDeliveries::condition();
 
         $query = WebhookDelivery::query()
             ->with(['channel', 'contentItem'])
@@ -33,8 +34,8 @@ class DeliveryController extends Controller
             // sits with them, because it is the same thing wearing a status
             // that reads as healthy — see {@see StrandedDeliveries}.
             ->orderByRaw(
-                "case when status = 'dead_letter' or (status = ? and created_at <= ?) then 0 else 1 end",
-                [DeliveryStatus::Pending->value, StrandedDeliveries::cutoff()],
+                "case when status = 'dead_letter' or ({$stranded}) then 0 else 1 end",
+                $bindings,
             )
             ->latest()
             ->orderByDesc('id');

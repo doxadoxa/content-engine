@@ -20,6 +20,7 @@ use App\Publishing\Contracts\ChannelPublisher;
 use App\Publishing\Jobs\DeliverWebhookJob;
 use App\Support\Http\PublicHttpTarget;
 use App\Support\Http\UnsafePublicUrl;
+use Carbon\CarbonInterface;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
@@ -46,6 +47,9 @@ class WebhookPublisher implements ChannelPublisher
 {
     /** §9's "механика", shared with every transport. */
     use RecordsDeliveryOutcome;
+
+    /** How early a retry may run and still count as due. */
+    private const int DUE_GRACE_SECONDS = 5;
 
     public function __construct(
         protected readonly PublicHttpTarget $targets,
@@ -117,9 +121,7 @@ class WebhookPublisher implements ChannelPublisher
             'payload_snapshot' => WebhookPayload::ping($project, $deliveryId),
         ]);
 
-        DeliverWebhookJob::dispatch($delivery->getKey())
-            ->onQueue((string) config('publishing.queue'))
-            ->afterCommit();
+        DeliverWebhookJob::dispatch($delivery->getKey())->afterCommit();
 
         return $delivery;
     }
@@ -173,9 +175,7 @@ class WebhookPublisher implements ChannelPublisher
         );
 
         if ($delivery->wasRecentlyCreated) {
-            DeliverWebhookJob::dispatch($delivery->getKey())
-                ->onQueue((string) config('publishing.queue'))
-                ->afterCommit();
+            DeliverWebhookJob::dispatch($delivery->getKey())->afterCommit();
         }
 
         return $delivery;
@@ -191,7 +191,7 @@ class WebhookPublisher implements ChannelPublisher
     public function replay(WebhookDelivery $delivery): WebhookDelivery
     {
         if ($delivery->article_schedule_id !== null) {
-            $lock = Cache::lock('webhook-delivery:'.$delivery->id, (int) config('publishing.timeout', 15) + 30);
+            $lock = Cache::lock('webhook-delivery:'.$delivery->id, self::lockSeconds());
             abort_unless($lock->get(), 409, 'This publication is still being delivered.');
             try {
                 $delivery->refresh();
@@ -203,11 +203,16 @@ class WebhookPublisher implements ChannelPublisher
                 $refusal = app(ArticleDeliveryGuard::class)->refusal($delivery)
                     ?? ($delivery->contentItem === null ? null : app(ArticleBusinessFacts::class)->refusal($delivery->contentItem));
                 abort_if($refusal !== null, 409, $refusal ?? '');
-                $delivery->forceFill(['status' => DeliveryStatus::Pending, 'next_attempt_at' => null, 'error' => null, 'deferrals' => 0])->save();
+                // Due now, and stamped so: the row keeps its original
+                // `created_at`, and StrandedDeliveries ages a pending row from
+                // when it was due. Left null, a replay of a week-old delivery
+                // would look abandoned the moment it was queued, and the
+                // minute-by-minute sweep would dispatch it a second time.
+                $delivery->forceFill(['status' => DeliveryStatus::Pending, 'next_attempt_at' => now(), 'error' => null, 'deferrals' => 0, 'sweeps' => 0])->save();
             } finally {
                 $lock->release();
             }
-            DeliverWebhookJob::dispatch($delivery->getKey())->onQueue((string) config('publishing.queue'))->afterCommit();
+            DeliverWebhookJob::dispatch($delivery->getKey())->afterCommit();
 
             return $delivery;
         }
@@ -226,9 +231,7 @@ class WebhookPublisher implements ChannelPublisher
             'payload_snapshot' => $snapshot,
         ]);
 
-        DeliverWebhookJob::dispatch($replay->getKey())
-            ->onQueue((string) config('publishing.queue'))
-            ->afterCommit();
+        DeliverWebhookJob::dispatch($replay->getKey())->afterCommit();
 
         return $replay;
     }
@@ -237,19 +240,22 @@ class WebhookPublisher implements ChannelPublisher
      * One attempt. Never throws: a delivery's outcome is a row, not an
      * exception, and the job that calls this must not be retried by the queue.
      */
-    public function attempt(WebhookDelivery $delivery): WebhookDelivery
+    public function attempt(WebhookDelivery $delivery, ?CarbonInterface $scheduledFor = null): WebhookDelivery
     {
-        $lock = Cache::lock(
-            'webhook-delivery:'.$delivery->getKey(),
-            (int) config('publishing.timeout', 15) + 30,
-        );
+        $lock = Cache::lock('webhook-delivery:'.$delivery->getKey(), self::lockSeconds());
 
         if (! $lock->get()) {
             return $delivery->refresh();
         }
 
         try {
-            $result = $this->attemptWhileLocked($delivery->refresh());
+            $delivery->refresh();
+
+            if ($this->waitingForAnotherJob($delivery, $scheduledFor)) {
+                return $delivery;
+            }
+
+            $result = $this->attemptWhileLocked($delivery);
         } finally {
             $lock->release();
         }
@@ -258,8 +264,11 @@ class WebhookPublisher implements ChannelPublisher
         // executes immediately; dispatching while locked would make the next
         // attempt see the lock, do nothing, and strand the row in retrying.
         if ($result->status === DeliveryStatus::Retrying) {
-            DeliverWebhookJob::dispatch($result->getKey())
-                ->onQueue((string) config('publishing.queue'))
+            // Read back first, so the rung the job carries is the one the row
+            // stores — whole seconds — and not the unrounded time in memory.
+            $result->refresh();
+
+            DeliverWebhookJob::dispatch($result->getKey(), $result->next_attempt_at)
                 ->afterCommit()
                 ->delay($result->next_attempt_at);
 
@@ -267,6 +276,21 @@ class WebhookPublisher implements ChannelPublisher
         }
 
         return $result;
+    }
+
+    /**
+     * How long one attempt holds its delivery.
+     *
+     * Past the worker's timeout, not merely past the request's: the request
+     * timeout bounds one HTTP call, while the worker's is the only thing that
+     * bounds the whole attempt, and a lock that lapsed while the attempt was
+     * still running would let the stranded sweep take the row out from under
+     * it. See `publishing.lock_seconds`; PipelineTimeoutChainTest reads it
+     * from here.
+     */
+    public static function lockSeconds(): int
+    {
+        return (int) config('publishing.lock_seconds', 100);
     }
 
     protected function transportName(): string
@@ -338,6 +362,36 @@ class WebhookPublisher implements ChannelPublisher
     protected function acceptsResponse(WebhookDelivery $delivery, Response $response): bool
     {
         return $response->successful() || $response->status() === 409;
+    }
+
+    /**
+     * Whether this row's next attempt belongs to a different job.
+     *
+     * A row can have two jobs: the stranded sweep queues one while the
+     * original was only stuck behind a busy queue, and whichever runs second
+     * finds a retry the first has already scheduled — with a job of its own,
+     * delayed to the rung's time. Sending now would take that rung at an
+     * interval nobody promised, and queueing another retry would keep the
+     * duplicate alive rung after rung, so the second job does neither.
+     *
+     * The job scheduled for the rung is recognised by the rung it carries, not
+     * by the clock: Redis releases it on time, and the sync queue the suite
+     * runs on releases it at once. Any other job goes by the clock, with a few
+     * seconds of grace for the clocks of two machines.
+     */
+    private function waitingForAnotherJob(WebhookDelivery $delivery, ?CarbonInterface $scheduledFor): bool
+    {
+        $due = $delivery->next_attempt_at;
+
+        if ($delivery->status !== DeliveryStatus::Retrying || $due === null) {
+            return false;
+        }
+
+        if ($scheduledFor !== null && $scheduledFor->equalTo($due)) {
+            return false;
+        }
+
+        return $due->isAfter(now()->addSeconds(self::DUE_GRACE_SECONDS));
     }
 
     /**

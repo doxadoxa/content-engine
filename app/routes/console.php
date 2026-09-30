@@ -93,15 +93,21 @@ Schedule::command('publish:approved')
     ->runInBackground()
     ->sentryMonitor();
 
-// The floor under the queue. A delivery job has one try, only a `retrying` row
-// is ever re-dispatched, and `dispatch_key` stops a second row being made — so
-// a worker killed mid-flight leaves a delivery at `pending` with nothing left
-// that would ever touch it again. Every ten minutes rather than hourly: the
-// threshold is already an hour of waiting (§9, and
-// App\Publishing\StrandedDeliveries).
+// The floor under the queue. A delivery job has one try and `dispatch_key`
+// stops a second row being made — so a worker restarted with a delivery in
+// hand leaves it `pending`, or `retrying` with its only job gone, and nothing
+// left that would ever touch it again. Every minute: the threshold is four
+// minutes (publishing's own `retry_after` plus room, see
+// App\Publishing\StrandedDeliveries), and a sweep that finds nothing is one
+// small query. Ten-minute ticks would more than double the wait for a delivery
+// somebody is watching.
+//
+// The overlap mutex expires after five minutes rather than Laravel's default
+// day: a scheduler killed mid-sweep never releases it, and a day without a
+// sweep is exactly the silence this command exists to end.
 Schedule::command('publish:sweep-stranded')
-    ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->everyMinute()
+    ->withoutOverlapping(5)
     ->runInBackground()
     ->sentryMonitor();
 
@@ -112,9 +118,10 @@ Schedule::command('publish:sweep-stranded')
 // 2026-08-07 held the article contour of its project shut for two days, and
 // nothing in the installation was capable of noticing.
 //
-// Every ten minutes, matching its neighbour above and for the same reason: what
-// it recovers is a project not writing, and the tick that would use the freed
-// contour comes round on the hour. Resuming a run that did not need it costs
+// Every ten minutes, which is what this recovery is worth: what it frees is a
+// project not writing, and the tick that would use the freed contour comes
+// round on the hour. (Its neighbour above went to every minute because a
+// person is watching a delivery; nobody is watching a contour.) Resuming a run that did not need it costs
 // one queue message the claim then discards, so the sweep can afford to be
 // blunt and frequent.
 Schedule::command('pipeline:reap')

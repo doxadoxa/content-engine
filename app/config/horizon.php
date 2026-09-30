@@ -107,6 +107,11 @@ return [
 
     'waits' => [
         'redis:default' => 60,
+        // Tighter, because a wait here is a person watching "in progress". A
+        // delivery is one request of at most fifteen seconds, so half a minute
+        // in the queue means the lane is short of workers, not busy.
+        'publishing:publishing' => 30,
+        'publishing:publishing-pages' => 30,
     ],
 
     /*
@@ -315,6 +320,44 @@ return [
             'timeout' => 1800,
             'nice' => 5,
         ],
+
+        /*
+         * Publishing: webhook and WordPress deliveries, and native page
+         * operations. Its own pool and its own queue connection, because all
+         * of it is one outbound request that a person is waiting on.
+         *
+         * On `pipeline` it queued behind every cheap step in every run, and
+         * it inherited the `redis` connection's `retry_after`, sized for the
+         * longest model call. A worker restarted with a delivery in hand then
+         * left the row in "in progress" for an hour before the sweep could
+         * touch it. The `publishing` connection gives it a `retry_after` that
+         * fits the work — see config/queue.php.
+         *
+         * 90 clears the longest thing a job here can legitimately do: a
+         * delivery makes one request of `publishing.timeout` (15 s), and a
+         * page operation at most two of 20 s. The lock both hold
+         * (`publishing.lock_seconds`, 100) is deliberately longer than this, so
+         * no attempt the worker allows can outlast the lock guarding it. It
+         * stays under the connection's `retry_after` (150), so Redis never
+         * offers a job to a second worker while the first may still be sending
+         * it. PipelineTimeoutChainTest asserts the whole chain.
+         */
+        'publishing' => [
+            'connection' => 'publishing',
+            // Deliveries and page operations: the same pool, balanced between
+            // them, and a queue name each so the stranded sweep can count
+            // deliveries alone.
+            'queue' => ['publishing', 'publishing-pages'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 1,
+            'timeout' => 90,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
@@ -339,6 +382,12 @@ return [
             'pipeline-audit' => [
                 'maxProcesses' => 2,
             ],
+            // Enough that one slow receiver does not hold up everybody else's
+            // article. Deliveries spend their time waiting on the network, so
+            // three is cheap.
+            'publishing' => [
+                'maxProcesses' => 3,
+            ],
         ],
 
         'local' => [
@@ -353,6 +402,11 @@ return [
             ],
             'pipeline-audit' => [
                 'maxProcesses' => 1,
+            ],
+            // One per queue: auto-balancing gives each of the lane's two
+            // queues a process of its own.
+            'publishing' => [
+                'maxProcesses' => 2,
             ],
         ],
     ],

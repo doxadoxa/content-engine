@@ -6,6 +6,8 @@ namespace Tests\Unit;
 
 use App\Pipelines\Contracts\PipelineDefinition;
 use App\Pipelines\Contracts\Step;
+use App\Publishing\StrandedDeliveries;
+use App\Publishing\WebhookPublisher;
 use PHPUnit\Framework\Attributes\Test;
 use ReflectionClass;
 use Tests\TestCase;
@@ -44,6 +46,10 @@ use Tests\TestCase;
  *   running, and two workers do the same work. `config/queue.php` spends a
  *   paragraph on what that means for a publish: a duplicated delivery job is a
  *   duplicated post.
+ *
+ * Publishing has a chain of its own, on its own connection, and one link
+ * longer: the stranded-delivery threshold, which is the sweep deciding a
+ * delivery was abandoned. See the last test.
  *
  * This reads the real config and the real step classes rather than restating
  * the numbers, so raising one and forgetting the others fails here.
@@ -125,6 +131,72 @@ final class PipelineTimeoutChainTest extends TestCase
     }
 
     /**
+     * The publishing lane, in the order each number has to clear the last:
+     *
+     *   the request's timeout < the worker's — or the worker is stopped
+     *   mid-request and nothing records what happened;
+     *
+     *   worker < the delivery lock — the worker's timeout is the only hard
+     *   bound on an attempt, so a lock that lapsed first would let the sweep,
+     *   or a second job, take a row that is still being sent. The same lock
+     *   length guards a schedule change against a delivery in flight, and a
+     *   native page operation, which runs on the same workers;
+     *
+     *   lock < the connection's `retry_after` — Redis must not offer a
+     *   delivery to a second worker while the first may still hold it, and a
+     *   killed worker's lock is gone by the time its job comes back;
+     *
+     *   `retry_after` < the stranded threshold — or the sweep dispatches a
+     *   replacement for a job the queue has not finished giving up on.
+     *
+     * The last link is what an owner waits through when a deploy restarts
+     * the worker holding their article, which is why every number here is
+     * small and why they are asserted together.
+     */
+    #[Test]
+    public function a_delivery_is_given_up_on_only_after_everything_that_could_still_send_it(): void
+    {
+        $connection = (string) config('publishing.connection');
+        $queue = (string) config('publishing.queue');
+
+        $request = (int) config('publishing.timeout');
+        $worker = $this->workerTimeout($queue, $connection);
+        $lock = WebhookPublisher::lockSeconds();
+        $retryAfter = (int) config("queue.connections.{$connection}.retry_after");
+        $stranded = StrandedDeliveries::seconds();
+
+        $this->assertNotNull(
+            $worker,
+            "No supervisor in config/horizon.php works the {$queue} queue on the {$connection} "
+                .'connection, so no delivery would ever be sent.',
+        );
+        $this->assertLessThan(
+            $worker,
+            $request,
+            "A delivery request may take {$request}s and its worker stops at {$worker}s: raise the "
+                .'publishing supervisor in config/horizon.php, or lower PUBLISH_TIMEOUT.',
+        );
+        $this->assertLessThan(
+            $lock,
+            $worker,
+            "The publishing worker may run an attempt for {$worker}s and the delivery lock lapses at "
+                ."{$lock}s: raise publishing.lock_seconds in config/publishing.php.",
+        );
+        $this->assertLessThan(
+            $retryAfter,
+            $lock,
+            "A delivery lock lasts {$lock}s and Redis re-offers its job at {$retryAfter}s: raise "
+                .'PUBLISH_QUEUE_RETRY_AFTER in config/queue.php.',
+        );
+        $this->assertLessThan(
+            $stranded,
+            $retryAfter,
+            "Redis re-offers a delivery at {$retryAfter}s and the sweep replaces it at {$stranded}s: "
+                .'see App\\Publishing\\StrandedDeliveries.',
+        );
+    }
+
+    /**
      * Every step in every pipeline, grouped by the queue it runs on.
      *
      * @return array<string, array<class-string<Step>, int>>
@@ -169,9 +241,13 @@ final class PipelineTimeoutChainTest extends TestCase
     }
 
     /** The supervisor that serves this queue, if one does. */
-    private function workerTimeout(string $queue): ?int
+    private function workerTimeout(string $queue, ?string $connection = null): ?int
     {
         foreach ((array) config('horizon.defaults', []) as $supervisor) {
+            if ($connection !== null && ($supervisor['connection'] ?? null) !== $connection) {
+                continue;
+            }
+
             if (in_array($queue, (array) ($supervisor['queue'] ?? []), true)) {
                 return (int) $supervisor['timeout'];
             }
