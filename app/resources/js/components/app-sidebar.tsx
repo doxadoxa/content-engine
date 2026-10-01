@@ -33,10 +33,12 @@ import { cookies, privacy, terms } from '@/routes/legal';
 import { index as pagesIndex } from '@/routes/pages';
 import { index as performanceIndex } from '@/routes/performance';
 import { index as visibilityIndex } from '@/routes/visibility';
+import type { Auth } from '@/types';
 
 /** Everyday publishing and growth reports. Project administration lives in the switcher. */
 export function AppSidebar() {
-    const { url } = usePage();
+    const { url, props } = usePage<{ auth: Auth }>();
+    const project = props.auth.project;
 
     return (
         <Sidebar collapsible="icon" variant="inset">
@@ -58,60 +60,66 @@ export function AppSidebar() {
             </SidebarHeader>
 
             <SidebarContent>
-                <SidebarGroup className="px-3 py-2">
-                    <SidebarGroupContent>
-                        <SidebarMenu>
-                            <NavLink
-                                href={homeIndex().url}
-                                icon={House}
-                                label="Dashboard"
-                                current={url}
-                                also={[dashboard().url, '/purchases']}
-                            />
-                            <NavLink
-                                href={calendarIndex().url}
-                                icon={CalendarDays}
-                                label="Calendar"
-                                current={url}
-                            />
-                            <NavLink
-                                href={contentIndex().url}
-                                icon={FileText}
-                                label="Content"
-                                current={url}
-                                also={[
-                                    pagesIndex().url,
-                                    factsIndex().url,
-                                    '/plan',
-                                    '/proposals',
-                                    '/approvals',
-                                ]}
-                            />
-                            {/* Where articles go. Still /channels underneath,
+                {/* Every section below is about a project, so before there is
+                    one each link led to an error or a 404. Gone until setup
+                    has made one; the logo still goes home, where the setup
+                    starts, and the footer stays. */}
+                {project && (
+                    <SidebarGroup className="px-3 py-2">
+                        <SidebarGroupContent>
+                            <SidebarMenu>
+                                <NavLink
+                                    href={homeIndex().url}
+                                    icon={House}
+                                    label="Dashboard"
+                                    current={url}
+                                    also={[dashboard().url, '/purchases']}
+                                />
+                                <NavLink
+                                    href={calendarIndex().url}
+                                    icon={CalendarDays}
+                                    label="Calendar"
+                                    current={url}
+                                />
+                                <NavLink
+                                    href={contentIndex().url}
+                                    icon={FileText}
+                                    label="Content"
+                                    current={url}
+                                    also={[
+                                        pagesIndex().url,
+                                        factsIndex().url,
+                                        '/plan',
+                                        '/proposals',
+                                        '/approvals',
+                                    ]}
+                                />
+                                {/* Where articles go. Still /channels underneath,
                                 and "Website" everywhere a person reads it. */}
-                            <NavLink
-                                href={channelsIndex().url}
-                                icon={Globe}
-                                label="Website"
-                                current={url}
-                                also={['/deliveries']}
-                            />
-                            <NavLink
-                                href={performanceIndex().url}
-                                icon={Search}
-                                label="Search performance"
-                                current={url}
-                                also={[feedbackIndex().url]}
-                            />
-                            <NavLink
-                                href={visibilityIndex().url}
-                                icon={Sparkles}
-                                label="AI visibility"
-                                current={url}
-                            />
-                        </SidebarMenu>
-                    </SidebarGroupContent>
-                </SidebarGroup>
+                                <NavLink
+                                    href={channelsIndex().url}
+                                    icon={Globe}
+                                    label="Website"
+                                    current={url}
+                                    also={['/deliveries']}
+                                />
+                                <NavLink
+                                    href={performanceIndex().url}
+                                    icon={Search}
+                                    label="Search performance"
+                                    current={url}
+                                    also={[feedbackIndex().url]}
+                                />
+                                <NavLink
+                                    href={visibilityIndex().url}
+                                    icon={Sparkles}
+                                    label="AI visibility"
+                                    current={url}
+                                />
+                            </SidebarMenu>
+                        </SidebarGroupContent>
+                    </SidebarGroup>
+                )}
             </SidebarContent>
 
             <SidebarFooter>
