@@ -174,7 +174,7 @@ class SiteAnalyst
         // Asked for in English, but a model writing about a Portuguese site
         // sometimes answers in Portuguese — and a missed yes is the costly
         // mistake here, since it skips review.
-        $yes = preg_match('/^(y|yes|sí|si|sim|ja|oui|да|так|tak)$/u', $verdict) === 1;
+        $yes = preg_match('/^(y|yes|sí|sì|si|sim|ja|oui|да|так|tak)$/u', $verdict) === 1;
 
         return [
             'isYmyl' => $yes,

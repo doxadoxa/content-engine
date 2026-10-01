@@ -15,6 +15,10 @@ use Illuminate\Validation\Validator;
 
 class ProjectRequest extends FormRequest
 {
+    public const AUTOPUBLISH_REFUSED = 'Articles on this topic need a person to approve them, so they cannot publish automatically.';
+
+    public const BYLINE_REQUIRED = 'Articles on this topic need an author. Add a name, or turn on the AI label.';
+
     /**
      * @return array<string, mixed>
      */
@@ -84,7 +88,7 @@ class ProjectRequest extends FormRequest
             $project = $this->route('project');
 
             if ($project instanceof Project && $project->is_ymyl && $this->boolean('autopublish')) {
-                $validator->errors()->add('autopublish', 'Articles on this topic need a person to approve them, so they cannot publish automatically.');
+                $validator->errors()->add('autopublish', self::AUTOPUBLISH_REFUSED);
             }
 
             // Removing the author and the AI label together would stop every
@@ -96,7 +100,7 @@ class ProjectRequest extends FormRequest
                 $disclosed = $this->has('ai_disclosure') ? $this->boolean('ai_disclosure') : $project->ai_disclosure;
 
                 if ($name === '' && ! $disclosed) {
-                    $validator->errors()->add('author_name', 'Articles on this topic need an author. Add a name, or turn on the AI label.');
+                    $validator->errors()->add('author_name', self::BYLINE_REQUIRED);
                 }
             }
         }];

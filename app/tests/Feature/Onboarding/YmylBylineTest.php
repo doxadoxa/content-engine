@@ -6,6 +6,7 @@ namespace Tests\Feature\Onboarding;
 
 use App\Ai\Contracts\ModelGateway;
 use App\Ai\FakeModelGateway;
+use App\Http\Requests\ProjectRequest;
 use App\Models\AdminAction;
 use App\Models\Project;
 use App\Models\User;
@@ -166,6 +167,35 @@ final class YmylBylineTest extends TestCase
     }
 
     #[Test]
+    public function support_marking_it_sensitive_mid_save_still_keeps_the_byline(): void
+    {
+        [$owner, $project] = $this->live(ymyl: false);
+        $project->forceFill(['authors' => [], 'ai_disclosure' => false])->save();
+        $this->markSensitiveOnceValidated($project);
+
+        $this->actingAs($owner)->withSession(['current_project_id' => $project->id])
+            ->patch("/projects/{$project->id}", [...$this->settings($project), 'author_name' => '', 'ai_disclosure' => false])
+            ->assertSessionHasErrors('author_name');
+
+        $project->refresh();
+        $this->assertTrue($project->is_ymyl);
+        $this->assertTrue($project->ai_disclosure);
+    }
+
+    #[Test]
+    public function support_marking_it_sensitive_mid_save_still_stops_automatic_publishing(): void
+    {
+        [$owner, $project] = $this->live(ymyl: false);
+        $this->markSensitiveOnceValidated($project);
+
+        $this->actingAs($owner)->withSession(['current_project_id' => $project->id])
+            ->patch("/projects/{$project->id}", [...$this->settings($project), 'autopublish' => true])
+            ->assertSessionHasErrors('autopublish');
+
+        $this->assertFalse($project->refresh()->autopublish);
+    }
+
+    #[Test]
     public function an_owner_cannot_turn_ymyl_off_themselves(): void
     {
         [$owner, $project] = $this->live(ymyl: true);
@@ -226,6 +256,7 @@ final class YmylBylineTest extends TestCase
             'comma' => ['Yes, gives tax advice', true, 'gives tax advice'],
             'brackets' => ['yes (loans)', true, 'loans'],
             'in the site\'s language' => ['Sim — conselhos fiscais', true, 'conselhos fiscais'],
+            'in Italian' => ['Sì — consulenza fiscale', true, 'consulenza fiscale'],
             'bold label' => ['**yes** — insurance advice', true, 'insurance advice'],
         ];
     }
@@ -407,6 +438,21 @@ final class YmylBylineTest extends TestCase
         $owner->projects()->attach($project, ['role' => 'owner']);
 
         return [$owner, $project];
+    }
+
+    /**
+     * What support's sensitivity action does, landing between the settings
+     * request passing validation and the controller taking its lock.
+     */
+    private function markSensitiveOnceValidated(Project $project): void
+    {
+        $this->app->afterResolving(ProjectRequest::class, function () use ($project): void {
+            Project::query()->whereKey($project->id)->update([
+                'is_ymyl' => true,
+                'autopublish' => false,
+                'ai_disclosure' => true,
+            ]);
+        });
     }
 
     /** @return array<string, mixed> */

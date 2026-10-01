@@ -23,6 +23,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -87,7 +88,20 @@ class ProjectController extends Controller
                 $data['onboarding'] = [...$locked->onboarding,
                     'article_automation_started_at' => $locked->onboarding['article_automation_started_at'] ?? now()->toIso8601String()];
             }
-            $locked->update($data);
+            $locked->fill($data);
+
+            // Asked again of the locked row. The request was validated against
+            // the route's copy, and support may have marked the project
+            // sensitive since — which turned automatic publishing off and the
+            // AI label on, and this save must not quietly undo either.
+            if ($locked->is_ymyl && $locked->isDirty('autopublish') && $locked->autopublish) {
+                throw ValidationException::withMessages(['autopublish' => ProjectRequest::AUTOPUBLISH_REFUSED]);
+            }
+            if ($locked->isDirty(['authors', 'ai_disclosure']) && ! $locked->hasAccountableByline()) {
+                throw ValidationException::withMessages(['author_name' => ProjectRequest::BYLINE_REQUIRED]);
+            }
+
+            $locked->save();
             if ($locked->wasChanged('autopublish')) {
                 app(ArticleSchedules::class)->followProject($locked);
             }
