@@ -27,8 +27,9 @@ use Inertia\Response;
  * arrive with its own audit trail and its own argument rather than as a line
  * item in a billing change.
  *
- * The one thing that does leave this screen is a test signup sent to Anderro,
- * which touches nothing of ours — see {@see self::sendAnderroSignup()}.
+ * The one thing that does leave this screen is a test event sent to Anderro —
+ * a signup or a payment — which touches nothing of ours. See
+ * {@see self::sendAnderroSignup()} and {@see self::sendAnderroPayment()}.
  */
 class AdminUserController extends Controller
 {
@@ -40,7 +41,7 @@ class AdminUserController extends Controller
             ->when($search !== '', fn ($query) => $query->where(
                 fn ($q) => $q->where('name', 'ilike', "%{$search}%")->orWhere('email', 'ilike', "%{$search}%"),
             ))
-            ->with(['projects' => fn ($query) => $query->select('projects.id', 'projects.name', 'projects.slug')])
+            ->with(['projects' => fn ($query) => $query->select('projects.id', 'projects.name', 'projects.slug'), 'affiliateReferral'])
             ->orderBy('name')
             ->paginate(25)
             ->withQueryString();
@@ -54,6 +55,8 @@ class AdminUserController extends Controller
                 'email' => $user->email,
                 'is_admin' => $user->is_admin,
                 'verified' => $user->email_verified_at !== null,
+                // Whether a test payment would earn a partner a real commission.
+                'referred' => $user->affiliateReferral !== null,
                 'created_at' => $user->created_at?->toIso8601String(),
                 'projects' => $user->projects->map(fn (Project $project): array => [
                     'id' => $project->getKey(),
@@ -127,6 +130,69 @@ class AdminUserController extends Controller
             null,
             [],
             ['user_id' => $user->getKey(), 'email' => $user->email, 'visitor_id' => $visitor, 'outcome' => $outcome],
+        );
+
+        Inertia::flash('toast', $toast);
+
+        return back();
+    }
+
+    /**
+     * Tell Anderro this account paid, now, to see whether it arrives and is
+     * credited.
+     *
+     * Skips what {@see Referrals::invoicePaid()} insists on, for the same
+     * reason the test signup does: no referral or consent check, and no queue,
+     * because somebody is waiting for the answer. Sent under the address the
+     * signup was reported with when there is one, since that is what Anderro
+     * attributes payments by, and the account's own otherwise.
+     *
+     * Unlike a test signup this is not harmless on Anderro's side. Payments are
+     * not deduplicated there, and one for an account a partner really referred
+     * earns that partner a real commission — which is why the amount is asked
+     * for rather than assumed.
+     */
+    public function sendAnderroPayment(Request $request, User $user, Anderro $anderro): RedirectResponse
+    {
+        $validated = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01', 'max:100000', 'decimal:0,2'],
+        ], [
+            'amount.min' => 'Anderro only takes payments above zero.',
+            'amount.decimal' => 'At most two decimal places.',
+        ]);
+
+        if (! $anderro->isConfigured()) {
+            Inertia::flash('toast', ['type' => 'error', 'message' => 'Anderro is not configured here: both keys are needed.']);
+
+            return back();
+        }
+
+        $email = $user->affiliateReferral->email ?? $user->email;
+        $cents = (int) round(((float) $validated['amount']) * 100);
+        $amount = number_format($cents / 100, 2);
+
+        try {
+            $anderro->payment($email, $cents);
+            $outcome = 'accepted';
+            $toast = ['type' => 'success', 'message' => "Anderro accepted a payment of {$amount} for {$email}."];
+        } catch (AffiliateEventRejected $e) {
+            $outcome = 'rejected: '.$e->getMessage();
+            $toast = ['type' => 'error', 'message' => $e->getMessage()];
+        } catch (ConnectionException) {
+            // As for the signup, no answer is not no event — and a payment sent
+            // again is counted again, so say so before somebody retries.
+            $outcome = 'unknown: no answer from Anderro';
+            $toast = ['type' => 'warning', 'message' => "Anderro did not answer, so whether the payment for {$email} arrived is unknown. Check Anderro before sending another: payments are not deduplicated."];
+        }
+
+        $actor = $request->user();
+
+        AdminAction::record(
+            $actor instanceof User ? $actor : null,
+            'affiliate.test_payment',
+            null,
+            [],
+            ['user_id' => $user->getKey(), 'email' => $email, 'amount_cents' => $cents, 'outcome' => $outcome],
         );
 
         Inertia::flash('toast', $toast);

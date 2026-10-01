@@ -40,6 +40,7 @@ type Row = {
     email: string;
     is_admin: boolean;
     verified: boolean;
+    referred: boolean;
     created_at: string | null;
     projects: { id: string; name: string; slug: string; role: string | null }[];
 };
@@ -204,13 +205,21 @@ export default function AdminUsers({ q, anderro_configured, users }: Props) {
                                             <TableCell className="text-muted-foreground tabular-nums">
                                                 {user.created_at?.slice(0, 10)}
                                             </TableCell>
-                                            <TableCell className="text-right">
-                                                <TestSignup
-                                                    user={user}
-                                                    configured={
-                                                        anderro_configured
-                                                    }
-                                                />
+                                            <TableCell>
+                                                <div className="flex justify-end gap-2">
+                                                    <TestSignup
+                                                        user={user}
+                                                        configured={
+                                                            anderro_configured
+                                                        }
+                                                    />
+                                                    <TestPayment
+                                                        user={user}
+                                                        configured={
+                                                            anderro_configured
+                                                        }
+                                                    />
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -309,6 +318,105 @@ function TestSignup({ user, configured }: { user: Row; configured: boolean }) {
                                 </Button>
                                 <Button type="submit" disabled={processing}>
                                     Send signup
+                                </Button>
+                            </DialogFooter>
+                        </>
+                    )}
+                </Form>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+/**
+ * Tell Anderro this account paid, to check payments end to end.
+ *
+ * Unlike a test signup this is not free on Anderro's side: payments are not
+ * deduplicated, and one for an account a partner referred earns that partner a
+ * real commission. So the amount is typed in, and the dialog says which case
+ * this is.
+ */
+function TestPayment({ user, configured }: { user: Row; configured: boolean }) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!configured}
+                    title={
+                        configured
+                            ? undefined
+                            : 'Anderro is not configured on this deployment'
+                    }
+                >
+                    Test payment
+                </Button>
+            </DialogTrigger>
+            <DialogContent>
+                <Form
+                    action={`${usersRoute().url}/${user.id}/anderro-payment`}
+                    method="post"
+                    options={{ preserveScroll: true }}
+                    onSuccess={() => setOpen(false)}
+                >
+                    {({ processing, errors }) => (
+                        <>
+                            <DialogHeader>
+                                <DialogTitle>
+                                    Send a test payment to Anderro?
+                                </DialogTitle>
+                                <DialogDescription>
+                                    Anderro is told that {user.email} paid this
+                                    amount. It's sent now, it isn't
+                                    deduplicated, and it's written to the admin
+                                    log.{' '}
+                                    {user.referred
+                                        ? 'A partner referred this account, so they earn a real commission on it.'
+                                        : "Anderro only credits it if it has recorded a signup for this address; otherwise it's ignored."}
+                                </DialogDescription>
+                            </DialogHeader>
+
+                            <div className="grid gap-2 py-4">
+                                <Label htmlFor={`amount-${user.id}`}>
+                                    Amount, before tax
+                                </Label>
+                                <Input
+                                    id={`amount-${user.id}`}
+                                    name="amount"
+                                    type="number"
+                                    inputMode="decimal"
+                                    min={0.01}
+                                    step={0.01}
+                                    defaultValue="1.00"
+                                    className="w-40 tabular-nums"
+                                    aria-invalid={
+                                        errors.amount ? true : undefined
+                                    }
+                                    aria-describedby={
+                                        errors.amount
+                                            ? `amount-${user.id}-error`
+                                            : undefined
+                                    }
+                                />
+                                <InputError
+                                    id={`amount-${user.id}-error`}
+                                    message={errors.amount}
+                                />
+                            </div>
+
+                            <DialogFooter>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() => setOpen(false)}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button type="submit" disabled={processing}>
+                                    Send payment
                                 </Button>
                             </DialogFooter>
                         </>
