@@ -33,6 +33,8 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::get('/', AdminOverviewController::class)->name('overview');
 
     Route::get('users', [AdminUserController::class, 'index'])->name('users');
+    Route::post('users/{user}/anderro-signup', [AdminUserController::class, 'sendAnderroSignup'])
+        ->name('users.anderro-signup');
 
     Route::get('projects', [AdminProjectController::class, 'index'])->name('projects');
     Route::get('projects/{project}', [AdminProjectController::class, 'show'])->name('projects.show');
