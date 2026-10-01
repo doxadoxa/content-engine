@@ -51,6 +51,8 @@ type Analysis = {
     language: string;
     market: string;
     is_ymyl: boolean;
+    /** Absent on sites read before the reason was asked for. */
+    ymyl_reason?: string;
     palette: Palette | null;
 };
 
@@ -66,6 +68,7 @@ type Draft = {
     market: string;
     language: string;
     is_ymyl: boolean;
+    ai_disclosure: boolean;
     competitors: string[];
     seed_keywords: string[];
     weekly_target: number;
@@ -85,6 +88,7 @@ type Props = {
     selectedPlan: Offer;
     plans: Offer[];
     trialDays: number;
+    supportEmail: string;
     draft: Draft | null;
 };
 
@@ -112,6 +116,7 @@ export default function Wizard({
     selectedPlan: initialPlan,
     plans,
     trialDays,
+    supportEmail,
 }: Props) {
     const [selectedPlan, setSelectedPlan] = useState(initialPlan);
     const [draft, setDraft] = useState<Draft | null>(initialDraft);
@@ -271,6 +276,7 @@ export default function Wizard({
                                 draft={draft}
                                 step={step}
                                 busy={busy}
+                                supportEmail={supportEmail}
                                 onBack={() => setStep((current) => current - 1)}
                                 /*
                                  * A list, because the last step answers two
@@ -550,12 +556,14 @@ function Steps({
     draft,
     step,
     busy,
+    supportEmail,
     onBack,
     onSave,
 }: {
     draft: Draft;
     step: number;
     busy: boolean;
+    supportEmail: string;
     onBack: () => void;
     onSave: (answers: [string, Record<string, unknown>][]) => void;
 }) {
@@ -593,6 +601,19 @@ function Steps({
     const [authorTitle, setAuthorTitle] = useState(
         saved('voice', 'author_title', ''),
     );
+    /*
+     * Nothing chosen until somebody chooses, unless they already did: either
+     * answer is fine, and pre-picking one would make it ours rather than
+     * theirs.
+     */
+    const [byline, setByline] = useState<Byline | null>(() => {
+        if (saved('voice', 'author_name', '') !== '') {
+            return 'person';
+        }
+
+        return saved('voice', 'ai_disclosure', false) ? 'brand' : null;
+    });
+    const brandByline = draft.is_ymyl && byline === 'brand';
     const [sitemap, setSitemap] = useState(
         saved('voice', 'sitemap_url', draft.sitemap_url ?? ''),
     );
@@ -638,8 +659,13 @@ function Steps({
                             tone,
                             visual_language: visual,
                             forbidden,
-                            author_name: authorName,
-                            author_title: authorTitle,
+                            author_name: brandByline ? '' : authorName,
+                            author_title: brandByline ? '' : authorTitle,
+                            // Always sent. Only a money-or-health project is
+                            // asked, so everything else answers "off" — which
+                            // also clears a label chosen before the site was
+                            // read again and turned out not to need one.
+                            ai_disclosure: brandByline,
                             example_liked: liked,
                             example_disliked: disliked,
                         },
@@ -715,7 +741,12 @@ function Steps({
                                 />
                             </Field>
 
-                            {draft.is_ymyl && <YmylNotice />}
+                            {draft.is_ymyl && (
+                                <YmylNotice
+                                    reason={analysis?.ymyl_reason ?? ''}
+                                    supportEmail={supportEmail}
+                                />
+                            )}
                         </>
                     )}
 
@@ -808,34 +839,54 @@ function Steps({
                                     placeholder="price predictions"
                                 />
                             </Field>
-                            <div className="grid gap-4 sm:grid-cols-2">
-                                <Field
-                                    id="author"
-                                    label="Author byline"
-                                    hint={
-                                        draft.is_ymyl
-                                            ? 'Required for this project: money and health topics need a real named author.'
-                                            : 'Optional. Left empty, articles are published under the brand.'
-                                    }
-                                >
-                                    <Input
+                            {draft.is_ymyl && (
+                                <div className="flex flex-col gap-2">
+                                    <Label>Who signs the articles</Label>
+                                    <p className="text-sm text-muted-foreground">
+                                        Money and health articles need someone
+                                        standing behind them.
+                                    </p>
+                                    <BylineChoice
+                                        brand={name}
+                                        value={byline}
+                                        onChange={setByline}
+                                    />
+                                </div>
+                            )}
+                            {(!draft.is_ymyl || byline === 'person') && (
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                    <Field
                                         id="author"
-                                        value={authorName}
-                                        onChange={(e) =>
-                                            setAuthorName(e.target.value)
+                                        label="Author byline"
+                                        hint={
+                                            draft.is_ymyl
+                                                ? 'Their name as it should appear on each article.'
+                                                : 'Optional. Left empty, articles are published under the brand.'
                                         }
-                                    />
-                                </Field>
-                                <Field id="author-title" label="Their title">
-                                    <Input
+                                    >
+                                        <Input
+                                            id="author"
+                                            value={authorName}
+                                            required={draft.is_ymyl}
+                                            onChange={(e) =>
+                                                setAuthorName(e.target.value)
+                                            }
+                                        />
+                                    </Field>
+                                    <Field
                                         id="author-title"
-                                        value={authorTitle}
-                                        onChange={(e) =>
-                                            setAuthorTitle(e.target.value)
-                                        }
-                                    />
-                                </Field>
-                            </div>
+                                        label="Their title"
+                                    >
+                                        <Input
+                                            id="author-title"
+                                            value={authorTitle}
+                                            onChange={(e) =>
+                                                setAuthorTitle(e.target.value)
+                                            }
+                                        />
+                                    </Field>
+                                </div>
+                            )}
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <Field
                                     id="liked"
@@ -1208,18 +1259,113 @@ function SitePalette({ palette }: { palette: Palette }) {
     );
 }
 
-function YmylNotice() {
+/*
+ * Says why, and where to go if it is wrong. Turning it off is support's call
+ * rather than a switch here, because it is the thing standing between an
+ * article about medication and nobody reading it before it is published.
+ */
+function YmylNotice({
+    reason,
+    supportEmail,
+}: {
+    reason: string;
+    supportEmail: string;
+}) {
     return (
         <div className="flex gap-3 rounded-[1.25rem] border border-amber-500/40 bg-amber-50/50 p-4 text-sm dark:bg-amber-950/20">
             <Check
                 className="mt-0.5 size-4 shrink-0 text-amber-600"
                 aria-hidden="true"
             />
-            <p>
-                We read this as a money-or-health topic. Articles will be
-                fact-checked and held for approval rather than published
-                straight out.
-            </p>
+            <div className="space-y-1.5">
+                <p>
+                    We read this as a money-or-health topic
+                    {reason ? ` (${reason})` : ''}. Articles will be
+                    fact-checked and held for your approval rather than
+                    published straight away.
+                </p>
+                {supportEmail && (
+                    <p className="text-muted-foreground">
+                        Got this wrong? Write to{' '}
+                        <a
+                            href={`mailto:${supportEmail}`}
+                            className="underline underline-offset-4"
+                        >
+                            {supportEmail}
+                        </a>{' '}
+                        and we will review it. You can carry on setting up in
+                        the meantime.
+                    </p>
+                )}
+            </div>
+        </div>
+    );
+}
+
+type Byline = 'person' | 'brand';
+
+/*
+ * Who stands behind a money-or-health article: a named person, or the brand
+ * saying openly that AI helped write it. One of the two is needed before the
+ * first article can be written, so it is asked here, as a choice rather than
+ * as a field that turns out later to have been required.
+ */
+function BylineChoice({
+    brand,
+    value,
+    onChange,
+}: {
+    brand: string;
+    value: Byline | null;
+    onChange: (value: Byline) => void;
+}) {
+    const options: { value: Byline; label: string; detail: string }[] = [
+        {
+            value: 'person',
+            label: 'A named person',
+            detail: 'Recommended. Readers and search engines trust money and health advice more when a real expert signs it.',
+        },
+        {
+            value: 'brand',
+            label: `${brand || 'Your brand'}, labelled as written with AI`,
+            detail: `Each article ends with a line saying AI helped write it and that ${brand || 'your brand'} is responsible for it.`,
+        },
+    ];
+
+    return (
+        <div
+            className="flex flex-col gap-2"
+            role="radiogroup"
+            aria-label="Who signs the articles"
+        >
+            {options.map((option) => (
+                <label
+                    key={option.value}
+                    className={`flex cursor-pointer gap-3 rounded-xl border p-4 text-sm transition-colors ${
+                        value === option.value
+                            ? 'border-primary bg-primary/5'
+                            : 'hover:bg-muted/40'
+                    }`}
+                >
+                    <input
+                        type="radio"
+                        name="byline"
+                        required
+                        className="mt-1 size-4 shrink-0 accent-primary"
+                        value={option.value}
+                        checked={value === option.value}
+                        onChange={() => onChange(option.value)}
+                    />
+                    <span>
+                        <span className="block font-medium">
+                            {option.label}
+                        </span>
+                        <span className="mt-0.5 block leading-relaxed text-muted-foreground">
+                            {option.detail}
+                        </span>
+                    </span>
+                </label>
+            ))}
         </div>
     );
 }

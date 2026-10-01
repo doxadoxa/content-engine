@@ -266,6 +266,86 @@ final class GenerationPipelineTest extends TestCase
     }
 
     #[Test]
+    public function the_refusal_tells_the_owner_where_to_fix_it(): void
+    {
+        $ymyl = Project::factory()->ymyl()->create(['authors' => []]);
+        app(CurrentProject::class)->set($ymyl);
+        BrandBrief::revise($ymyl, ['tone' => 'Precise.']);
+
+        $unit = ContentItem::factory()->create(['target_query' => 'staking']);
+
+        $run = app(PipelineRunner::class)->start('generation', $ymyl, [], $unit->getKey());
+        $run = PipelineRun::acrossProjects()->whereKey($run->getKey())->firstOrFail();
+
+        // Shown on the dashboard, so it says what to do rather than "YMYL".
+        $this->assertStringContainsString('Project settings', (string) $run->error['message']);
+        $this->assertStringNotContainsString('YMYL', (string) $run->error['message']);
+    }
+
+    #[Test]
+    public function a_ymyl_project_publishing_as_ai_assisted_generates_without_a_named_author(): void
+    {
+        $ymyl = Project::factory()->ymyl()->create([
+            'name' => 'Ledger Wise',
+            'authors' => [],
+            'ai_disclosure' => true,
+        ]);
+        app(CurrentProject::class)->set($ymyl);
+        BrandBrief::revise($ymyl, ['tone' => 'Precise and sourced.']);
+
+        $unit = $this->unit();
+        $run = app(PipelineRunner::class)->start('generation', $ymyl, [], $unit->getKey());
+
+        $this->assertSame(PipelineRunStatus::Completed, $run->refresh()->status);
+
+        $unit->refresh();
+
+        // The brand stands behind it, in the schema and in the text.
+        $this->assertSame(['@type' => 'Organization', 'name' => 'Ledger Wise'], $unit->json_ld['author']);
+        $this->assertStringEndsWith(
+            "*This article was written with the help of AI and published by Ledger Wise, which is responsible for its content.*\n",
+            $unit->body_markdown,
+        );
+        $this->assertStringContainsString('published by Ledger Wise', $unit->body_html);
+    }
+
+    #[Test]
+    public function the_ai_label_is_off_unless_the_project_asks_for_it(): void
+    {
+        $unit = $this->unit();
+        $this->generate($unit);
+
+        $this->assertStringNotContainsString('with the help of AI', $unit->refresh()->body_markdown);
+        $this->assertSame('Person', $unit->json_ld['author']['@type']);
+    }
+
+    #[Test]
+    public function an_author_with_no_title_has_no_empty_job_title(): void
+    {
+        $this->project->forceFill(['authors' => [['name' => 'Ana Reis', 'title' => '']]])->save();
+
+        $unit = $this->unit();
+        $this->generate($unit);
+
+        $this->assertSame(['@type' => 'Person', 'name' => 'Ana Reis'], $unit->refresh()->json_ld['author']);
+    }
+
+    #[Test]
+    public function a_named_author_keeps_the_byline_when_the_label_is_on(): void
+    {
+        $this->project->forceFill(['ai_disclosure' => true])->save();
+
+        $unit = $this->unit();
+        $this->generate($unit);
+
+        $unit->refresh();
+
+        // The person signs it; the label still says AI helped.
+        $this->assertSame('Operator', $unit->json_ld['author']['name']);
+        $this->assertStringContainsString('with the help of AI', $unit->body_markdown);
+    }
+
+    #[Test]
     public function a_project_without_a_brief_refuses_to_generate(): void
     {
         $bare = Project::factory()->create();

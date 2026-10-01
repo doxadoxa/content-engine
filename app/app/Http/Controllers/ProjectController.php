@@ -23,6 +23,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -53,6 +54,7 @@ class ProjectController extends Controller
         return Inertia::render('projects/edit', [
             'project' => $this->toProps($project),
             'timezones' => $this->timezones(),
+            'supportEmail' => (string) config('legal.contact_email'),
             // Deferred: listing properties is two calls to Google, and the
             // settings form above must not wait on somebody else's API to
             // render. An operator who came here to rename the project should
@@ -65,7 +67,17 @@ class ProjectController extends Controller
     {
         $this->authorizeMembership($request, $project);
 
-        $data = $request->safe()->except('slug');
+        $data = $request->safe()->except(['slug', 'author_name', 'author_title']);
+
+        // One author, as setup writes it: a name or nobody.
+        if ($request->has('author_name')) {
+            $name = trim((string) $request->validated('author_name'));
+            $title = trim((string) $request->validated('author_title'));
+            $data['authors'] = $name === '' ? [] : [[
+                'name' => $name,
+                ...($title === '' ? [] : ['title' => $title]),
+            ]];
+        }
 
         DB::transaction(function () use ($request, $project, $data): void {
             $locked = Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
@@ -76,7 +88,20 @@ class ProjectController extends Controller
                 $data['onboarding'] = [...$locked->onboarding,
                     'article_automation_started_at' => $locked->onboarding['article_automation_started_at'] ?? now()->toIso8601String()];
             }
-            $locked->update($data);
+            $locked->fill($data);
+
+            // Asked again of the locked row. The request was validated against
+            // the route's copy, and support may have marked the project
+            // sensitive since — which turned automatic publishing off and the
+            // AI label on, and this save must not quietly undo either.
+            if ($locked->is_ymyl && $locked->isDirty('autopublish') && $locked->autopublish) {
+                throw ValidationException::withMessages(['autopublish' => ProjectRequest::AUTOPUBLISH_REFUSED]);
+            }
+            if ($locked->isDirty(['authors', 'ai_disclosure']) && ! $locked->hasAccountableByline()) {
+                throw ValidationException::withMessages(['author_name' => ProjectRequest::BYLINE_REQUIRED]);
+            }
+
+            $locked->save();
             if ($locked->wasChanged('autopublish')) {
                 app(ArticleSchedules::class)->followProject($locked);
             }
@@ -268,6 +293,10 @@ class ProjectController extends Controller
             'timezone' => $project->timezone,
             'autopublish' => $project->autopublish,
             'is_ymyl' => $project->is_ymyl,
+            'ymyl_reason' => (string) ($project->site_analysis['ymyl_reason'] ?? ''),
+            'author_name' => (string) ($project->namedAuthor()['name'] ?? ''),
+            'author_title' => (string) ($project->namedAuthor()['title'] ?? ''),
+            'ai_disclosure' => $project->ai_disclosure,
             'article_scheduling_enabled' => is_string($project->onboarding['article_automation_started_at'] ?? null),
             'default_locale' => $project->default_locale,
             'locales' => $project->locales,

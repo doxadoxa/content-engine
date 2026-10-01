@@ -79,7 +79,25 @@ class SiteAnalyst
                 'FORBIDDEN: claims or topics this business should never make',
                 'LANGUAGE: BCP 47 tag of the site',
                 'MARKET: ISO country code they sell in, or "us" if global',
-                'YMYL: yes or no — does this touch money, health or safety',
+                // Narrow on purpose. "Touches money, health or safety" was the
+                // old question, and every business that takes a payment or
+                // mentions sport answered yes — which put a scheduling tool for
+                // sports clubs behind mandatory review and a named author it
+                // had no reason to need. The test is the *articles*: would
+                // following them badly hurt a reader's health, money, legal
+                // position or safety?
+                'YMYL: "yes" or "no", then " — " and a reason of at most ten words.',
+                '  Yes only when articles for this business would give advice a reader acts on',
+                '  where a mistake could harm their health, finances, legal position or safety:',
+                '  medicine, mental health, medication, supplements, diet for a condition,',
+                '  investing, loans, tax, insurance, legal advice, gambling, crypto, weapons,',
+                '  home or child safety. A business in one of these areas is yes even when it',
+                '  is a shop — a pharmacy, a supplement store or a car-seat retailer.',
+                '  Otherwise no, including: software and SaaS (even for payments or clinics),',
+                '  event organising, sports and fitness clubs or venues, ordinary shops,',
+                '  restaurants, travel, cleaning, marketing, and any business merely because it',
+                '  charges money.',
+                '  Write "yes" or "no" in English, whatever language the site is in.',
                 'Never invent a fact. If the page does not say, leave the line empty.',
             ]),
             prompt: implode("\n\n", array_filter([
@@ -103,7 +121,8 @@ class SiteAnalyst
         $fields = [];
 
         foreach (preg_split('/\R/u', trim($text)) ?: [] as $line) {
-            if (preg_match('/^([A-Z]+):\s*(.*)$/u', trim($line), $m) === 1) {
+            // `**YMYL:** yes` as well as `YMYL: yes` — models bold labels.
+            if (preg_match('/^\**([A-Z]+)\**:\**\s*(.*)$/u', trim($line), $m) === 1) {
                 $fields[$m[1]] = trim($m[2]);
             }
         }
@@ -118,6 +137,7 @@ class SiteAnalyst
         };
 
         $language = $fields['LANGUAGE'] ?? '';
+        $ymyl = $this->ymyl($fields['YMYL'] ?? '');
 
         return new SiteAnalysis(
             name: $fields['NAME'] ?? $this->nameFrom($snapshot),
@@ -132,8 +152,34 @@ class SiteAnalyst
             // and the guess is not.
             language: $snapshot->language ?: ($language ?: 'en'),
             market: strtolower($fields['MARKET'] ?? '') ?: 'us',
-            isYmyl: Str::startsWith(mb_strtolower($fields['YMYL'] ?? ''), 'y'),
+            isYmyl: $ymyl['isYmyl'],
+            ymylReason: $ymyl['ymylReason'],
         );
+    }
+
+    /**
+     * The verdict and the reason given for it.
+     *
+     * The reason is kept so the owner can see why their site was read this way
+     * — and so support can tell a wrong reading from a right one when they ask.
+     *
+     * @return array{isYmyl: bool, ymylReason: string}
+     */
+    private function ymyl(string $answer): array
+    {
+        $answer = trim($answer, " \t\"'*");
+        $parts = preg_split('/\s*(?:—|–|-|:|,|;|\()\s*/u', $answer, 2) ?: [$answer];
+        $verdict = mb_strtolower(trim(preg_split('/\s+/u', trim($parts[0]))[0] ?? '', " \"'*.!"));
+
+        // Asked for in English, but a model writing about a Portuguese site
+        // sometimes answers in Portuguese — and a missed yes is the costly
+        // mistake here, since it skips review.
+        $yes = preg_match('/^(y|yes|sí|sì|si|sim|ja|oui|да|так|tak)$/u', $verdict) === 1;
+
+        return [
+            'isYmyl' => $yes,
+            'ymylReason' => Str::limit(trim($parts[1] ?? '', " \"'*.)"), 160, ''),
+        ];
     }
 
     /**

@@ -9,6 +9,7 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -36,6 +37,10 @@ export type ProjectFormValues = {
     minimum_volume: number | null;
     autopublish: boolean;
     is_ymyl: boolean;
+    ymyl_reason: string;
+    author_name: string;
+    author_title: string;
+    ai_disclosure: boolean;
     article_scheduling_enabled: boolean;
 };
 
@@ -44,6 +49,7 @@ type Props = {
     timezones: string[];
     project?: ProjectFormValues;
     submitLabel: string;
+    supportEmail?: string;
 };
 
 /**
@@ -58,6 +64,7 @@ export function ProjectForm({
     timezones,
     project,
     submitLabel,
+    supportEmail,
 }: Props) {
     const isEdit = project !== undefined;
     const { auth } = usePage().props;
@@ -97,6 +104,12 @@ export function ProjectForm({
 
     const [timezone, setTimezone] = useState(project?.timezone ?? 'UTC');
 
+    const [authorName, setAuthorName] = useState(project?.author_name ?? '');
+    const [authorTitle, setAuthorTitle] = useState(project?.author_title ?? '');
+    const [disclosure, setDisclosure] = useState(
+        project?.ai_disclosure ?? false,
+    );
+
     return (
         <Form
             action={action.url}
@@ -110,6 +123,13 @@ export function ProjectForm({
                     .split(',')
                     .map((locale) => locale.trim())
                     .filter(Boolean),
+                ...(isEdit
+                    ? {
+                          author_name: authorName,
+                          author_title: authorTitle,
+                          ai_disclosure: disclosure,
+                      }
+                    : {}),
             })}
             className="flex flex-col gap-6"
         >
@@ -397,6 +417,106 @@ export function ProjectForm({
                             </div>
                         </CardContent>
                     </Card>
+
+                    {isEdit && (
+                        <Card className={workspacePanelClass}>
+                            <CardHeader>
+                                <CardTitle>Byline</CardTitle>
+                                <CardDescription>
+                                    Who your articles say wrote them.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="flex flex-col gap-4">
+                                {project?.is_ymyl && (
+                                    <p className="rounded-xl border border-amber-500/40 bg-amber-50/50 p-3 text-sm dark:bg-amber-950/20">
+                                        Your site covers money, health or safety
+                                        topics
+                                        {project.ymyl_reason
+                                            ? ` (${project.ymyl_reason})`
+                                            : ''}
+                                        , so articles need a named author or the
+                                        AI label below.
+                                        {supportEmail && (
+                                            <>
+                                                {' '}
+                                                Think we got this wrong? Write
+                                                to{' '}
+                                                <a
+                                                    href={`mailto:${supportEmail}`}
+                                                    className="underline underline-offset-4"
+                                                >
+                                                    {supportEmail}
+                                                </a>
+                                                .
+                                            </>
+                                        )}
+                                    </p>
+                                )}
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="author_name">
+                                            Author
+                                        </Label>
+                                        <Input
+                                            id="author_name"
+                                            value={authorName}
+                                            placeholder="Left empty, articles are published under the brand"
+                                            onChange={(event) =>
+                                                setAuthorName(
+                                                    event.target.value,
+                                                )
+                                            }
+                                        />
+                                        <InputError
+                                            message={errors.author_name}
+                                        />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="author_title">
+                                            Their title
+                                        </Label>
+                                        <Input
+                                            id="author_title"
+                                            value={authorTitle}
+                                            onChange={(event) =>
+                                                setAuthorTitle(
+                                                    event.target.value,
+                                                )
+                                            }
+                                        />
+                                        <InputError
+                                            message={errors.author_title}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="flex items-start gap-3">
+                                    <Checkbox
+                                        id="ai_disclosure"
+                                        checked={disclosure}
+                                        onCheckedChange={(checked) =>
+                                            setDisclosure(checked === true)
+                                        }
+                                        className="mt-0.5"
+                                    />
+                                    <div className="grid gap-1">
+                                        <Label htmlFor="ai_disclosure">
+                                            Label articles as written with AI
+                                        </Label>
+                                        <p className="text-sm text-muted-foreground">
+                                            Each article ends with a line saying
+                                            AI helped write it and that{' '}
+                                            {name || 'your brand'} is
+                                            responsible for its content. Useful
+                                            for sites with EU readers.
+                                        </p>
+                                        <InputError
+                                            message={errors.ai_disclosure}
+                                        />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
 
                     <div className="flex justify-end border-t pt-5">
                         <Button

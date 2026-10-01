@@ -9,6 +9,7 @@ use App\Models\Project;
 use App\Rules\PublicHttpUrl;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 final class OnboardingStepRequest extends FormRequest
 {
@@ -45,6 +46,39 @@ final class OnboardingStepRequest extends FormRequest
         ];
     }
 
+    /**
+     * A money-or-health project names who stands behind its articles here,
+     * because this is the last moment before the first one is written.
+     *
+     * A named author, or the brand publishing openly as AI-assisted. Asked
+     * now rather than discovered by the engine, where it used to surface as
+     * an article that stopped with no way forward in sight.
+     *
+     * @return list<callable(Validator): void>
+     */
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            $project = $this->route('project');
+
+            // After the rules, and only if they passed: a malformed answer
+            // already has its error, and reading it as a string here would
+            // turn that 422 into a 500.
+            if ($validator->errors()->isNotEmpty() || ! $project instanceof Project || ! $project->is_ymyl || $this->input('step') !== 'voice') {
+                return;
+            }
+
+            $named = trim((string) $this->input('answers.author_name', '')) !== '';
+
+            if (! $named && ! $this->boolean('answers.ai_disclosure')) {
+                $validator->errors()->add(
+                    'answers.author_name',
+                    'Add the name of the person who writes for you, or publish as your brand with an AI label.',
+                );
+            }
+        }];
+    }
+
     /** @return list<string> */
     private function keysFor(string $step): array
     {
@@ -55,6 +89,7 @@ final class OnboardingStepRequest extends FormRequest
             'voice' => [
                 'tone', 'visual_language', 'forbidden', 'author_name',
                 'author_title', 'sitemap_url', 'example_liked', 'example_disliked',
+                'ai_disclosure',
             ],
             'competitors' => ['competitors'],
             // `sitemap_url` is accepted by both `voice` and `channels`: it was
@@ -92,6 +127,7 @@ final class OnboardingStepRequest extends FormRequest
                 'answers.forbidden.*' => ['string', 'max:255'],
                 'answers.author_name' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'answers.author_title' => ['sometimes', 'nullable', 'string', 'max:255'],
+                'answers.ai_disclosure' => ['sometimes', 'boolean'],
                 'answers.sitemap_url' => ['sometimes', 'nullable', 'url', 'max:2048', app(PublicHttpUrl::class)],
                 'answers.example_liked' => ['sometimes', 'nullable', 'string', 'max:2000'],
                 'answers.example_disliked' => ['sometimes', 'nullable', 'string', 'max:2000'],

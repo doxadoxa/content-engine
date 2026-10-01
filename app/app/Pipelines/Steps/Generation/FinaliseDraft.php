@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Pipelines\Steps\Generation;
 
+use App\Content\AiDisclosure;
 use App\Content\ArticleBusinessFacts;
 use App\Enums\ContentItemState;
 use App\Models\ContentItem;
@@ -71,6 +72,11 @@ class FinaliseDraft extends AbstractStep
         $markdown = $context->hasOutput(VerifyLinks::key())
             ? $context->output(VerifyLinks::key(), VerifiedLinksPayload::class)->markdown
             : $draft->markdown;
+
+        // After the fact-check rather than through it: the line is ours, not
+        // the model's, and it is a statement about the article rather than a
+        // claim in it.
+        $markdown = app(AiDisclosure::class)->appendTo($markdown, $context->project, $unit->locale);
 
         // Written before the gate below, so a blocked unit still carries the
         // findings and the body an operator needs to fix it.

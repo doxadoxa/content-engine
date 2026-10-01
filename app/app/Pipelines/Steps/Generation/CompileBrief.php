@@ -48,10 +48,13 @@ class CompileBrief extends AbstractStep
 
         $author = $this->author($context);
 
-        if ($context->project->is_ymyl && $author === []) {
-            // §1: real author names are a requirement on YMYL, not a nicety.
+        if (! $context->project->hasAccountableByline()) {
+            // §1: on money-or-health topics somebody has to stand behind the
+            // article — a named person, or the brand saying openly that AI
+            // helped write it. Said in the owner's words, because this is
+            // shown to them on the dashboard.
             throw new TerminalStepFailure(
-                'A YMYL project must have at least one named author before it can generate.'
+                'Articles on money, health or safety topics need an author. Add one, or turn on the AI label, in Project settings.'
             );
         }
 
@@ -121,8 +124,6 @@ class CompileBrief extends AbstractStep
     /** @return array<string, mixed> */
     private function author(StepContext $context): array
     {
-        $authors = $context->project->authors;
-
-        return $authors === [] ? [] : $authors[0];
+        return $context->project->namedAuthor() ?? [];
     }
 }

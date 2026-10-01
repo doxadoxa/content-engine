@@ -36,10 +36,16 @@ import { archive, index, update } from '@/routes/projects';
 type Props = {
     project: ProjectFormValues;
     timezones: string[];
+    supportEmail: string;
     google?: GooglePanel;
 };
 
-export default function EditProject({ project, timezones, google }: Props) {
+export default function EditProject({
+    project,
+    timezones,
+    supportEmail,
+    google,
+}: Props) {
     return (
         <>
             <Head title={project.name} />
@@ -84,6 +90,7 @@ export default function EditProject({ project, timezones, google }: Props) {
                     timezones={timezones}
                     project={project}
                     submitLabel="Save changes"
+                    supportEmail={supportEmail}
                 />
 
                 <GoogleConnection projectId={project.id} google={google} />
