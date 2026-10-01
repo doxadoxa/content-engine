@@ -89,7 +89,7 @@ class ProjectRequest extends FormRequest
 
             // Removing the author and the AI label together would stop every
             // article on a money-or-health project at its first step.
-            if ($project instanceof Project && $project->is_ymyl) {
+            if ($project instanceof Project && $project->is_ymyl && ! $validator->errors()->hasAny(['author_name', 'ai_disclosure'])) {
                 $name = $this->has('author_name')
                     ? trim((string) $this->input('author_name'))
                     : (string) ($project->namedAuthor()['name'] ?? '');

@@ -661,12 +661,11 @@ function Steps({
                             forbidden,
                             author_name: brandByline ? '' : authorName,
                             author_title: brandByline ? '' : authorTitle,
-                            // Only a money-or-health project is asked, and
-                            // only its answer is sent: a key left out keeps
-                            // whatever Project settings already say.
-                            ...(draft.is_ymyl
-                                ? { ai_disclosure: brandByline }
-                                : {}),
+                            // Always sent. Only a money-or-health project is
+                            // asked, so everything else answers "off" — which
+                            // also clears a label chosen before the site was
+                            // read again and turned out not to need one.
+                            ai_disclosure: brandByline,
                             example_liked: liked,
                             example_disliked: disliked,
                         },
@@ -1285,17 +1284,19 @@ function YmylNotice({
                     fact-checked and held for your approval rather than
                     published straight away.
                 </p>
-                <p className="text-muted-foreground">
-                    Got this wrong? Write to{' '}
-                    <a
-                        href={`mailto:${supportEmail}`}
-                        className="underline underline-offset-4"
-                    >
-                        {supportEmail}
-                    </a>{' '}
-                    and we will review it. You can carry on setting up in the
-                    meantime.
-                </p>
+                {supportEmail && (
+                    <p className="text-muted-foreground">
+                        Got this wrong? Write to{' '}
+                        <a
+                            href={`mailto:${supportEmail}`}
+                            className="underline underline-offset-4"
+                        >
+                            {supportEmail}
+                        </a>{' '}
+                        and we will review it. You can carry on setting up in
+                        the meantime.
+                    </p>
+                )}
             </div>
         </div>
     );
@@ -1349,6 +1350,7 @@ function BylineChoice({
                     <input
                         type="radio"
                         name="byline"
+                        required
                         className="mt-1 size-4 shrink-0 accent-primary"
                         value={option.value}
                         checked={value === option.value}

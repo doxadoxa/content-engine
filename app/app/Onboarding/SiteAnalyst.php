@@ -89,12 +89,15 @@ class SiteAnalyst
                 'YMYL: "yes" or "no", then " — " and a reason of at most ten words.',
                 '  Yes only when articles for this business would give advice a reader acts on',
                 '  where a mistake could harm their health, finances, legal position or safety:',
-                '  medicine, mental health, medication, diet for a condition, investing, loans,',
-                '  tax, insurance, legal advice, gambling, crypto, home or child safety.',
-                '  No for everything else, including: software and SaaS (even for payments or',
-                '  clinics), event organising, sports and fitness clubs or venues, shops,',
+                '  medicine, mental health, medication, supplements, diet for a condition,',
+                '  investing, loans, tax, insurance, legal advice, gambling, crypto, weapons,',
+                '  home or child safety. A business in one of these areas is yes even when it',
+                '  is a shop — a pharmacy, a supplement store or a car-seat retailer.',
+                '  Otherwise no, including: software and SaaS (even for payments or clinics),',
+                '  event organising, sports and fitness clubs or venues, ordinary shops,',
                 '  restaurants, travel, cleaning, marketing, and any business merely because it',
-                '  charges money. When unsure, answer no.',
+                '  charges money.',
+                '  Write "yes" or "no" in English, whatever language the site is in.',
                 'Never invent a fact. If the page does not say, leave the line empty.',
             ]),
             prompt: implode("\n\n", array_filter([
@@ -118,7 +121,8 @@ class SiteAnalyst
         $fields = [];
 
         foreach (preg_split('/\R/u', trim($text)) ?: [] as $line) {
-            if (preg_match('/^([A-Z]+):\s*(.*)$/u', trim($line), $m) === 1) {
+            // `**YMYL:** yes` as well as `YMYL: yes` — models bold labels.
+            if (preg_match('/^\**([A-Z]+)\**:\**\s*(.*)$/u', trim($line), $m) === 1) {
                 $fields[$m[1]] = trim($m[2]);
             }
         }
@@ -164,11 +168,17 @@ class SiteAnalyst
     private function ymyl(string $answer): array
     {
         $answer = trim($answer, " \t\"'*");
-        $parts = preg_split('/\s*(?:—|–|-|:)\s*/u', $answer, 2) ?: [$answer];
+        $parts = preg_split('/\s*(?:—|–|-|:|,|;|\()\s*/u', $answer, 2) ?: [$answer];
+        $verdict = mb_strtolower(trim(preg_split('/\s+/u', trim($parts[0]))[0] ?? '', " \"'*.!"));
+
+        // Asked for in English, but a model writing about a Portuguese site
+        // sometimes answers in Portuguese — and a missed yes is the costly
+        // mistake here, since it skips review.
+        $yes = preg_match('/^(y|yes|sí|si|sim|ja|oui|да|так|tak)$/u', $verdict) === 1;
 
         return [
-            'isYmyl' => Str::startsWith(mb_strtolower(trim($parts[0], " \"'*")), 'y'),
-            'ymylReason' => Str::limit(trim($parts[1] ?? '', " \"'*."), 160, ''),
+            'isYmyl' => $yes,
+            'ymylReason' => Str::limit(trim($parts[1] ?? '', " \"'*.)"), 160, ''),
         ];
     }
 

@@ -91,7 +91,9 @@ class BuildGeoLayer extends AbstractStep
             $schema['author'] = [
                 '@type' => 'Person',
                 'name' => (string) ($brief->author['name'] ?? ''),
-                ...isset($brief->author['title']) ? ['jobTitle' => (string) $brief->author['title']] : [],
+                // Not an empty one: setup stores a blank title for an author
+                // nobody gave one, and `"jobTitle": ""` says nothing.
+                ...trim((string) ($brief->author['title'] ?? '')) !== '' ? ['jobTitle' => (string) $brief->author['title']] : [],
             ];
         } elseif ($project->ai_disclosure) {
             $schema['author'] = [

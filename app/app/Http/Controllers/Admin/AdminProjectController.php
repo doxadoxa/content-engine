@@ -128,6 +128,8 @@ class AdminProjectController extends Controller
                 'created_at' => $project->created_at?->toIso8601String(),
                 'is_ymyl' => $project->is_ymyl,
                 'ymyl_reason' => (string) ($project->site_analysis['ymyl_reason'] ?? ''),
+                'author_name' => (string) ($project->namedAuthor()['name'] ?? ''),
+                'ai_disclosure' => $project->ai_disclosure,
             ],
             'entitlement' => $entitlement,
             'subscription' => $subscription === null ? null : [
@@ -341,7 +343,16 @@ class AdminProjectController extends Controller
             $locked->forceFill([
                 'is_ymyl' => $sensitive,
                 ...($sensitive ? ['autopublish' => false] : []),
-            ])->save();
+            ]);
+
+            // A project marked sensitive with nobody signing its articles
+            // would stop at the next one. The same default as at launch: the
+            // brand publishes, and says AI helped.
+            if (! $locked->hasAccountableByline()) {
+                $locked->ai_disclosure = true;
+            }
+
+            $locked->save();
 
             if ($locked->wasChanged('autopublish')) {
                 app(ArticleSchedules::class)->followProject($locked);
@@ -379,6 +390,7 @@ class AdminProjectController extends Controller
         return [
             'project_status' => $project->status->value,
             'is_ymyl' => $project->is_ymyl,
+            'ai_disclosure' => $project->ai_disclosure,
             'plan' => $subscription?->plan,
             'billing_status' => $subscription?->status->value,
             'limit_overrides' => $subscription?->limit_overrides,

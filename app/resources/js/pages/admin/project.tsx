@@ -39,6 +39,8 @@ type Props = {
         created_at: string | null;
         is_ymyl: boolean;
         ymyl_reason: string;
+        author_name: string;
+        ai_disclosure: boolean;
     };
     entitlement: Billing;
     subscription: {
@@ -377,6 +379,12 @@ export default function AdminProject({
                             {project.ymyl_reason
                                 ? ` — setup said: ${project.ymyl_reason}`
                                 : ''}
+                            . Byline: {project.author_name || 'the brand'}
+                            {project.ai_disclosure ? ', AI label on' : ''}.
+                            {!project.author_name &&
+                                !project.ai_disclosure &&
+                                !project.is_ymyl &&
+                                ' Marking it sensitive turns the AI label on, so articles keep being written.'}
                         </p>
                     </CardContent>
                 </Card>

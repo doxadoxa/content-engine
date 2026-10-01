@@ -71,9 +71,10 @@ class ProjectController extends Controller
         // One author, as setup writes it: a name or nobody.
         if ($request->has('author_name')) {
             $name = trim((string) $request->validated('author_name'));
+            $title = trim((string) $request->validated('author_title'));
             $data['authors'] = $name === '' ? [] : [[
                 'name' => $name,
-                'title' => trim((string) $request->validated('author_title')),
+                ...($title === '' ? [] : ['title' => $title]),
             ]];
         }
 

@@ -303,7 +303,7 @@ final class GenerationPipelineTest extends TestCase
         // The brand stands behind it, in the schema and in the text.
         $this->assertSame(['@type' => 'Organization', 'name' => 'Ledger Wise'], $unit->json_ld['author']);
         $this->assertStringEndsWith(
-            "*This article was written with the help of AI and published by Ledger Wise, who is responsible for its content.*\n",
+            "*This article was written with the help of AI and published by Ledger Wise, which is responsible for its content.*\n",
             $unit->body_markdown,
         );
         $this->assertStringContainsString('published by Ledger Wise', $unit->body_html);
@@ -317,6 +317,17 @@ final class GenerationPipelineTest extends TestCase
 
         $this->assertStringNotContainsString('with the help of AI', $unit->refresh()->body_markdown);
         $this->assertSame('Person', $unit->json_ld['author']['@type']);
+    }
+
+    #[Test]
+    public function an_author_with_no_title_has_no_empty_job_title(): void
+    {
+        $this->project->forceFill(['authors' => [['name' => 'Ana Reis', 'title' => '']]])->save();
+
+        $unit = $this->unit();
+        $this->generate($unit);
+
+        $this->assertSame(['@type' => 'Person', 'name' => 'Ana Reis'], $unit->refresh()->json_ld['author']);
     }
 
     #[Test]

@@ -11,6 +11,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -213,6 +214,151 @@ final class YmylBylineTest extends TestCase
         $project->refresh();
         $this->assertTrue($project->is_ymyl);
         $this->assertFalse($project->autopublish);
+    }
+
+    /** @return array<string, array{string, bool, string}> */
+    public static function verdicts(): array
+    {
+        return [
+            'full stop' => ['No.', false, ''],
+            'hyphen' => ['no - booking software', false, 'booking software'],
+            'en dash' => ['Yes – sells medication online', true, 'sells medication online'],
+            'comma' => ['Yes, gives tax advice', true, 'gives tax advice'],
+            'brackets' => ['yes (loans)', true, 'loans'],
+            'in the site\'s language' => ['Sim — conselhos fiscais', true, 'conselhos fiscais'],
+            'bold label' => ['**yes** — insurance advice', true, 'insurance advice'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('verdicts')]
+    public function the_verdict_is_read_however_the_model_phrases_it(string $answer, bool $ymyl, string $reason): void
+    {
+        $operator = User::factory()->create();
+        $this->answer($answer);
+
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://example.com'])
+            ->assertOk()
+            ->assertJsonPath('project.is_ymyl', $ymyl)
+            ->assertJsonPath('project.analysis.ymyl_reason', $reason);
+    }
+
+    #[Test]
+    public function a_bold_field_label_is_still_read(): void
+    {
+        $operator = User::factory()->create();
+        $gateway = new FakeModelGateway;
+        $gateway->willAnswer(["NAME: Ledger\nDESCRIPTION: Tax help.\n**YMYL:** yes — tax advice"]);
+        $this->app->instance(ModelGateway::class, $gateway);
+
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://example.com'])
+            ->assertOk()
+            ->assertJsonPath('project.is_ymyl', true);
+    }
+
+    #[Test]
+    public function a_missing_verdict_is_a_no(): void
+    {
+        $operator = User::factory()->create();
+        $gateway = new FakeModelGateway;
+        $gateway->willAnswer(["NAME: Ledger\nDESCRIPTION: Tax help."]);
+        $this->app->instance(ModelGateway::class, $gateway);
+
+        $this->actingAs($operator)
+            ->postJson('/onboarding/analyse', ['url' => 'https://example.com'])
+            ->assertOk()
+            ->assertJsonPath('project.is_ymyl', false);
+    }
+
+    #[Test]
+    public function a_malformed_author_is_refused_rather_than_crashing(): void
+    {
+        [$operator, $project] = $this->draft(ymyl: true);
+
+        $this->actingAs($operator)->postJson("/onboarding/{$project->getKey()}/save", [
+            'step' => 'voice',
+            'answers' => ['author_name' => ['Ana'], 'ai_disclosure' => false],
+        ])->assertUnprocessable()->assertJsonValidationErrors('answers.author_name');
+    }
+
+    #[Test]
+    public function a_label_chosen_before_the_site_was_read_again_is_cleared(): void
+    {
+        // Chosen while the site read as YMYL; read again, it is not, and the
+        // wizard no longer asks — so its answer is "off".
+        [$operator, $project] = $this->draft(ymyl: false, attributes: ['ai_disclosure' => true]);
+
+        $this->actingAs($operator)->postJson("/onboarding/{$project->getKey()}/save", [
+            'step' => 'voice',
+            'answers' => ['author_name' => '', 'ai_disclosure' => false],
+        ])->assertOk();
+
+        $this->assertFalse($project->refresh()->ai_disclosure);
+    }
+
+    #[Test]
+    public function a_member_who_is_not_the_owner_cannot_change_the_byline(): void
+    {
+        [, $project] = $this->live(ymyl: false);
+        $member = User::factory()->create();
+        $member->projects()->attach($project, ['role' => 'member']);
+
+        $this->actingAs($member)->withSession(['current_project_id' => $project->id])
+            ->patch("/projects/{$project->id}", [...$this->settings($project), 'author_name' => 'Someone Else', 'ai_disclosure' => true])
+            ->assertForbidden();
+
+        // Project settings are the owner's, byline included.
+        $this->assertSame('Operator', $project->refresh()->authors[0]['name']);
+        $this->assertFalse($project->ai_disclosure);
+    }
+
+    #[Test]
+    public function a_blank_author_on_an_ordinary_project_publishes_under_the_brand(): void
+    {
+        [$owner, $project] = $this->live(ymyl: false);
+
+        $this->actingAs($owner)->withSession(['current_project_id' => $project->id])
+            ->patch("/projects/{$project->id}", [...$this->settings($project), 'author_name' => '', 'ai_disclosure' => false])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame([], $project->refresh()->authors);
+    }
+
+    #[Test]
+    public function support_marking_a_project_sensitive_keeps_it_writing(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+        $project = Project::factory()->create(['authors' => [], 'ai_disclosure' => false]);
+
+        $this->actingAs($admin)
+            ->post("/admin/projects/{$project->id}/sensitivity", ['is_ymyl' => true])
+            ->assertRedirect();
+
+        $project->refresh();
+        $this->assertTrue($project->is_ymyl);
+        // Nobody signs its articles, so the brand does, openly.
+        $this->assertTrue($project->ai_disclosure);
+        $this->assertTrue($project->hasAccountableByline());
+    }
+
+    #[Test]
+    public function projects_already_stuck_are_given_the_label_by_the_migration(): void
+    {
+        $stuck = Project::factory()->create(['is_ymyl' => true, 'authors' => []]);
+        $blank = Project::factory()->create(['is_ymyl' => true, 'authors' => [['name' => '  ', 'title' => '']]]);
+        $signed = Project::factory()->ymyl()->create();
+        $ordinary = Project::factory()->create(['authors' => []]);
+
+        $migration = require database_path('migrations/2026_10_01_120000_add_ai_disclosure_to_projects.php');
+        $migration->down();
+        $migration->up();
+
+        $this->assertTrue($stuck->refresh()->ai_disclosure);
+        $this->assertTrue($blank->refresh()->ai_disclosure);
+        $this->assertFalse($signed->refresh()->ai_disclosure);
+        $this->assertFalse($ordinary->refresh()->ai_disclosure);
     }
 
     private function answer(string $ymyl): void

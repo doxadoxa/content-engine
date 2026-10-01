@@ -21,7 +21,7 @@ final class AiDisclosure
 {
     /** @var array<string, string> */
     private const array LINES = [
-        'en' => 'This article was written with the help of AI and published by :brand, who is responsible for its content.',
+        'en' => 'This article was written with the help of AI and published by :brand, which is responsible for its content.',
         'pt' => 'Este artigo foi escrito com a ajuda de IA. Responsável pelo conteúdo: :brand.',
         'es' => 'Este artículo se ha redactado con ayuda de IA. Responsable del contenido: :brand.',
         'fr' => 'Cet article a été rédigé avec l’aide de l’IA. Responsable du contenu : :brand.',
@@ -29,8 +29,8 @@ final class AiDisclosure
         'it' => 'Questo articolo è stato scritto con l’aiuto dell’IA. Responsabile del contenuto: :brand.',
         'nl' => 'Dit artikel is geschreven met behulp van AI. Verantwoordelijk voor de inhoud: :brand.',
         'pl' => 'Ten artykuł powstał z pomocą AI. Za treść odpowiada :brand.',
-        'uk' => 'Цю статтю написано за допомогою ШІ. Відповідальність за зміст: :brand.',
-        'ru' => 'Эта статья написана с помощью ИИ. Ответственность за содержание: :brand.',
+        'uk' => 'Цю статтю написано за допомогою ШІ. Відповідальність за зміст несе :brand.',
+        'ru' => 'Эта статья написана с помощью ИИ. Ответственность за содержание несёт :brand.',
     ];
 
     /** The sentence, for this project in this language, or null when it is off. */
@@ -63,9 +63,12 @@ final class AiDisclosure
         return rtrim($markdown)."\n\n---\n\n*".$line."*\n";
     }
 
-    /** A brand name is text, not markup. */
+    /**
+     * A brand name is text, not markup — and "Acme Inc." ends the sentence
+     * with one full stop, not two.
+     */
     private function escaped(string $name): string
     {
-        return (string) preg_replace('/([\\\\`*_\[\]<>#|])/u', '\\\\$1', trim($name));
+        return (string) preg_replace('/([\\\\`*_\[\]<>#|])/u', '\\\\$1', rtrim(trim($name), '.'));
     }
 }

@@ -61,7 +61,10 @@ final class OnboardingStepRequest extends FormRequest
         return [function (Validator $validator): void {
             $project = $this->route('project');
 
-            if (! $project instanceof Project || ! $project->is_ymyl || $this->input('step') !== 'voice') {
+            // After the rules, and only if they passed: a malformed answer
+            // already has its error, and reading it as a string here would
+            // turn that 422 into a 500.
+            if ($validator->errors()->isNotEmpty() || ! $project instanceof Project || ! $project->is_ymyl || $this->input('step') !== 'voice') {
                 return;
             }
 
