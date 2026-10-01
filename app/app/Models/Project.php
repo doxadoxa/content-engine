@@ -43,6 +43,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $minimum_volume
  * @property string $market
  * @property bool $is_ymyl
+ * @property bool $ai_disclosure
  * @property bool $autopublish
  * @property array<string, mixed> $original_data
  * @property list<array<string, mixed>> $authors
@@ -75,6 +76,7 @@ class Project extends Model
         'minimum_volume',
         'market',
         'is_ymyl',
+        'ai_disclosure',
         'autopublish',
         'original_data',
         'authors',
@@ -109,6 +111,7 @@ class Project extends Model
         'original_data' => '{}',
         'authors' => '[]',
         'locales' => '[]',
+        'ai_disclosure' => false,
     ];
 
     /**
@@ -233,6 +236,34 @@ class Project extends Model
         return app(Entitlements::class)->for($this)->weeklyTarget($this->weekly_target);
     }
 
+    /**
+     * Whether this project's articles can say who stands behind them.
+     *
+     * A money-or-health project needs that before it writes anything: a named
+     * person, or the brand openly publishing AI-assisted work. Anything else
+     * can be published under the brand with nothing said.
+     */
+    public function hasAccountableByline(): bool
+    {
+        return ! $this->is_ymyl || $this->ai_disclosure || $this->namedAuthor() !== null;
+    }
+
+    /**
+     * The first author with a name, or null.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function namedAuthor(): ?array
+    {
+        foreach ($this->authors ?? [] as $author) {
+            if (trim((string) ($author['name'] ?? '')) !== '') {
+                return $author;
+            }
+        }
+
+        return null;
+    }
+
     public function supportsLocale(string $locale): bool
     {
         return $locale === $this->default_locale
@@ -249,6 +280,7 @@ class Project extends Model
             'minimum_volume' => 'integer',
             'research_seeds' => 'array',
             'is_ymyl' => 'boolean',
+            'ai_disclosure' => 'boolean',
             'autopublish' => 'boolean',
             'original_data' => 'array',
             'authors' => 'array',

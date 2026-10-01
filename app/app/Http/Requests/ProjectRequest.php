@@ -59,6 +59,12 @@ class ProjectRequest extends FormRequest
             'market' => ['sometimes', 'required', 'string', 'max:8'],
             'weekly_target' => ['sometimes', 'required', 'integer', 'min:1', 'max:14'],
             'minimum_volume' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:100000'],
+
+            // Who the articles say wrote them. Here as well as in setup, since
+            // setup only runs once and a stopped article points here.
+            'author_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'author_title' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'ai_disclosure' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -79,6 +85,19 @@ class ProjectRequest extends FormRequest
 
             if ($project instanceof Project && $project->is_ymyl && $this->boolean('autopublish')) {
                 $validator->errors()->add('autopublish', 'Articles on this topic need a person to approve them, so they cannot publish automatically.');
+            }
+
+            // Removing the author and the AI label together would stop every
+            // article on a money-or-health project at its first step.
+            if ($project instanceof Project && $project->is_ymyl) {
+                $name = $this->has('author_name')
+                    ? trim((string) $this->input('author_name'))
+                    : (string) ($project->namedAuthor()['name'] ?? '');
+                $disclosed = $this->has('ai_disclosure') ? $this->boolean('ai_disclosure') : $project->ai_disclosure;
+
+                if ($name === '' && ! $disclosed) {
+                    $validator->errors()->add('author_name', 'Articles on this topic need an author. Add a name, or turn on the AI label.');
+                }
             }
         }];
     }

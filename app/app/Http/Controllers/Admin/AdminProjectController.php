@@ -15,12 +15,14 @@ use App\Models\AdminAction;
 use App\Models\Project;
 use App\Models\ProjectSubscription;
 use App\Models\User;
+use App\Publishing\Articles\ArticleSchedules;
 use App\Support\Metering\ProjectSpend;
 use App\Support\Tenancy\CurrentProject;
 use App\Support\Tenancy\ProjectScope;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -124,6 +126,8 @@ class AdminProjectController extends Controller
                 'weekly_target' => $project->weekly_target,
                 'locales' => $project->locales,
                 'created_at' => $project->created_at?->toIso8601String(),
+                'is_ymyl' => $project->is_ymyl,
+                'ymyl_reason' => (string) ($project->site_analysis['ymyl_reason'] ?? ''),
             ],
             'entitlement' => $entitlement,
             'subscription' => $subscription === null ? null : [
@@ -315,6 +319,39 @@ class AdminProjectController extends Controller
     }
 
     /**
+     * Mark a project as money-or-health, or not.
+     *
+     * Not something an owner can do: turning it off removes mandatory review
+     * and the author requirement, and a request through support is how that
+     * gets a second pair of eyes. Turning it on also switches off automatic
+     * publishing, which a sensitive project cannot have.
+     */
+    public function sensitivity(Request $request, Project $project): RedirectResponse
+    {
+        $validated = $request->validate([
+            'is_ymyl' => ['required', 'boolean'],
+        ]);
+
+        $before = $this->snapshot($project);
+        $sensitive = (bool) $validated['is_ymyl'];
+
+        DB::transaction(function () use ($project, $sensitive): void {
+            $locked = Project::query()->whereKey($project->getKey())->lockForUpdate()->firstOrFail();
+
+            $locked->forceFill([
+                'is_ymyl' => $sensitive,
+                ...($sensitive ? ['autopublish' => false] : []),
+            ])->save();
+
+            if ($locked->wasChanged('autopublish')) {
+                app(ArticleSchedules::class)->followProject($locked);
+            }
+        });
+
+        return $this->recorded($request, 'project.sensitivity', $project, $before);
+    }
+
+    /**
      * An archived project stays stopped, from here as from anywhere.
      *
      * Its owner ended it and its subscription with it, and nobody can see it
@@ -341,6 +378,7 @@ class AdminProjectController extends Controller
 
         return [
             'project_status' => $project->status->value,
+            'is_ymyl' => $project->is_ymyl,
             'plan' => $subscription?->plan,
             'billing_status' => $subscription?->status->value,
             'limit_overrides' => $subscription?->limit_overrides,

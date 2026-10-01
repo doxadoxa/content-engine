@@ -53,6 +53,7 @@ class ProjectController extends Controller
         return Inertia::render('projects/edit', [
             'project' => $this->toProps($project),
             'timezones' => $this->timezones(),
+            'supportEmail' => (string) config('legal.contact_email'),
             // Deferred: listing properties is two calls to Google, and the
             // settings form above must not wait on somebody else's API to
             // render. An operator who came here to rename the project should
@@ -65,7 +66,16 @@ class ProjectController extends Controller
     {
         $this->authorizeMembership($request, $project);
 
-        $data = $request->safe()->except('slug');
+        $data = $request->safe()->except(['slug', 'author_name', 'author_title']);
+
+        // One author, as setup writes it: a name or nobody.
+        if ($request->has('author_name')) {
+            $name = trim((string) $request->validated('author_name'));
+            $data['authors'] = $name === '' ? [] : [[
+                'name' => $name,
+                'title' => trim((string) $request->validated('author_title')),
+            ]];
+        }
 
         DB::transaction(function () use ($request, $project, $data): void {
             $locked = Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
@@ -268,6 +278,10 @@ class ProjectController extends Controller
             'timezone' => $project->timezone,
             'autopublish' => $project->autopublish,
             'is_ymyl' => $project->is_ymyl,
+            'ymyl_reason' => (string) ($project->site_analysis['ymyl_reason'] ?? ''),
+            'author_name' => (string) ($project->namedAuthor()['name'] ?? ''),
+            'author_title' => (string) ($project->namedAuthor()['title'] ?? ''),
+            'ai_disclosure' => $project->ai_disclosure,
             'article_scheduling_enabled' => is_string($project->onboarding['article_automation_started_at'] ?? null),
             'default_locale' => $project->default_locale,
             'locales' => $project->locales,

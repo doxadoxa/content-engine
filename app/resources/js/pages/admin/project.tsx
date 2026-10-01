@@ -37,6 +37,8 @@ type Props = {
         weekly_target: number;
         locales: string[];
         created_at: string | null;
+        is_ymyl: boolean;
+        ymyl_reason: string;
     };
     entitlement: Billing;
     subscription: {
@@ -342,6 +344,40 @@ export default function AdminProject({
                                 .
                             </p>
                         )}
+                    </CardContent>
+                </Card>
+
+                <Card className={workspacePanelClass}>
+                    <CardHeader>
+                        <CardTitle className="text-base">
+                            Money-or-health topic
+                        </CardTitle>
+                        <CardDescription>
+                            Read off the site at setup. When on, every article
+                            is fact-checked, waits for approval, and needs a
+                            named author or the AI label. Owners ask support to
+                            change it; this is where it is changed.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap items-center gap-3">
+                        <Form action={`${base}/sensitivity`} method="post">
+                            <input
+                                type="hidden"
+                                name="is_ymyl"
+                                value={project.is_ymyl ? '0' : '1'}
+                            />
+                            <Button type="submit" variant="outline">
+                                {project.is_ymyl
+                                    ? 'Mark as not sensitive'
+                                    : 'Mark as money-or-health'}
+                            </Button>
+                        </Form>
+                        <p className="text-sm text-muted-foreground">
+                            {project.is_ymyl ? 'On' : 'Off'}
+                            {project.ymyl_reason
+                                ? ` — setup said: ${project.ymyl_reason}`
+                                : ''}
+                        </p>
                     </CardContent>
                 </Card>
 

@@ -91,6 +91,7 @@ class OnboardingController extends Controller
             'selectedPlan' => $this->selection->selected($request, $draft)->toArray(),
             'plans' => array_map(static fn (Plan $plan): array => $plan->toArray(), $this->plans->selfServe()),
             'trialDays' => $this->plans->trialDays(),
+            'supportEmail' => (string) config('legal.contact_email'),
         ]);
     }
 
@@ -211,6 +212,16 @@ class OnboardingController extends Controller
             // month would be written from it.
             if (trim($this->positioningFor($locked)) === '') {
                 return null;
+            }
+
+            // The voice step asks a money-or-health project who stands behind
+            // its articles, but a draft answered before it asked — or one
+            // walked past it some other way — would launch into a first
+            // article that cannot be written. The honest default fills the
+            // gap: the brand publishes, and says AI helped. Settings can
+            // change it to a named person whenever the owner likes.
+            if (! $locked->hasAccountableByline()) {
+                $locked->forceFill(['ai_disclosure' => true]);
             }
 
             $this->current->run($locked, function () use ($locked, $plan): void {
@@ -441,6 +452,7 @@ class OnboardingController extends Controller
             'voice' => [
                 'sitemap_url' => ($answers['sitemap_url'] ?? null) ?: $project->sitemap_url,
                 'authors' => $this->authorsFrom($answers),
+                'ai_disclosure' => (bool) ($answers['ai_disclosure'] ?? $project->ai_disclosure),
             ],
             // Asked in the publishing step now, beside the other questions
             // about the website rather than between two about its voice.
@@ -685,6 +697,7 @@ class OnboardingController extends Controller
             'market' => $project->market,
             'language' => $project->default_locale,
             'is_ymyl' => $project->is_ymyl,
+            'ai_disclosure' => $project->ai_disclosure,
             'competitors' => $project->competitors,
             'seed_keywords' => $project->research_seeds,
             'weekly_target' => $project->weekly_target,

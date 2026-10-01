@@ -43,6 +43,10 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::post('projects/{project}/plan', [AdminProjectController::class, 'assign'])->name('projects.plan');
     Route::post('projects/{project}/trial', [AdminProjectController::class, 'extendTrial'])->name('projects.trial');
     Route::post('projects/{project}/status', [AdminProjectController::class, 'status'])->name('projects.status');
+    // Whether the site is a money-or-health topic. Setup reads it off the
+    // site; an owner who thinks the reading is wrong asks support, and this
+    // is where support answers.
+    Route::post('projects/{project}/sensitivity', [AdminProjectController::class, 'sensitivity'])->name('projects.sensitivity');
 
     Route::get('subscriptions', [AdminSubscriptionController::class, 'index'])->name('subscriptions');
     Route::post('subscriptions/{subscription}/resync', [AdminSubscriptionController::class, 'resync'])

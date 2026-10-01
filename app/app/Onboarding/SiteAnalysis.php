@@ -34,6 +34,8 @@ final readonly class SiteAnalysis
         public string $market,
         public bool $isYmyl,
         public ?array $palette = null,
+        // Why the site was or was not read as money-or-health, in a few words.
+        public string $ymylReason = '',
     ) {}
 
     /**
@@ -62,6 +64,7 @@ final readonly class SiteAnalysis
             market: $this->market,
             isYmyl: $this->isYmyl,
             palette: $palette,
+            ymylReason: $this->ymylReason,
         );
     }
 
@@ -80,6 +83,7 @@ final readonly class SiteAnalysis
             'language' => $this->language,
             'market' => $this->market,
             'is_ymyl' => $this->isYmyl,
+            'ymyl_reason' => $this->ymylReason,
             'palette' => $this->palette,
         ];
     }
@@ -111,6 +115,7 @@ final readonly class SiteAnalysis
                     ? (string) $data['palette']['accent']
                     : null,
             ] : null,
+            ymylReason: (string) ($data['ymyl_reason'] ?? ''),
         );
     }
 }

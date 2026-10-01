@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Pipelines\Steps\Generation;
 
 use App\Enums\ContentItemType;
+use App\Models\Project;
 use App\Pipelines\Core\AbstractStep;
 use App\Pipelines\Core\StepContext;
 use App\Pipelines\Core\StepResult;
@@ -59,7 +60,7 @@ class BuildGeoLayer extends AbstractStep
         $faq = $this->faq($context, $draft);
 
         return StepResult::success(new GeoPayload(
-            jsonLd: $this->articleSchema($unit->type, $unit->title, $draft->summary, $brief),
+            jsonLd: $this->articleSchema($unit->type, $unit->title, $draft->summary, $brief, $context->project),
             faqJsonLd: $faq === [] ? [] : $this->faqSchema($faq),
             quotableBlocks: $this->quotable($draft->markdown),
         ));
@@ -73,6 +74,7 @@ class BuildGeoLayer extends AbstractStep
         string $headline,
         string $summary,
         BriefContextPayload $brief,
+        Project $project,
     ): array {
         $schema = [
             '@context' => 'https://schema.org',
@@ -82,13 +84,19 @@ class BuildGeoLayer extends AbstractStep
             'inLanguage' => $brief->locale,
         ];
 
-        // E-E-A-T (§5.2). Present whenever the project has a named author, and
-        // required before a YMYL unit can generate at all.
+        // E-E-A-T (§5.2). Present whenever the project has a named author. A
+        // project that publishes openly as AI-assisted names the brand
+        // instead, since the brand is who the article says is responsible.
         if ($brief->author !== []) {
             $schema['author'] = [
                 '@type' => 'Person',
                 'name' => (string) ($brief->author['name'] ?? ''),
                 ...isset($brief->author['title']) ? ['jobTitle' => (string) $brief->author['title']] : [],
+            ];
+        } elseif ($project->ai_disclosure) {
+            $schema['author'] = [
+                '@type' => 'Organization',
+                'name' => $project->name,
             ];
         }
 
