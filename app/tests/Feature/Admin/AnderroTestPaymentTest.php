@@ -107,6 +107,24 @@ final class AnderroTestPaymentTest extends TestCase
     }
 
     #[Test]
+    public function the_dialog_is_told_the_address_the_payment_will_actually_go_out_under(): void
+    {
+        // Changed since the signup was reported: the payment still goes out
+        // under the old address, so that is the one to confirm.
+        AffiliateReferral::query()->create([
+            'user_id' => $this->customer->getKey(),
+            'visitor_id' => 'recorded-visitor-id',
+            'email' => 'sam-at-signup@example.test',
+        ]);
+
+        $this->actingAs($this->admin)
+            ->get('/admin/users?q=sam')
+            ->assertInertia(fn ($page) => $page
+                ->where('users.data.0.email', 'sam@example.test')
+                ->where('users.data.0.payment_email', 'sam-at-signup@example.test'));
+    }
+
+    #[Test]
     public function a_refusal_is_reported_back_and_logged(): void
     {
         $this->status = 422;

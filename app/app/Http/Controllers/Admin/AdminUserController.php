@@ -55,8 +55,10 @@ class AdminUserController extends Controller
                 'email' => $user->email,
                 'is_admin' => $user->is_admin,
                 'verified' => $user->email_verified_at !== null,
-                // Whether a test payment would earn a partner a real commission.
+                // Whether a test payment would earn a partner a real commission,
+                // and the address it would go out under — see sendAnderroPayment().
                 'referred' => $user->affiliateReferral !== null,
+                'payment_email' => $this->paymentEmail($user),
                 'created_at' => $user->created_at?->toIso8601String(),
                 'projects' => $user->projects->map(fn (Project $project): array => [
                     'id' => $project->getKey(),
@@ -167,7 +169,7 @@ class AdminUserController extends Controller
             return back();
         }
 
-        $email = $user->affiliateReferral->email ?? $user->email;
+        $email = $this->paymentEmail($user);
         $cents = (int) round(((float) $validated['amount']) * 100);
         $amount = number_format($cents / 100, 2);
 
@@ -198,5 +200,16 @@ class AdminUserController extends Controller
         Inertia::flash('toast', $toast);
 
         return back();
+    }
+
+    /**
+     * The address a payment for this account is reported under: the one its
+     * signup was reported with, when a partner referred it, because that is
+     * what Anderro attributes payments by — even after the account's own has
+     * changed. Shown in the dialog, so what is confirmed is what is sent.
+     */
+    private function paymentEmail(User $user): string
+    {
+        return $user->affiliateReferral->email ?? $user->email;
     }
 }

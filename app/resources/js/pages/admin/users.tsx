@@ -41,6 +41,7 @@ type Row = {
     is_admin: boolean;
     verified: boolean;
     referred: boolean;
+    payment_email: string;
     created_at: string | null;
     projects: { id: string; name: string; slug: string; role: string | null }[];
 };
@@ -369,12 +370,12 @@ function TestPayment({ user, configured }: { user: Row; configured: boolean }) {
                                     Send a test payment to Anderro?
                                 </DialogTitle>
                                 <DialogDescription>
-                                    Anderro is told that {user.email} paid this
-                                    amount. It's sent now, it isn't
+                                    Anderro is told that {user.payment_email}{' '}
+                                    paid this amount. It's sent now, it isn't
                                     deduplicated, and it's written to the admin
                                     log.{' '}
                                     {user.referred
-                                        ? 'A partner referred this account, so they earn a real commission on it.'
+                                        ? `A partner referred this account, so they earn a real commission on it.${user.payment_email !== user.email ? ` That's the address its signup was reported with; it's ${user.email} here now.` : ''}`
                                         : "Anderro only credits it if it has recorded a signup for this address; otherwise it's ignored."}
                                 </DialogDescription>
                             </DialogHeader>
