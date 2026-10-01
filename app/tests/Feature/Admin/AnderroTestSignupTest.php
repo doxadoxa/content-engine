@@ -9,6 +9,7 @@ use App\Models\AdminAction;
 use App\Models\AffiliateReferral;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
@@ -114,6 +115,22 @@ final class AnderroTestSignupTest extends TestCase
             ->assertInertiaFlash('toast.message', 'Anderro refused the event with HTTP 401: invalid api key');
 
         $this->assertStringStartsWith('rejected:', AdminAction::query()->sole()->after['outcome']);
+    }
+
+    #[Test]
+    public function no_answer_is_reported_as_an_unknown_outcome_naming_the_visitor(): void
+    {
+        Http::fake(['track.anderro.com/*' => fn () => throw new ConnectionException('cURL error 28: Operation timed out')]);
+
+        // A timeout is raised whether or not Anderro took the event, so the
+        // administrator is told to look rather than to send another, and is
+        // given the visitor to reuse if they do.
+        $this->send(['visitor_id' => self::VISITOR])
+            ->assertRedirect()
+            ->assertInertiaFlash('toast.type', 'warning')
+            ->assertInertiaFlash('toast.message', 'Anderro did not answer, so whether the signup for sam@example.test arrived is unknown. Check Anderro before sending another, and reuse visitor '.self::VISITOR.' if you do.');
+
+        $this->assertStringStartsWith('unknown:', AdminAction::query()->sole()->after['outcome']);
     }
 
     #[Test]

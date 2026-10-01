@@ -108,8 +108,13 @@ class AdminUserController extends Controller
             $outcome = 'rejected: '.$e->getMessage();
             $toast = ['type' => 'error', 'message' => $e->getMessage()];
         } catch (ConnectionException) {
-            $outcome = 'unreachable';
-            $toast = ['type' => 'error', 'message' => 'Anderro could not be reached. Nothing was sent.'];
+            // No answer is not the same as no event: a timeout is raised the
+            // same way whether the request never left or Anderro took it and
+            // was slow to say so. So say we do not know, and name the visitor,
+            // because sending another with a freshly made up one would credit
+            // a second visitor for the same address.
+            $outcome = 'unknown: no answer from Anderro';
+            $toast = ['type' => 'warning', 'message' => "Anderro did not answer, so whether the signup for {$user->email} arrived is unknown. Check Anderro before sending another, and reuse visitor {$visitor} if you do."];
         }
 
         $actor = $request->user();
