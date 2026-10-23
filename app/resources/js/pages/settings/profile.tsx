@@ -33,12 +33,18 @@ export default function Profile() {
 
                 <Form
                     {...update.form()}
+                    // Fortify validates this form into a named bag. Without
+                    // the bag named here the errors arrive one level down,
+                    // under `errors.updateProfileInformation`, and the fields
+                    // below read nothing: a refused address looked like a save
+                    // that silently did not happen.
+                    errorBag="updateProfileInformation"
                     options={{
                         preserveScroll: true,
                     }}
                     className="space-y-6"
                 >
-                    {({ processing, errors }) => (
+                    {({ processing, errors, recentlySuccessful }) => (
                         <>
                             <div className="grid gap-2">
                                 <Label htmlFor="name">Name</Label>
@@ -86,6 +92,12 @@ export default function Profile() {
                                 >
                                     Save
                                 </Button>
+
+                                {recentlySuccessful && (
+                                    <p className="text-sm text-muted-foreground">
+                                        Saved
+                                    </p>
+                                )}
                             </div>
                         </>
                     )}
