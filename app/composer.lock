@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "11be1baf90d1e8607990e154d8c29304",
+    "content-hash": "e62d57b29d5b3513f095e3c48e6f2b9b",
     "packages": [
         {
             "name": "aws/aws-crt-php",
@@ -10868,7 +10868,7 @@
         },
         {
             "name": "persistance/engine-receiver",
-            "version": "dev-feature/google-social-login",
+            "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "packages/engine-receiver",
@@ -12537,8 +12537,8 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": "^8.5"
     },
-    "platform-dev": [],
-    "plugin-api-version": "2.3.0"
+    "platform-dev": {},
+    "plugin-api-version": "2.9.0"
 }
