@@ -96,6 +96,9 @@ export default function Password({
 
                 <Form
                     {...update.form()}
+                    // Fortify validates into this named bag; see the profile
+                    // form for what happens to the errors when it is not named.
+                    errorBag="updatePassword"
                     // Cleared whichever way it ends. On success there is
                     // nothing left to submit; on failure the fields are wrong
                     // and retyping them is the point.
