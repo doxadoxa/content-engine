@@ -9,7 +9,10 @@
 # Built the same way for local and production, so what you test is what ships.
 
 # ---- Stage 1: PHP runtime base (shared by the build and the final image) ----
-FROM dunglas/frankenphp:1-php8.4 AS php-base
+# Pinned to the exact patch release rather than a floating `1-php8.5`, so a
+# security upgrade is a reviewable one-line diff and a rebuild can never quietly
+# land on a different PHP than the one that was tested.
+FROM dunglas/frankenphp:1.13.2-php8.5.12 AS php-base
 WORKDIR /app
 
 # pdo_pgsql/pgsql for Postgres; pcntl and posix are what let queue:work and
